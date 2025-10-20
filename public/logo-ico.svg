@@ -1,0 +1,6 @@
+<!-- JollofSwap — Simple Bowl (favicon) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 128 128">
+  <circle cx="64" cy="64" r="60" fill="#0a0f1b"/>
+  <path d="M24 66c0-16 18-28 40-28s40 12 40 28H24z" fill="#facc15"/>
+  <path d="M20 66c0 20 20 34 44 34s44-14 44-34H20z" fill="#ff5b2e"/>
+</svg>

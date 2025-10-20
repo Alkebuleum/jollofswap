@@ -1,0 +1,392 @@
+:root {
+    --bg: #0a0f1b;
+    --card: #10182a;
+    --muted: #94a3b8;
+    --text: #e5e7eb;
+    --brand: #ff5b2e;
+    --ok: #20c997;
+    --bad: #ef4444;
+}
+
+* {
+    box-sizing: border-box
+}
+
+html,
+body,
+#root {
+    height: 100%
+}
+
+body {
+    margin: 0;
+    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text)
+}
+
+a {
+    color: var(--text);
+    text-decoration: none
+}
+
+.wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 24px
+}
+
+.hero {
+    margin: 10px 0 18px
+}
+
+.title {
+    font-size: 28px;
+    font-weight: 800
+}
+
+.muted {
+    color: var(--muted)
+}
+
+.card {
+    background: var(--card);
+    border: 1px solid #1f2a44;
+    border-radius: 16px;
+    padding: 16px
+}
+
+.hr {
+    height: 1px;
+    background: #1f2a44;
+    margin: 12px 0
+}
+
+.grid {
+    display: grid;
+    gap: 14px
+}
+
+.g2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+}
+
+@media(max-width:880px) {
+    .g2 {
+        grid-template-columns: 1fr
+    }
+}
+
+.input,
+.select {
+    width: 100%;
+    padding: 10px 12px;
+    background: #0c1426;
+    border: 1px solid #1f2a44;
+    border-radius: 10px;
+    color: var(--text)
+}
+
+.label {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px
+}
+
+.btn {
+    background: var(--brand);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-weight: 700;
+    cursor: pointer
+}
+
+.btn.ghost {
+    background: transparent;
+    border: 1px solid #2a385d;
+    color: #e2e8f0
+}
+
+.btn:disabled {
+    opacity: .6;
+    cursor: not-allowed
+}
+
+.center {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 60vh
+}
+
+.nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 0
+}
+
+.nav .left {
+    display: flex;
+    gap: 12px;
+    align-items: center
+}
+
+.nav .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px
+}
+
+.nav .pill {
+    background: #141f35;
+    border: 1px solid #273556;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    color: #b0c4de
+}
+
+.success {
+    color: #10b981
+}
+
+.danger {
+    color: #ef4444
+}
+
+/* layout */
+.page {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.content {
+    flex: 1 0 auto;
+}
+
+/* footer */
+.footer {
+    margin-top: auto;
+    /* pushes it to the bottom */
+    margin: 0;
+    /* remove the 24px top/bottom gap */
+    padding: 12px 16px;
+    color: var(--muted);
+    font-size: 13px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    border-top: 1px solid #1f2a44;
+    /* subtle divider */
+    background: var(--card);
+    /* optional: matches your theme */
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
+}
+
+
+/* --- Sticky header container with subtle blur/shadow --- */
+.site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10, 15, 27, 0.9);
+    /* matches --bg with transparency */
+    backdrop-filter: saturate(160%) blur(8px);
+    border-bottom: 1px solid #1f2a44;
+}
+
+/* Make brand area a single clickable target */
+.brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* Space + alignment for the right-side actions (desktop) */
+.nav-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+/* Active link treatment */
+.nav-link.active {
+    border-color: var(--brand);
+    color: var(--text);
+}
+
+/* Hover affordances */
+.nav .pill:hover {
+    border-color: #36507f;
+}
+
+.btn.ghost:hover {
+    border-color: #36507f;
+}
+
+/* Mobile hamburger (hidden on desktop) */
+.burger {
+    display: none;
+    background: transparent;
+    border: 1px solid #273556;
+    color: #b0c4de;
+    padding: 6px 8px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.burger:focus {
+    outline: 2px solid #36507f;
+    outline-offset: 2px;
+}
+
+/* Mobile dropdown (closed by default) */
+.mobile-menu {
+    display: none;
+    border-bottom: 1px solid #1f2a44;
+}
+
+.mobile-menu .mobile-inner {
+    display: grid;
+    gap: 10px;
+    padding: 12px 0;
+}
+
+/* Responsive behavior */
+@media (max-width: 880px) {
+    .nav-actions {
+        display: none;
+    }
+
+    /* hide desktop actions */
+    .burger {
+        display: inline-flex;
+    }
+
+    /* show burger */
+    .mobile-menu.show {
+        display: block;
+    }
+}
+
+.inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px
+}
+
+/* alert visual + no-stretch details (we used this earlier) */
+.alert {
+    border: 1px solid #273556;
+    background: #0c1426;
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-top: 10px;
+    overflow: hidden;
+    max-width: 100%
+}
+
+.alert-ok {
+    border-color: #1b4a3a
+}
+
+.alert-error {
+    border-color: #5c2b2b
+}
+
+.alert-title {
+    font-weight: 700;
+    margin-bottom: 6px
+}
+
+.alert-msg {
+    color: var(--muted);
+    overflow-wrap: anywhere
+}
+
+.alert-link {
+    display: inline-block;
+    margin-top: 8px;
+    text-decoration: underline
+}
+
+.alert-toggle {
+    margin-top: 8px;
+    background: transparent;
+    border: 1px solid #2a385d;
+    color: #b0c4de;
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer
+}
+
+.alert-details {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    max-height: 200px;
+    overflow: auto;
+    white-space: pre;
+    word-break: normal;
+    overflow-wrap: normal;
+    background: #0a0f1b;
+    border: 1px dashed #2a385d;
+    border-radius: 8px;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.4
+}
+
+.pill-good {
+    border-color: #205f46;
+    color: #a7f3d0
+}
+
+.pill-bad {
+    border-color: #5c2b2b;
+    color: #fecaca
+}
+
+/* --- Tabs: segmented pill --- */
+.seg {
+    display: inline-flex;
+    gap: 6px;
+    margin-bottom: 16px;
+    padding: 6px;
+    border-radius: 999px;
+    background: #0c1426;
+    border: 1px solid #1f2a44;
+}
+
+.seg-opt {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    padding: 8px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    color: var(--muted);
+    font-weight: 700;
+}
+
+.seg-opt.on {
+    background: var(--brand);
+    color: white;
+}
+
+.seg-opt:hover {
+    color: var(--text);
+}
+
+.seg-opt:focus-visible {
+    outline: 2px solid #36507f;
+    outline-offset: 2px;
+}

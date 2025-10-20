@@ -1,0 +1,11 @@
+<!-- JollofSwap — Simple Bowl (primary) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 128 128" role="img" aria-label="JollofSwap logo">
+  <!-- Optional dark backdrop circle for contrast -->
+  <circle cx="64" cy="64" r="60" fill="#0a0f1b"/>
+  <!-- Rice (jollof) -->
+  <path d="M24 66c0-16 18-28 40-28s40 12 40 28H24z" fill="#facc15"/>
+  <!-- Bowl (flat, clean) -->
+  <path d="M20 66c0 20 20 34 44 34s44-14 44-34H20z" fill="#ff5b2e"/>
+  <!-- Minimal rim highlight -->
+  <path d="M24 66c0 0 18-4 40-4s40 4 40 4" fill="none" stroke="#ff7a4f" stroke-width="2" opacity="0.6"/>
+</svg>

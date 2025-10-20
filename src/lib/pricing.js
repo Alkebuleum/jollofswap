@@ -1,0 +1,1 @@
+let currentLoad=0.5;export function setLoad(x){currentLoad=Math.max(0,Math.min(1,Number(x)||0))}export function epoch(){return Math.floor(Date.now()/1000)}export function arp(){const base=0.01;const price=base*(0.5+currentLoad);return Number(price.toFixed(4))}

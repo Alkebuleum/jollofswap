@@ -1,0 +1,12 @@
+# env & keys
+.env
+.env.*
+*.pem
+*.key
+*.p12
+serviceAccount*.json
+
+# build & caches
+dist
+node_modules
+*.log

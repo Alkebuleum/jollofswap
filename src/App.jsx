@@ -5,7 +5,6 @@ import TermsGate from './components/TermsGate.jsx'
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Compliance from './pages/Compliance.jsx'
-import Docs from './pages/Docs.jsx'
 import Footer from './components/Footer.jsx'
 import { useAuth } from 'amvault-connect'
 
@@ -55,7 +54,6 @@ export default function App() {
                 <Route path="/login" element={<Login />} />
                 <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
                 <Route path="/compliance" element={<Compliance />} />
-                <Route path="/docs" element={<Docs />} />
               </Routes>
             </div>
           </ErrorBoundary>

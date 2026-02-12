@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <script>
+        // Redirect /any/path to /?/any/path so index.html can restore it
+        var l = window.location;
+        var redirect = "/?/" + l.pathname.replace(/^\//, "") + l.search.replace(/^\?/, "&") + l.hash;
+        l.replace(redirect);
+    </script>
+</head>
+
+<body></body>
+
+</html>

@@ -1,0 +1,274 @@
+diff --git a/node_modules/amvault-connect/dist/popup/amvaultProvider.js b/node_modules/amvault-connect/dist/popup/amvaultProvider.js
+index cdeb048..f99d878 100644
+--- a/node_modules/amvault-connect/dist/popup/amvaultProvider.js
++++ b/node_modules/amvault-connect/dist/popup/amvaultProvider.js
+@@ -215,7 +215,12 @@ export async function sendTransactions(req, opts) {
+         chainId: req.chainId,
+         origin,
+         amvaultUrl: opts.amvaultUrl,
+-        payload: { txs: req.txs, failFast: (_a = req.failFast) !== null && _a !== void 0 ? _a : true },
++        payload: {
++            txs: req.txs,
++            failFast: (_a = req.failFast) !== null && _a !== void 0 ? _a : true,
++            preflight: req.preflight,
++        },
++
+         timeoutMs: (_b = opts.timeoutMs) !== null && _b !== void 0 ? _b : 120000,
+         debug: !!opts.debug,
+         keepPopupOpen: !!opts.keepPopupOpen,
+diff --git a/node_modules/amvault-connect/dist/types.d.ts b/node_modules/amvault-connect/dist/types.d.ts
+index bd3d2b0..411f0fe 100644
+--- a/node_modules/amvault-connect/dist/types.d.ts
++++ b/node_modules/amvault-connect/dist/types.d.ts
+@@ -1,107 +1,162 @@
+-export type Session = {
+-    ain: string;
+-    address: string;
+-    issuedAt: number;
+-    expiresAt: number;
+-};
+-export type AuthStatus = 'idle' | 'checking' | 'ready' | 'failed';
++export type Session = { ain: string; address: string; issuedAt: number; expiresAt: number }
++export type AuthStatus = 'idle' | 'checking' | 'ready' | 'failed'
++
+ export type AuthContextValue = {
+-    session: Session | null;
+-    signin: () => Promise<void>;
+-    signout: () => void;
+-    status: AuthStatus;
+-    error: string | null;
+-};
++    session: Session | null
++    signin: () => Promise<void>
++    signout: () => void
++    status: AuthStatus
++    error: string | null
++}
++
+ export type SigninArgs = {
+-    app: string;
+-    chainId: number;
+-    origin: string;
+-    nonce: string;
+-};
++    app: string
++    chainId: number
++    origin: string
++    nonce: string
++}
++
+ export type SigninResp = {
+-    ok: boolean;
+-    address: string;
+-    signature: string;
+-    chainId: number;
+-    nonce: string;
+-    ain?: string;
+-    amid?: string;
+-    error?: string;
++    ok: boolean
++    address: string
++    signature: string
++    chainId: number
++    nonce: string
++    ain?: string
++    amid?: string
++    error?: string
+     /** Optional: AmVault can echo back the exact message it asked the user to sign */
+-    message?: string;
+-};
++    message?: string
++}
++
+ export type TxReq = {
+-    chainId: number;
+-    to?: string;
+-    data?: string;
+-    value?: string | number | bigint;
+-    gas?: number;
+-    maxFeePerGasGwei?: number;
+-    maxPriorityFeePerGasGwei?: number;
+-};
++    chainId: number
++    to?: string
++    data?: string
++    value?: string | number | bigint
++    gas?: number
++    maxFeePerGasGwei?: number
++    maxPriorityFeePerGasGwei?: number
++}
++
+ export type SendTxResp = {
+-    ok: boolean;
+-    txHash?: string;
+-    error?: string;
+-    nonce: string;
+-    chainId: number;
+-};
++    ok: boolean
++    txHash?: string
++    error?: string
++    nonce: string
++    chainId: number
++}
++
+ export type RegistryAdapter = {
+-    isRegistered?: (address: string) => Promise<boolean>;
+-    isValidator?: (address: string) => Promise<boolean>;
+-    getAin?: (address: string) => Promise<string | null>;
+-};
++    isRegistered?: (address: string) => Promise<boolean>
++    isValidator?: (address: string) => Promise<boolean>
++    getAin?: (address: string) => Promise<string | null>
++}
++
+ export type AmvaultConnectConfig = {
+-    appName: string;
+-    chainId: number;
+-    amvaultUrl: string;
+-    debug?: boolean;
+-    storagePrefix?: string;
+-    sessionTtlMs?: number;
+-    registry?: RegistryAdapter;
++    appName: string
++    chainId: number
++    amvaultUrl: string
++    debug?: boolean
++    storagePrefix?: string
++    sessionTtlMs?: number
++    registry?: RegistryAdapter
+     /** Optional override to construct the sign-in message */
+     messageBuilder?: (info: {
+-        appName: string;
+-        origin: string;
+-        chainId: number;
+-        nonce: string;
+-    }) => string;
++        appName: string
++        origin: string
++        chainId: number
++        nonce: string
++    }) => string
+     /** When verifying a message returned from AmVault, require `App: appName` to match. Default true. */
+-    enforceAppName?: boolean;
+-};
++    enforceAppName?: boolean
++}
++
++// NEW: added 1/28/2026
+ export type SignMessageArgs = {
+-    chainId: number;
+-    message: string;
+-};
++    chainId: number
++    message: string
++}
++
+ export type SignMessageResp = {
+-    ok: boolean;
+-    address: string;
+-    signature: string;
+-    chainId: number;
+-    nonce: string;
+-    error?: string;
+-    message?: string;
++    ok: boolean
++    address: string
++    signature: string
++    chainId: number
++    nonce: string
++    error?: string
++    message?: string
++}
++
++// Multi transaction and gas sponsorships
++
++export type BridgeFlow =
++    | 'bridge_usdc_to_mah' // Polygon/Amoy approve+deposit that mints MAH on Alkebuleum
++    // future:
++    // | 'bridge_mah_to_usdc'
++    ;
++
++export type GasTopupHint = {
++    /** If true, AmVault may auto-topup native gas on req.chainId before executing txs */
++    enabled: boolean;
++
++    /**
++     * Optional hints (wei). AmVault should treat these as *hints* and clamp/override
++     * to its own safe defaults to prevent abuse.
++     */
++    minBalanceWei?: string;
++    targetBalanceWei?: string;
+ };
++
++export type MultiTxPreflight = {
++    /** Lets AmVault know *why* it's doing preflight checks */
++    flow?: BridgeFlow;
++
++    /** Ask AmVault to ensure user has enough native gas before running the batch */
++    gasTopup?: GasTopupHint;
++};
++
++
+ export type MultiTxReq = {
+-    chainId: number;
++    chainId: number
+     txs: Array<{
+-        to?: string;
+-        data?: string;
+-        value?: string | number | bigint;
+-        gas?: number;
+-        maxFeePerGasGwei?: number;
+-        maxPriorityFeePerGasGwei?: number;
+-    }>;
+-    failFast?: boolean;
+-};
++        to?: string
++        data?: string
++        value?: string | number | bigint
++        gas?: number
++        maxFeePerGasGwei?: number
++        maxPriorityFeePerGasGwei?: number
++    }>
++    failFast?: boolean
++
++    // NEW:
++    preflight?: MultiTxPreflight
++}
++
++
+ export type SendMultiTxResp = {
+-    ok: boolean;
+-    nonce: string;
+-    chainId: number;
++    ok: boolean
++    nonce: string
++    chainId: number
+     results: Array<{
+-        ok: boolean;
+-        txHash?: string;
+-        error?: string;
+-    }>;
+-    error?: string;
+-};
++        ok: boolean
++        txHash?: string
++        error?: string
++    }>
++    error?: string
++
++    // OPTIONAL NEW:
++    preflightResult?: {
++        gasTopup?: {
++            performed: boolean
++            ok: boolean
++            txHash?: string
++            error?: string
++            startingBalanceWei?: string
++            endingBalanceWei?: string
++        }
++    }
++}
++
++
++

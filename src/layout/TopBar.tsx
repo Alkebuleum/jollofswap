@@ -6,11 +6,27 @@ import { useThemeStore } from '../store/themeStore'
 import { FLAGS } from '../lib/flags'
 import { useAuth } from 'amvault-connect'
 import LogoJollof from '../assets/logo-jollof.svg'
+import { ethers } from 'ethers'
+import { useWalletMetaStore } from '../store/walletMetaStore'
+
 
 function shortAddr(a?: string) {
   if (!a) return ''
   return `${a.slice(0, 6)}…${a.slice(-4)}`
 }
+
+const ALK_RPC = (import.meta.env.VITE_ALK_RPC as string) ?? 'https://rpc.alkebuleum.com'
+
+// set this in .env: VITE_AIN_REGISTRY=0x...
+const AIN_REGISTRY = (import.meta.env.VITE_AIN_REGISTRY as string) ?? ''
+
+const AIN_READERS = [
+  'function ainOf(address) view returns (uint256)',
+  'function getAIN(address) view returns (uint256)',
+  'function addressToAin(address) view returns (uint256)',
+  'function ainByAddress(address) view returns (uint256)',
+]
+
 
 const btnPrimary =
   'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-jlfTomato px-3 sm:px-4 py-2 sm:py-2.5 text-sm font-semibold text-jlfIvory shadow-sm hover:opacity-95 active:opacity-90 disabled:opacity-60'
@@ -27,6 +43,61 @@ export default function TopBar() {
   const { session, signin, signout, status } = useAuth()
   const walletConnected = !!session
   const addr = session?.address
+  const { ain, ainLoading, setAin, setAinLoading } = useWalletMetaStore()
+
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function resolveAIN() {
+      setAin(null)
+
+      if (!walletConnected || !addr) return
+
+      // 1) If amvault-connect already gives it, use it
+      const sessionAny = session as any
+      const fromSession = sessionAny?.ain ?? sessionAny?.AIN ?? null
+      if (fromSession != null) {
+        if (!cancelled) setAin(String(fromSession))
+        return
+      }
+
+      // 2) Fallback: read from on-chain registry
+      if (!AIN_REGISTRY) return
+
+      setAinLoading(true)
+      try {
+        const provider = new ethers.JsonRpcProvider(ALK_RPC)
+        const c = new ethers.Contract(AIN_REGISTRY, AIN_READERS, provider)
+
+        const fns = ['ainOf', 'getAIN', 'addressToAin', 'ainByAddress'] as const
+        let found: string | null = null
+
+        for (const fn of fns) {
+          try {
+            const v = await (c as any)[fn](addr)
+            const n = typeof v === 'bigint' ? v : BigInt(v?.toString?.() ?? v)
+            if (n > 0n) {
+              found = n.toString()
+              break
+            }
+          } catch {
+            // try next function name
+          }
+        }
+
+        if (!cancelled) setAin(found)
+      } finally {
+        if (!cancelled) setAinLoading(false)
+      }
+    }
+
+    resolveAIN()
+    return () => {
+      cancelled = true
+    }
+  }, [walletConnected, addr, session])
+
 
   const [open, setOpen] = useState(false) // desktop wallet dropdown
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -164,7 +235,8 @@ export default function TopBar() {
                   aria-label="Wallet menu"
                 >
                   <Wallet2 className="w-4 h-4" />
-                  <span className="font-mono text-xs">{shortAddr(addr)}</span>
+                  <span className="font-mono text-xs">{ain ? `AIN ${ain}` : shortAddr(addr)}</span>
+
                 </button>
 
                 {/* Desktop: dropdown */}
@@ -177,7 +249,7 @@ export default function TopBar() {
                     aria-expanded={open}
                   >
                     <Wallet2 className="w-4 h-4" />
-                    <span className="font-mono">{shortAddr(addr)}</span>
+                    <span className="font-mono">{ain ? `AIN ${ain}` : shortAddr(addr)}</span>
                   </button>
 
                   {open && (
@@ -187,10 +259,23 @@ export default function TopBar() {
                     >
                       <div className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-800">
                         <div className="text-[11px] text-slate-500 dark:text-slate-400">Connected</div>
-                        <div className="text-xs font-mono text-slate-800 dark:text-slate-100 break-all">
-                          {addr}
+
+                        <div className="mt-1 flex items-center justify-between gap-2">
+                          <div className="text-xs text-slate-600 dark:text-slate-400">
+                            <span className="font-semibold">AIN:</span>{' '}
+                            {ainLoading ? (
+                              <span>…</span>
+                            ) : ain ? (
+                              <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{ain}</span>
+                            ) : (
+                              <span>—</span>
+                            )}
+                          </div>
                         </div>
+
+                        <div className="mt-1 text-xs font-mono text-slate-800 dark:text-slate-100 break-all">{addr}</div>
                       </div>
+
 
                       <button
                         role="menuitem"
@@ -251,6 +336,12 @@ export default function TopBar() {
               ) : (
                 <div className="rounded-2xl ring-1 ring-slate-200 bg-white p-3 dark:ring-slate-700 dark:bg-slate-950">
                   <div className="text-[11px] text-slate-500 dark:text-slate-400">Connected</div>
+
+                  <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                    <span className="font-semibold">AIN:</span>{' '}
+                    {ainLoading ? '…' : ain ? <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{ain}</span> : '—'}
+                  </div>
+
                   <div className="mt-1 text-xs font-mono text-slate-800 dark:text-slate-100 break-all">{addr}</div>
 
                   <div className="mt-3 flex gap-2">

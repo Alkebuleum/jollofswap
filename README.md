@@ -24,3 +24,9 @@ npm run dev
 ## Notes
 - All blockchain and chat/escalation flows are mocked for now.
 - Replace mock services in `src/store/*` with real APIs and smart contracts.
+
+## Push to Git
+git status
+git add -A
+git commit -m "Describe what changed"
+git push

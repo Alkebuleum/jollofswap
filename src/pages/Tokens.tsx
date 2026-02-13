@@ -4,6 +4,7 @@ import { ethers, Interface } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
 import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore'
 import { db } from '../services/firebase'
+import { Link } from 'react-router-dom'
 
 const ALK_CHAIN_ID = Number(import.meta.env.VITE_ALK_CHAIN_ID ?? 237422)
 const ALK_RPC = (import.meta.env.VITE_ALK_RPC as string) ?? 'https://rpc.alkebuleum.com'
@@ -900,6 +901,17 @@ function TokenCard({ t, explorerBase }: { t: TokenRow; explorerBase: string }) {
   const ZERO_ADDR = '0x0000000000000000000000000000000000000000'
   const isNative = !!t.isNative || (t.address || '').toLowerCase() === ZERO_ADDR
 
+  const sym = (t.symbol || '').trim().toUpperCase()
+
+  // Default behavior: buy the token using MAH (MAH -> token)
+  // Special-case MAH itself: use ALKE -> MAH
+  const fromParam = sym === 'MAH' ? 'ALKE' : 'MAH'
+
+  // Use address for precision (Swap.tsx can resolve address -> symbol via registry)
+  const toParam = sym === 'MAH' ? 'MAH' : (isNative ? 'ALKE' : t.address)
+
+  const swapUrl = `/swap?from=${encodeURIComponent(fromParam)}&to=${encodeURIComponent(toParam)}`
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <div className="flex items-start justify-between gap-3">
@@ -956,12 +968,13 @@ function TokenCard({ t, explorerBase }: { t: TokenRow; explorerBase: string }) {
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <a
-          href="/swap"
+        <Link
+          to={swapUrl}
           className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700"
         >
           Swap
-        </a>
+        </Link>
+
 
         {!isNative && (
           <>

@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import {
   ALK_CHAIN_ID,
   ALK_RPC,
@@ -25,6 +26,7 @@ import {
 import { routerIface } from '../lib/jollofAmm'
 import WalletSummaryCard from '../components/WalletSummaryCard'
 import { readHideBalances, readSlippageBps, writeSlippageBps, PREF } from '../lib/prefs'
+import { useWalletMetaStore } from '../store/walletMetaStore'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
@@ -244,6 +246,9 @@ export default function Liquidity() {
   const walletConnected = !!session
   const address = session?.address ?? null
 
+  const { ain, ainLoading } = useWalletMetaStore()
+
+
   const provider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
 
   const enabled = useMemo(() => enabledTokenKeys(), [])
@@ -255,6 +260,8 @@ export default function Liquidity() {
   const [amtA, setAmtA] = useState('100')
   const [amtB, setAmtB] = useState('1')
   const didUserEditRef = useRef(false)
+  const posReqRef = useRef(0)
+
   const [lastEdited, setLastEdited] = useState<'A' | 'B'>('A')
 
   const [rawReserveA, setRawReserveA] = useState<bigint>(0n)
@@ -268,6 +275,41 @@ export default function Liquidity() {
 
   const [slippageBps, setSlippageBps] = useState<number>(() => readSlippageBps(50))
   const [hideBalances, setHideBalances] = useState<boolean>(() => readHideBalances())
+
+  const [sp] = useSearchParams()
+  const location = useLocation()
+  const didInitRouteRef = useRef(false)
+
+  function tokenKeyFromParam(v: string | null): TokenKey | null {
+    if (!v) return null
+    const s = v.trim().toUpperCase()
+    return (enabled as string[]).includes(s) ? (s as TokenKey) : null
+  }
+
+  useEffect(() => {
+    if (didInitRouteRef.current) return
+    didInitRouteRef.current = true
+
+    const st: any = (location as any).state
+
+    const stA = tokenKeyFromParam(st?.tokenA ?? st?.a ?? null)
+    const stB = tokenKeyFromParam(st?.tokenB ?? st?.b ?? null)
+
+    const qA = tokenKeyFromParam(sp.get('a') ?? sp.get('tokenA'))
+    const qB = tokenKeyFromParam(sp.get('b') ?? sp.get('tokenB'))
+
+    let nextA = stA || qA || defaultA
+    let nextB = stB || qB || defaultB
+
+    if (nextA === nextB) {
+      nextB = ((enabled as string[]).find((x) => x !== nextA) as TokenKey) ?? nextB
+    }
+
+    setTokenA(nextA)
+    setTokenB(nextB)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
 
   useEffect(() => {
     writeSlippageBps(slippageBps)
@@ -329,94 +371,110 @@ export default function Liquidity() {
   }
 
   async function refreshPositionAndReserves() {
-    if (!address || tokenA === tokenB) {
-      setPairAddr('—')
-      setLpBalUi('—')
-      setLpShareUi('—')
-      setReserveAUi('—')
-      setReserveBUi('—')
-      setUnderAUi('—')
-      setUnderBUi('—')
-      return
-    }
+    const req = ++posReqRef.current
+    const isLive = () => req === posReqRef.current
+
+    // Clear immediately so we never show old pair data while loading
+    setPairAddr('—')
+    setLpBalUi('—')
+    setLpShareUi('—')
+    setReserveAUi('—')
+    setReserveBUi('—')
+    setUnderAUi('—')
+    setUnderBUi('—')
+    setRawReserveA(0n)
+    setRawReserveB(0n)
+    setPoolHasReserves(false)
+    setRatioAtoB('—')
+    setRatioBtoA('—')
+
+    if (!address || tokenA === tokenB) return
 
     const A = TOKENS[tokenA]
     const B = TOKENS[tokenB]
 
-    const pos = await getLpPosition({ owner: address, tokenA: A, tokenB: B })
-    const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
-    setPairAddr(pair || '—')
+    try {
+      const pos = await getLpPosition({ owner: address, tokenA: A, tokenB: B })
+      if (!isLive()) return
 
-    const lpUnits = pos.lpBalance > 0n ? ethers.formatUnits(pos.lpBalance, 18) : '0'
-    setLpBalUi(fmtNum(lpUnits))
-    setLpShareUi(pos.totalSupply > 0n ? `${(pos.shareBps / 100).toFixed(2)}%` : '0.00%')
+      const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
+      setPairAddr(pair || '—')
 
-    if (!pair) {
-      setReserveAUi('—')
-      setReserveBUi('—')
-      setUnderAUi('—')
-      setUnderBUi('—')
-      return
-    }
+      const lpUnits = pos.lpBalance > 0n ? ethers.formatUnits(pos.lpBalance, 18) : '0'
+      setLpBalUi(fmtNum(lpUnits))
+      setLpShareUi(pos.totalSupply > 0n ? `${(pos.shareBps / 100).toFixed(2)}%` : '0.00%')
 
-    const pairC = new ethers.Contract(pair, PAIR_ABI, provider)
-    const [t0, t1, reserves] = await Promise.all([pairC.token0(), pairC.token1(), pairC.getReserves()])
-    const r0 = reserves[0] as bigint
-    const r1 = reserves[1] as bigint
+      if (!pair) {
+        // keep cleared raw reserves/ratios/poolHasReserves so UI doesn't show defaults
+        return
+      }
 
-    const addrA = tokenAddressForPath(A).toLowerCase()
-    const addrB = tokenAddressForPath(B).toLowerCase()
-    const token0 = (t0 as string).toLowerCase()
-    const token1 = (t1 as string).toLowerCase()
+      const pairC = new ethers.Contract(pair, PAIR_ABI, provider)
+      const [t0, t1, reserves] = await Promise.all([pairC.token0(), pairC.token1(), pairC.getReserves()])
+      if (!isLive()) return
 
-    let reserveA = 0n
-    let reserveB = 0n
+      const r0 = reserves[0] as bigint
+      const r1 = reserves[1] as bigint
 
-    if (addrA === token0 && addrB === token1) {
-      reserveA = r0
-      reserveB = r1
-    } else if (addrA === token1 && addrB === token0) {
-      reserveA = r1
-      reserveB = r0
-    } else {
-      reserveA = r0
-      reserveB = r1
-    }
+      const addrA = tokenAddressForPath(A).toLowerCase()
+      const addrB = tokenAddressForPath(B).toLowerCase()
+      const token0 = (t0 as string).toLowerCase()
+      const token1 = (t1 as string).toLowerCase()
 
-    const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
-    setReserveAUi(fmtNum(ethers.formatUnits(reserveA, decA)))
-    setReserveBUi(fmtNum(ethers.formatUnits(reserveB, decB)))
+      let reserveA = 0n
+      let reserveB = 0n
 
-    setRawReserveA(reserveA)
-    setRawReserveB(reserveB)
-    setDecAState(decA)
-    setDecBState(decB)
+      if (addrA === token0 && addrB === token1) {
+        reserveA = r0
+        reserveB = r1
+      } else if (addrA === token1 && addrB === token0) {
+        reserveA = r1
+        reserveB = r0
+      } else {
+        reserveA = r0
+        reserveB = r1
+      }
 
-    const has = reserveA > 0n && reserveB > 0n
-    setPoolHasReserves(has)
+      const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
+      if (!isLive()) return
 
-    if (has) {
-      const oneA = ethers.parseUnits('1', decA)
-      const oneB = ethers.parseUnits('1', decB)
-      const outB = quote(oneA, reserveA, reserveB)
-      const outA = quote(oneB, reserveB, reserveA)
-      setRatioAtoB(fmtNum(ethers.formatUnits(outB, decB)))
-      setRatioBtoA(fmtNum(ethers.formatUnits(outA, decA)))
-    } else {
-      setRatioAtoB('—')
-      setRatioBtoA('—')
-    }
+      setReserveAUi(fmtNum(ethers.formatUnits(reserveA, decA)))
+      setReserveBUi(fmtNum(ethers.formatUnits(reserveB, decB)))
 
-    if (pos.totalSupply > 0n && pos.lpBalance > 0n && reserveA > 0n && reserveB > 0n) {
-      const underA = (reserveA * pos.lpBalance) / pos.totalSupply
-      const underB = (reserveB * pos.lpBalance) / pos.totalSupply
-      setUnderAUi(fmtNum(ethers.formatUnits(underA, decA)))
-      setUnderBUi(fmtNum(ethers.formatUnits(underB, decB)))
-    } else {
-      setUnderAUi('0')
-      setUnderBUi('0')
+      setRawReserveA(reserveA)
+      setRawReserveB(reserveB)
+      setDecAState(decA)
+      setDecBState(decB)
+
+      const has = reserveA > 0n && reserveB > 0n
+      setPoolHasReserves(has)
+
+      if (has) {
+        const oneA = ethers.parseUnits('1', decA)
+        const oneB = ethers.parseUnits('1', decB)
+        const outB = quote(oneA, reserveA, reserveB)
+        const outA = quote(oneB, reserveB, reserveA)
+        setRatioAtoB(fmtNum(ethers.formatUnits(outB, decB)))
+        setRatioBtoA(fmtNum(ethers.formatUnits(outA, decA)))
+      } else {
+        setRatioAtoB('—')
+        setRatioBtoA('—')
+      }
+
+      if (pos.totalSupply > 0n && pos.lpBalance > 0n && has) {
+        const underA = (reserveA * pos.lpBalance) / pos.totalSupply
+        const underB = (reserveB * pos.lpBalance) / pos.totalSupply
+        setUnderAUi(fmtNum(ethers.formatUnits(underA, decA)))
+        setUnderBUi(fmtNum(ethers.formatUnits(underB, decB)))
+      } else {
+        setUnderAUi('0')
+        setUnderBUi('0')
+      }
+    } catch {
+      // keep the cleared UI
     }
   }
+
 
   useEffect(() => {
     didUserEditRef.current = false
@@ -879,6 +937,7 @@ export default function Liquidity() {
         <WalletSummaryCard
           walletConnected={walletConnected}
           address={address}
+          ain={ainLoading ? null : ain}
           stats={[
             { label: tokenA, value: balADisplay },
             { label: tokenB, value: balBDisplay },

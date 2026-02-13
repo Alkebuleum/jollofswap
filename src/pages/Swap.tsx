@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
+
 import {
   ALK_CHAIN_ID,
   ALK_RPC,
@@ -23,15 +24,63 @@ import { useTokenRegistry } from '../lib/tokenRegistry'
 import { PREF, readHideBalances, readSlippageBps, writeSlippageBps } from '../lib/prefs'
 
 import WalletSummaryCard from '../components/WalletSummaryCard'
+import { useWalletMetaStore } from '../store/walletMetaStore'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 
+const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
+const WAKE = (import.meta.env.VITE_WAKE_ALK as string) ?? ''
+
+const FACTORY_IFACE = new ethers.Interface([
+  'function getPair(address tokenA, address tokenB) view returns (address pair)',
+])
+
+const PAIR_IFACE = new ethers.Interface([
+  'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+])
+
+function pairTokenAddress(t: any) {
+  // router uses WAKE for native; mirror that here
+  if (t?.isNative) return WAKE
+  return t?.address
+}
+
+async function detectNoLiquidity(provider: ethers.JsonRpcProvider, A: any, B: any) {
+  try {
+    if (!FACTORY || !ethers.isAddress(FACTORY)) return false
+    const a = pairTokenAddress(A)
+    const b = pairTokenAddress(B)
+    if (!a || !b || !ethers.isAddress(a) || !ethers.isAddress(b)) return false
+    if (!WAKE || !ethers.isAddress(WAKE)) return false // needed for native pairs
+
+    const pairData = await provider.call({
+      to: FACTORY,
+      data: FACTORY_IFACE.encodeFunctionData('getPair', [a, b]),
+    })
+    const [pair] = FACTORY_IFACE.decodeFunctionResult('getPair', pairData) as any
+    if (!pair || pair === ethers.ZeroAddress) return true // pair not created
+
+    const resData = await provider.call({
+      to: pair,
+      data: PAIR_IFACE.encodeFunctionData('getReserves', []),
+    })
+    const [r0, r1] = PAIR_IFACE.decodeFunctionResult('getReserves', resData) as any
+    return (BigInt(r0) === 0n || BigInt(r1) === 0n) // no reserves
+  } catch {
+    return false
+  }
+}
+
+
+
 type PricePoint = { t: number; p: number }
 
-const PRICE_PAIR_KEY = 'jswap:pricehist:v1:MAH-AKE'
 const PRICE_SAMPLE_MS = 5 * 60 * 1000 // 5 min
 const PRICE_WINDOW_MS = 24 * 60 * 60 * 1000 // 24h
+const priceKeyFor = (a: string, b: string) =>
+  `jswap:pricehist:v1:${(a || '').toUpperCase()}-${(b || '').toUpperCase()}`
+
 
 function shortAddr(a?: string) {
   if (!a) return ''
@@ -155,6 +204,9 @@ export default function Swap() {
   const walletConnected = !!session
   const address = session?.address ?? null
 
+  const { ain, ainLoading } = useWalletMetaStore()
+
+
   const provider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
   const [sp] = useSearchParams()
   const location = useLocation()
@@ -220,23 +272,49 @@ export default function Swap() {
 
   const quoteTimer = useRef<number | null>(null)
 
+  const [quoteNotice, setQuoteNotice] = useState<string | null>(null)
+  const [quoteNoLiquidity, setQuoteNoLiquidity] = useState(false)
+
+  function isNoLiquidityLike(msg: string) {
+    const s = (msg || '').toLowerCase()
+    return (
+      s.includes('insufficient_liquidity') ||
+      s.includes('insufficient liquidity') ||
+      s.includes('insufficient_output_amount') ||
+      s.includes('insufficient output amount') ||
+      s.includes('insufficient_input_amount') ||
+      s.includes('insufficient input amount') ||
+      s.includes('no liquidity') ||
+      s.includes('pair') && s.includes('not') // “pair not found” style messages
+    )
+  }
+
+
   const SWAP_PREFLIGHT = {
     flow: 'swap_v1',
     gasTopup: { enabled: true, purpose: 'jswap-swap' },
   } as any
 
-  const [priceData, setPriceData] = useState<PricePoint[]>(() => {
+  const priceKey = useMemo(() => priceKeyFor(from, to), [from, to])
+  const [priceData, setPriceData] = useState<PricePoint[]>([])
+
+  useEffect(() => {
     try {
-      const raw = localStorage.getItem(PRICE_PAIR_KEY)
+      const raw = localStorage.getItem(priceKey)
       const arr = raw ? (JSON.parse(raw) as PricePoint[]) : []
       const now = Date.now()
-      return Array.isArray(arr)
-        ? arr.filter((x) => x && typeof x.t === 'number' && typeof x.p === 'number' && x.t >= now - PRICE_WINDOW_MS)
-        : []
+      setPriceData(
+        Array.isArray(arr)
+          ? arr.filter(
+            (x) => x && typeof x.t === 'number' && typeof x.p === 'number' && x.t >= now - PRICE_WINDOW_MS
+          )
+          : []
+      )
     } catch {
-      return []
+      setPriceData([])
     }
-  })
+  }, [priceKey])
+
 
   useEffect(() => {
     writeSlippageBps(slippageBps)
@@ -257,30 +335,35 @@ export default function Swap() {
 
     async function sample() {
       try {
-        if (!TOKENS.MAH || !TOKENS.ALKE) return
+        if (from === to) return
 
-        const fromDec = await readDecimals(TOKENS.MAH, provider)
-        const toDec = await readDecimals(TOKENS.ALKE, provider)
+        const A = getToken(from)
+        const B = getToken(to)
+        if (!A || !B) return
+
+        const fromDec = await readDecimals(A, provider)
+        const toDec = await readDecimals(B, provider)
 
         const amountIn = ethers.parseUnits('1', fromDec)
-        const { amountOut } = await getQuoteOut({ from: TOKENS.MAH, to: TOKENS.ALKE, amountIn })
+        const { amountOut } = await getQuoteOut({ from: A, to: B, amountIn })
 
         const p = Number(ethers.formatUnits(amountOut, toDec))
         if (!Number.isFinite(p) || p <= 0) return
 
         const now = Date.now()
         const pt: PricePoint = { t: now, p }
-
         if (!alive) return
 
         setPriceData((prev) => {
           const next = [...prev, pt].filter((x) => x.t >= now - PRICE_WINDOW_MS)
           try {
-            localStorage.setItem(PRICE_PAIR_KEY, JSON.stringify(next))
+            localStorage.setItem(priceKey, JSON.stringify(next))
           } catch { }
           return next
         })
-      } catch { }
+      } catch {
+        // no pool / quote fail => just skip sample
+      }
     }
 
     sample()
@@ -290,7 +373,8 @@ export default function Swap() {
       alive = false
       if (timer) window.clearInterval(timer)
     }
-  }, [provider])
+  }, [provider, from, to, priceKey, bySymbol])
+
 
   function tokenKeyFromParam(v: string | null): TokenSym | null {
     if (!v) return null
@@ -389,8 +473,8 @@ export default function Swap() {
     if (quoteTimer.current) window.clearTimeout(quoteTimer.current)
 
     quoteTimer.current = window.setTimeout(async () => {
-      setErr(null)
-      setInfo(null)
+      //setErr(null)
+      //setInfo(null)
 
       if (from === to) {
         setQuoteOut('—')
@@ -406,6 +490,9 @@ export default function Swap() {
       }
 
       try {
+        setQuoteNotice(null)
+        setQuoteNoLiquidity(false)
+
         const A = getToken(from)
         const B = getToken(to)
         if (!A || !B) {
@@ -428,14 +515,74 @@ export default function Swap() {
       } catch (e: any) {
         setQuoteOut('—')
         setMinOut('—')
-        setErr(e?.shortMessage || e?.message || 'Quote failed.')
+
+        const raw = tryDecodeRevert(e)
+        const msg = String(e?.shortMessage || e?.message || raw || 'Quote failed.')
+
+        // If it’s undecodable, verify if the pair exists / has reserves
+        const A = getToken(from)
+        const B = getToken(to)
+
+        if (A && B && (msg.toLowerCase().includes('unknown custom error') || msg.toLowerCase().includes('execution reverted'))) {
+          const noLp = await detectNoLiquidity(provider, A, B)
+          if (noLp) {
+            setQuoteNoLiquidity(true)
+            setQuoteNotice(`No liquidity pool for ${from}/${to} yet. Try another pair or add liquidity.`)
+            return
+          }
+        }
+
+        if (isNoLiquidityLike(msg) || isNoLiquidityLike(raw)) {
+          setQuoteNoLiquidity(true)
+          setQuoteNotice(`No liquidity pool for ${from}/${to} yet. Try another pair or add liquidity.`)
+        } else {
+          setQuoteNoLiquidity(false)
+          setQuoteNotice(msg)
+        }
       }
+
+
     }, 250)
 
     return () => {
       if (quoteTimer.current) window.clearTimeout(quoteTimer.current)
     }
   }, [amount, from, to, slippageBps, address, provider])
+
+
+  async function refreshPriceNow() {
+    try {
+      if (from === to) return
+
+      const A = getToken(from)
+      const B = getToken(to)
+      if (!A || !B) return
+
+      const fromDec = await readDecimals(A, provider)
+      const toDec = await readDecimals(B, provider)
+
+      // price = quote for 1 "from" token
+      const amountIn = ethers.parseUnits('1', fromDec)
+      const { amountOut } = await getQuoteOut({ from: A, to: B, amountIn })
+
+      const p = Number(ethers.formatUnits(amountOut, toDec))
+      if (!Number.isFinite(p) || p <= 0) return
+
+      const now = Date.now()
+      const pt: PricePoint = { t: now, p }
+
+      setPriceData((prev) => {
+        const next = [...prev, pt].filter((x) => x.t >= now - PRICE_WINDOW_MS)
+        try {
+          localStorage.setItem(priceKey, JSON.stringify(next))
+        } catch { }
+        return next
+      })
+    } catch {
+      // ignore (no pool / quote fail)
+    }
+  }
+
 
   async function onSwap() {
     setErr(null)
@@ -449,6 +596,11 @@ export default function Swap() {
 
       const amtStr = clampAmountStr(amount.trim())
       if (!amtStr || Number(amtStr) <= 0) throw new Error('Enter a valid amount.')
+
+      if (quoteNoLiquidity) {
+        throw new Error(`No liquidity pool for ${from}/${to} yet. Add liquidity or pick another pair.`)
+      }
+
 
       const fromToken = getToken(from)
       const toToken = getToken(to)
@@ -523,6 +675,7 @@ export default function Swap() {
         setInfo(null)
       } else {
         setInfo('Swap confirmed on-chain ✅')
+        await refreshPriceNow()
       }
 
       window.setTimeout(async () => {
@@ -560,6 +713,7 @@ export default function Swap() {
         <WalletSummaryCard
           walletConnected={walletConnected}
           address={address}
+          ain={ainLoading ? null : ain}
           stats={[
             { label: from, value: fromBalDisplay },
             { label: to, value: toBalDisplay },
@@ -677,6 +831,23 @@ export default function Swap() {
                   </div>
                 </div>
               </div>
+              {quoteNotice && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
+                  <div className="font-semibold">{quoteNoLiquidity ? 'No liquidity yet' : 'Quote notice'}</div>
+                  <div className="mt-1">{quoteNotice}</div>
+
+                  {quoteNoLiquidity && (
+                    <div className="mt-2">
+                      <Link
+                        to={`/liquidity?a=${encodeURIComponent(from)}&b=${encodeURIComponent(to)}`}
+                        className="font-semibold underline"
+                      >
+                        Add Liquidity
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {err && (
                 <div className="whitespace-pre-wrap rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
@@ -691,7 +862,7 @@ export default function Swap() {
 
               <button
                 onClick={onSwap}
-                disabled={!walletConnected || !address || busy}
+                disabled={!walletConnected || !address || busy || quoteNoLiquidity}
                 className="w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {busy ? 'Confirm in AmVault…' : 'Preview & Swap'}

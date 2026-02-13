@@ -4,11 +4,14 @@ import { Link } from 'react-router-dom'
 import { ethers, Interface } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
 import WalletSummaryCard from '../components/WalletSummaryCard'
+import { useWalletMetaStore } from '../store/walletMetaStore'
 
-type Step = 'buy' | 'bridge' | 'swap'
+type Step = 'buy' | 'bridge'
 
 const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 80002) // Amoy
 const ALK_CHAIN_ID = Number(import.meta.env.VITE_ALK_CHAIN_ID ?? 237422)
+
+
 
 const POLY_RPC =
   (import.meta.env.VITE_POLY_RPC as string) ?? 'https://rpc-amoy.polygon.technology'
@@ -85,6 +88,7 @@ export default function GetALKE() {
   const { session } = useAuth()
   const walletConnected = !!session
   const address = session?.address
+  const { ain, ainLoading } = useWalletMetaStore()
 
   const [step, setStep] = useState<Step>('buy')
 
@@ -105,6 +109,16 @@ export default function GetALKE() {
 
   const [debugOpen, setDebugOpen] = useState(false)
   const [lastBridgeJson, setLastBridgeJson] = useState<string>('')
+
+  const [mintOpen, setMintOpen] = useState(false)
+  const [mintDetails, setMintDetails] = useState<{
+    depositTx: string
+    mintTx?: string | null
+    estMah?: string | null
+  } | null>(null)
+
+  const estMahRef = useRef<string | null>(null)
+
 
   const BRIDGE_PREFLIGHT = {
     flow: 'bridge_usdc_to_mah',
@@ -308,6 +322,10 @@ export default function GetALKE() {
         mahBeforeRef.current = null
       }
 
+      // estimated MAH user should receive (after UI fee)
+      estMahRef.current = feeQuote.ok ? feeQuote.mahNet.toFixed(6) : null
+
+
       const results = await sendTransactions(
         {
           chainId: POLY_CHAIN_ID,
@@ -375,12 +393,21 @@ export default function GetALKE() {
 
         if (mintTxHash || mintedAt) {
           if (mintTxHash) setMintedTx(mintTxHash)
+
+          setMintDetails({
+            depositTx: hash,
+            mintTx: mintTxHash ?? null,
+            estMah: estMahRef.current,
+          })
+          setMintOpen(true)
+
           setBridgeInfo(null)
           setPollStatus(null)
           if (pollingRef.current) window.clearInterval(pollingRef.current)
           pollingRef.current = null
           return
         }
+
 
         if (conf >= REQUIRED) {
           setPollStatus('Confirmed ✅ Waiting for bridge worker to mint…')
@@ -395,12 +422,20 @@ export default function GetALKE() {
             const now = await mahRead.balanceOf(address)
 
             if (now > mahBeforeRef.current) {
+              setMintDetails({
+                depositTx: hash,
+                mintTx: null,
+                estMah: estMahRef.current,
+              })
+              setMintOpen(true)
+
               setBridgeInfo(null)
               setPollStatus(null)
               if (pollingRef.current) window.clearInterval(pollingRef.current)
               pollingRef.current = null
               return
             }
+
           } catch {
             // ignore
           }
@@ -434,9 +469,10 @@ export default function GetALKE() {
         <WalletSummaryCard
           walletConnected={walletConnected}
           address={address}
+          ain={ainLoading ? null : ain}
           stats={[
-            { label: 'Polygon USDC', value: loadingBalances ? '…' : usdcBal },
-            { label: 'Alk MAH', value: loadingBalances ? '…' : mahBal },
+            { label: 'USDC', value: loadingBalances ? '…' : usdcBal },
+            { label: 'MAH', value: loadingBalances ? '…' : mahBal },
           ]}
           notConnectedHint="Connect amVault to bridge USDC → MAH."
         />
@@ -444,7 +480,6 @@ export default function GetALKE() {
         <div className="mb-4 flex flex-col gap-2 sm:flex-row">
           <StepTab active={step === 'buy'} n="1" title="Buy USDC" subtitle="Polygon" onClick={() => setStep('buy')} />
           <StepTab active={step === 'bridge'} n="2" title="Bridge to MAH" subtitle="Alkebuleum" onClick={() => setStep('bridge')} />
-          <StepTab active={step === 'swap'} n="3" title="Swap to ALKE" subtitle="DEX" onClick={() => setStep('swap')} />
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -528,10 +563,10 @@ export default function GetALKE() {
                       ${feeQuote.fee.toFixed(2)}
                     </div>
 
-                    <div className="text-slate-500 dark:text-slate-400">You receive (est.)</div>
+                    {/*     <div className="text-slate-500 dark:text-slate-400">You receive (est.)</div>
                     <div className="text-right font-semibold tabular-nums text-slate-900 dark:text-slate-100">
                       {feeQuote.mahNet.toFixed(6)} MAH
-                    </div>
+                    </div> */}
                   </div>
 
                   <details className="mt-2">
@@ -557,7 +592,6 @@ export default function GetALKE() {
                   </button>
 
                   <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    Use Polygon (chainId {POLY_CHAIN_ID}). We don’t auto-switch.
                     <div className="mt-1">
                       <span className="font-semibold">POL balance:</span>{' '}
                       <span className="font-mono tabular-nums">{loadingBalances ? '…' : polBal}</span>
@@ -630,79 +664,85 @@ export default function GetALKE() {
                     </div>
                   )}
 
-                  <button
-                    className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                    onClick={() => setStep('swap')}
+                  <Link
+                    to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
+                    className="mt-3 block w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-center font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
                   >
-                    I already have MAH → Go to Swap
-                  </button>
+                    I already have MAH → Get ALKE
+                  </Link>
+
                 </div>
               </div>
             </div>
           )}
 
-          {step === 'swap' && (
-            <div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <div className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                    Step 3 — Swap MAH → {ALKE.symbol}
-                  </div>
-                  <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                    Swap MAH for {ALKE.symbol} on JollofSwap.
-                  </div>
-                </div>
-                <div className="shrink-0">
-                  <Badge>Network: Alkebuleum</Badge>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="flex items-center justify-between text-sm">
-                  <div className="text-slate-700 dark:text-slate-200">
-                    <span className="font-semibold">Your MAH balance:</span>{' '}
-                    <span className="tabular-nums">{mahBal}</span>
-                  </div>
-                  <Badge>{ALKE.networkName}</Badge>
-                </div>
-
-                {!canShowSwapNow && (
-                  <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-                    No MAH yet. Finish bridging or wait for mint.
-                  </div>
-                )}
-
-                <Link
-                  to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
-                  className={[
-                    'mt-3 block w-full rounded-xl px-4 py-3 text-center font-semibold shadow-sm transition',
-                    canShowSwapNow
-                      ? 'bg-orange-600 text-white hover:bg-orange-700'
-                      : 'cursor-not-allowed bg-orange-200 text-white',
-                  ].join(' ')}
-                  onClick={(e) => {
-                    if (!canShowSwapNow) e.preventDefault()
-                  }}
-                >
-                  Go to Swap
-                </Link>
-
-                <button
-                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                  onClick={() => setStep('bridge')}
-                >
-                  Back to Bridge
-                </button>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
           Bridge API: <span className="font-mono">{BRIDGE_API}</span>
+          {mintOpen && mintDetails && (
+            <ModalShell
+              title="Bridge complete — MAH received ✅"
+              subtitle="Your USDC deposit has been processed and MAH is now available on Alkebuleum."
+              onClose={() => setMintOpen(false)}
+            >
+              <div className="grid gap-3">
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
+                  <div className="font-semibold">What happened</div>
+                  <div className="mt-1">
+                    MAH was minted to your Alkebuleum wallet:
+                    <div className="mt-1 break-all font-mono text-xs">{address}</div>
+                  </div>
+
+                  {mintDetails.estMah && (
+                    <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                      Estimated received: <span className="font-semibold">{mintDetails.estMah} MAH</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid gap-2 text-xs text-slate-600 dark:text-slate-400">
+                  <div>
+                    Deposit Tx: <span className="font-mono">{shortAddr(mintDetails.depositTx)}</span>
+                  </div>
+                  {mintDetails.mintTx && (
+                    <div>
+                      Mint Tx: <span className="font-mono">{shortAddr(mintDetails.mintTx)}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Link
+                    to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
+                    className="rounded-xl bg-orange-600 px-4 py-3 text-center font-semibold text-white shadow-sm transition hover:bg-orange-700"
+                    onClick={() => {
+                      setMintOpen(false)
+                      //setStep('swap')
+                    }}
+                  >
+                    Swap MAH → ALKE
+                  </Link>
+
+                  <button
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                    onClick={() => setMintOpen(false)}
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                  If your balance doesn’t update instantly, it may take a few seconds to refresh.
+                </div>
+              </div>
+            </ModalShell>
+          )}
+
         </div>
       </div>
     </div>
+
   )
 }
 
@@ -748,6 +788,45 @@ function CopyAddr({ value }: { value: string }) {
     </button>
   )
 }
+
+function ModalShell({
+  title,
+  subtitle,
+  onClose,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-bold text-slate-900 dark:text-slate-100">{title}</div>
+            {subtitle && <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">{subtitle}</div>}
+          </div>
+          <button
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mt-4">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 
 function StepTab({
   active,

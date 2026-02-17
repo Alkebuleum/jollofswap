@@ -1,5 +1,9 @@
 // src/pages/Liquidity.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
+import { collection, onSnapshot, orderBy, query, where, limit, collectionGroup } from 'firebase/firestore'
+import { db } from '../services/firebase'
+
 import { ethers } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
 import { useLocation, useSearchParams } from 'react-router-dom'
@@ -30,6 +34,23 @@ import { useWalletMetaStore } from '../store/walletMetaStore'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
+
+const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
+const MIN_POOL_RESERVE_HUMAN = '0.01' // per side, tune
+
+const FACTORY_ABI = ['function protocolTreasury() view returns (address)']
+const ERC20_XFER_IFACE = new ethers.Interface(['function transfer(address to,uint256 value) returns (bool)'])
+const PAIR_SYNC_IFACE = new ethers.Interface(['function sync()'])
+
+function buildErc20TransferTx(tokenAddr: string, to: string, amount: bigint) {
+  return {
+    to: tokenAddr,
+    data: ERC20_XFER_IFACE.encodeFunctionData('transfer', [to, amount]),
+    value: 0n,
+  }
+}
+
+
 
 function shortAddr(a?: string) {
   if (!a) return ''
@@ -270,6 +291,16 @@ export default function Liquidity() {
   const [decBState, setDecBState] = useState<number>(18)
   const [poolHasReserves, setPoolHasReserves] = useState(false)
 
+  const [poolDetailsOpen, setPoolDetailsOpen] = useState(false)
+  const [poolManageOpen, setPoolManageOpen] = useState(false)
+  const [lpTotalSupplyUi, setLpTotalSupplyUi] = useState<string>('—')
+  const [lpBalRaw, setLpBalRaw] = useState<bigint>(0n)
+  const [lpSupplyRaw, setLpSupplyRaw] = useState<bigint>(0n)
+
+  const [feesPnlUi, setFeesPnlUi] = useState<string>('—')
+  const [feesPnlNote, setFeesPnlNote] = useState<string | null>(null)
+
+
   const [ratioAtoB, setRatioAtoB] = useState<string>('—')
   const [ratioBtoA, setRatioBtoA] = useState<string>('—')
 
@@ -279,6 +310,20 @@ export default function Liquidity() {
   const [sp] = useSearchParams()
   const location = useLocation()
   const didInitRouteRef = useRef(false)
+
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [lpGate, setLpGate] = useState<{ blocked: boolean; reason: string | null }>({
+    blocked: false,
+    reason: null,
+  })
+  const [repairA, setRepairA] = useState('') // human units
+  const [repairB, setRepairB] = useState('')
+
+
+
+
+
+
 
   function tokenKeyFromParam(v: string | null): TokenKey | null {
     if (!v) return null
@@ -309,6 +354,26 @@ export default function Liquidity() {
     setTokenB(nextB)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    let alive = true
+      ; (async () => {
+        try {
+          if (!address || !FACTORY || !ethers.isAddress(FACTORY)) {
+            if (alive) setIsAdmin(false)
+            return
+          }
+          const f = new ethers.Contract(FACTORY, FACTORY_ABI, provider)
+          const treasury: string = await f.protocolTreasury()
+          const admin = (treasury && treasury !== ethers.ZeroAddress) ? treasury : FACTORY
+          if (alive) setIsAdmin(admin.toLowerCase() === address.toLowerCase())
+        } catch {
+          if (alive) setIsAdmin(false)
+        }
+      })()
+    return () => { alive = false }
+  }, [address, provider])
+
 
 
   useEffect(() => {
@@ -370,6 +435,19 @@ export default function Liquidity() {
     setBalB(fmtNum(ethers.formatUnits(b2, d2)))
   }
 
+  function fmtLp(balance: bigint) {
+    const raw = balance.toString()
+    const ui = ethers.formatUnits(balance, 18) // human
+    const n = Number(ui)
+
+    // If it’s too small to be meaningful in human form, show raw units
+    if (!isFinite(n) || n === 0 || Math.abs(n) < 0.000001) {
+      return `${raw} (raw)`
+    }
+    return fmtNum(ui)
+  }
+
+
   async function refreshPositionAndReserves() {
     const req = ++posReqRef.current
     const isLive = () => req === posReqRef.current
@@ -400,9 +478,15 @@ export default function Liquidity() {
       const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
       setPairAddr(pair || '—')
 
-      const lpUnits = pos.lpBalance > 0n ? ethers.formatUnits(pos.lpBalance, 18) : '0'
-      setLpBalUi(fmtNum(lpUnits))
-      setLpShareUi(pos.totalSupply > 0n ? `${(pos.shareBps / 100).toFixed(2)}%` : '0.00%')
+      setLpBalRaw(pos.lpBalance)
+      setLpSupplyRaw(pos.totalSupply)
+
+      setLpBalUi(fmtLp(pos.lpBalance))
+      setLpTotalSupplyUi(fmtLp(pos.totalSupply))
+
+      setLpBalRaw(pos.lpBalance)
+      setLpSupplyRaw(pos.totalSupply)
+
 
       if (!pair) {
         // keep cleared raw reserves/ratios/poolHasReserves so UI doesn't show defaults
@@ -445,6 +529,26 @@ export default function Liquidity() {
       setRawReserveB(reserveB)
       setDecAState(decA)
       setDecBState(decB)
+
+      // Gate if pool exists but either side is below minimum threshold
+      if (pair && pos.totalSupply > 0n) {
+        const minA = ethers.parseUnits(MIN_POOL_RESERVE_HUMAN, decA)
+        const minB = ethers.parseUnits(MIN_POOL_RESERVE_HUMAN, decB)
+
+        const broken = reserveA < minA || reserveB < minB
+        if (broken) {
+          setLpGate({
+            blocked: true,
+            reason: `Pool is in repair mode (very low / imbalanced reserves). Adding liquidity is disabled to protect users.`,
+          })
+        } else {
+          setLpGate({ blocked: false, reason: null })
+        }
+      } else {
+        // no pool yet (or fresh init) => allow seeding
+        setLpGate({ blocked: false, reason: null })
+      }
+
 
       const has = reserveA > 0n && reserveB > 0n
       setPoolHasReserves(has)
@@ -536,6 +640,164 @@ export default function Liquidity() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, tokenA, tokenB])
 
+
+  // ---------------- Fees / P&L (from Firestore logs) ----------------
+  useEffect(() => {
+    if (!address || !pairAddr || pairAddr === '—') {
+      setFeesPnlUi('—')
+      setFeesPnlNote(null)
+      return
+    }
+
+    const D = 1_000_000n
+    const LP_FEE_PPM = 2_500n // 0.25%
+
+    const bn = (x: any) => {
+      try { return BigInt(x ?? 0) } catch { return 0n }
+    }
+    const lower = (x: any) => String(x ?? '').toLowerCase()
+
+    const aAddr = tokenAddressForPath(TOKENS[tokenA]).toLowerCase()
+    const bAddr = tokenAddressForPath(TOKENS[tokenB]).toLowerCase()
+    const pairKey = `${ALK_CHAIN_ID}_${pairAddr.toLowerCase()}`
+    const userKey = address.toLowerCase()
+
+    const map01toAB = (token0: string, token1: string, v0: bigint, v1: bigint) => {
+      const t0 = lower(token0)
+      const t1 = lower(token1)
+      const a = lower(aAddr)
+      const b = lower(bAddr)
+      if (a === t0 && b === t1) return { a: v0, b: v1 }
+      if (a === t1 && b === t0) return { a: v1, b: v0 }
+      return { a: v0, b: v1 }
+    }
+
+    // 1) user liquidity history (Mint/Burn + Sync in same tx)
+    const qUser = query(
+      collectionGroup(db, 'amm_events'),
+      where('pairKey', '==', pairKey),
+      where('user', '==', userKey),
+      orderBy('blockTime', 'asc'),
+      limit(1500)
+    )
+
+    const unsubUser = onSnapshot(qUser, (snap) => {
+      // group by txHash so we can find Sync in same tx
+      const byTx = new Map<string, any[]>()
+      snap.forEach((d) => {
+        const x: any = d.data()
+        const tx = String(x.txHash || '')
+        if (!tx) return
+        const arr = byTx.get(tx) ?? []
+        arr.push(x)
+        byTx.set(tx, arr)
+      })
+
+      let depValueA = 0n
+      let wdrValueA = 0n
+      let firstAddTime: number | null = null
+
+      for (const rows of byTx.values()) {
+        const sync = rows.find((r) => r?.event === 'Sync')
+        const mint = rows.find((r) => r?.event === 'Mint' && r?.action === 'add_liquidity')
+        const burn = rows.find((r) => r?.event === 'Burn' && r?.action === 'remove_liquidity')
+
+        // reserves at this tx (for valuation)
+        let rA = 0n, rB = 0n
+        if (sync?.args?.reserve0 != null && sync?.args?.reserve1 != null) {
+          const mapped = map01toAB(sync.token0, sync.token1, bn(sync.args.reserve0), bn(sync.args.reserve1))
+          rA = mapped.a
+          rB = mapped.b
+        }
+
+        const bToA = (bRaw: bigint) => {
+          if (rA === 0n || rB === 0n) return 0n
+          return quote(bRaw, rB, rA)
+        }
+
+        if (mint?.args?.amount0 != null && mint?.args?.amount1 != null) {
+          if (!firstAddTime && typeof mint.blockTime === 'number') firstAddTime = mint.blockTime
+          const mapped = map01toAB(mint.token0, mint.token1, bn(mint.args.amount0), bn(mint.args.amount1))
+          depValueA += mapped.a + bToA(mapped.b)
+        }
+
+        if (burn?.args?.amount0 != null && burn?.args?.amount1 != null) {
+          const mapped = map01toAB(burn.token0, burn.token1, bn(burn.args.amount0), bn(burn.args.amount1))
+          wdrValueA += mapped.a + bToA(mapped.b)
+        }
+      }
+
+      // current position value in A (using current reserves)
+      let curValueA = 0n
+      if (rawReserveA > 0n && rawReserveB > 0n && lpSupplyRaw > 0n && lpBalRaw > 0n) {
+        const curA = (rawReserveA * lpBalRaw) / lpSupplyRaw
+        const curB = (rawReserveB * lpBalRaw) / lpSupplyRaw
+        curValueA = curA + quote(curB, rawReserveB, rawReserveA)
+      }
+
+      const pnlA = (curValueA + wdrValueA) - depValueA
+      const pnlUi = `${pnlA >= 0n ? '+' : ''}${fmtNum(ethers.formatUnits(pnlA, decAState))} ${tokenA}`
+
+        ; (window as any).__jswap_firstAddTime = firstAddTime
+      setFeesPnlUi(`P&L: ${pnlUi} • Fees: …`)
+      setFeesPnlNote('Fees are estimated (uses current LP share). Exact fees require LP share over time.')
+    })
+
+    // 2) swaps fee estimate since first add
+    const qSwaps = query(
+      collectionGroup(db, 'amm_events'),
+      where('pairKey', '==', pairKey),
+      where('event', '==', 'Swap'),
+      orderBy('blockTime', 'asc'),
+      limit(2000)
+    )
+
+    const unsubSwaps = onSnapshot(qSwaps, (snap) => {
+      const firstAddTime: number | null = (window as any).__jswap_firstAddTime ?? null
+      if (!firstAddTime) return
+
+      if (lpSupplyRaw <= 0n || lpBalRaw <= 0n) {
+        setFeesPnlUi((prev) => prev.replace(/Fees: .*/, `Fees: 0 ${tokenA} (est)`))
+        return
+      }
+
+      const sharePpm = (lpBalRaw * 1_000_000n) / lpSupplyRaw
+
+      let totalFeeA = 0n
+      let totalFeeB = 0n
+
+      snap.forEach((d) => {
+        const x: any = d.data()
+        if (!x?.blockTime || x.blockTime < firstAddTime) return
+
+        const a0In = bn(x?.args?.amount0In)
+        const a1In = bn(x?.args?.amount1In)
+
+        const fee0 = (a0In * LP_FEE_PPM) / D
+        const fee1 = (a1In * LP_FEE_PPM) / D
+
+        const mapped = map01toAB(x.token0, x.token1, fee0, fee1)
+        totalFeeA += mapped.a
+        totalFeeB += mapped.b
+      })
+
+      let feesValueA = 0n
+      if (rawReserveA > 0n && rawReserveB > 0n) {
+        feesValueA = totalFeeA + quote(totalFeeB, rawReserveB, rawReserveA)
+      }
+
+      const userFeesA = (feesValueA * sharePpm) / 1_000_000n
+      const feesUi = `+${fmtNum(ethers.formatUnits(userFeesA, decAState))} ${tokenA} (est)`
+      setFeesPnlUi((prev) => prev.replace(/Fees: .*/, `Fees: ${feesUi}`))
+    })
+
+    return () => {
+      unsubUser()
+      unsubSwaps()
+    }
+  }, [address, pairAddr, tokenA, tokenB, rawReserveA, rawReserveB, decAState, lpBalRaw, lpSupplyRaw])
+
+
   async function onAddLiquidity() {
     setErr(null)
     setInfo(null)
@@ -545,6 +807,11 @@ export default function Liquidity() {
       if (!walletConnected || !address) throw new Error('Connect amVault using the top bar to continue.')
       if (!ROUTER) throw new Error('Missing VITE_JOLLOF_ROUTER_ALK')
       if (tokenA === tokenB) throw new Error('Select different tokens.')
+
+      if (lpGate.blocked && !isAdmin) {
+        throw new Error(lpGate.reason ?? 'Pool needs admin repair before adding liquidity.')
+      }
+
 
       const aStr = clampAmountStr(amtA.trim())
       const bStr = clampAmountStr(amtB.trim())
@@ -658,6 +925,20 @@ export default function Liquidity() {
           anyFail = true
         } else if (r.status === 1) {
           nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'mined_ok' })
+          if (labels[i] === 'addLiquidity') {
+            await logAmmEventsFromReceipt({
+              provider,
+              chainId: ALK_CHAIN_ID,
+              receipt: r,
+              action: 'add_liquidity',
+              user: address,
+              ain: ainLoading ? null : (ain ?? null),
+              tokenA,
+              tokenB,
+              pairHint: pairAddr !== '—' ? pairAddr : null, // optional
+            })
+          }
+
         } else {
           anyFail = true
 
@@ -831,6 +1112,21 @@ export default function Liquidity() {
           nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'unknown' })
         } else if (r.status === 1) {
           nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'mined_ok' })
+          if (labels[i] === 'removeLiquidity') {
+            await logAmmEventsFromReceipt({
+              provider,
+              chainId: ALK_CHAIN_ID,
+              receipt: r,
+              action: 'remove_liquidity',
+              user: address,
+              ain: ainLoading ? null : (ain ?? null),
+              tokenA,
+              tokenB,
+              pairHint: pairAddr !== '—' ? pairAddr : null,
+            })
+          }
+
+
         } else {
           anyFail = true
           let reason = await getRevertReasonFromChain(provider, h)
@@ -875,6 +1171,82 @@ export default function Liquidity() {
     }
   }
 
+  async function onRepairPool() {
+    setErr(null)
+    setInfo(null)
+    setTxLines([])
+    setBusy(true)
+
+    try {
+      if (!walletConnected || !address) throw new Error('Connect amVault to continue.')
+      if (!isAdmin) throw new Error('Admin only.')
+      if (!pairAddr || pairAddr === '—') throw new Error('No pair found.')
+
+      const A = TOKENS[tokenA]
+      const B = TOKENS[tokenB]
+      const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
+
+      const aStr = clampAmountStr(repairA.trim())
+      const bStr = clampAmountStr(repairB.trim())
+
+      const donateA = aStr ? ethers.parseUnits(aStr, decA) : 0n
+      const donateB = bStr ? ethers.parseUnits(bStr, decB) : 0n
+      if (donateA <= 0n && donateB <= 0n) throw new Error('Enter a donate amount.')
+
+      // donate uses ERC20 addresses (native ALKE side is WAKE via tokenAddressForPath)
+      const addrA = tokenAddressForPath(A)
+      const addrB = tokenAddressForPath(B)
+
+      const txs: any[] = []
+      if (donateA > 0n) txs.push(buildErc20TransferTx(addrA, pairAddr, donateA))
+      if (donateB > 0n) txs.push(buildErc20TransferTx(addrB, pairAddr, donateB))
+
+      // sync() to update reserves
+      txs.push({ to: pairAddr, data: PAIR_SYNC_IFACE.encodeFunctionData('sync', []), value: 0n })
+
+      const safeTxs = txs.map(normalizeTxForAmVault)
+
+      setInfo('Repair queued. Confirm in amVault…')
+
+      const results = await sendTransactions(
+        { chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: { flow: 'repair_pool_v1' } } as any,
+        { app: APP_NAME, amvaultUrl: AMVAULT_URL }
+      )
+
+      const firstFail = results?.find((r: any) => r?.ok === false)
+      if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
+
+      const hashes: string[] = (results || []).map((r: any) => r?.txHash).filter(Boolean)
+      setInfo('Waiting for confirmation…')
+
+      // wait for last tx (sync) to log Sync event
+      const syncHash = hashes[hashes.length - 1]
+      const receipt = await waitForReceipt(provider, syncHash)
+      if (receipt && receipt.status === 1) {
+        await logAmmEventsFromReceipt({
+          provider,
+          chainId: ALK_CHAIN_ID,
+          receipt,
+          action: 'admin_repair',
+          user: address,
+          ain: ainLoading ? null : (ain ?? null),
+          tokenA,
+          tokenB,
+          pairHint: pairAddr,
+        })
+      }
+
+      setInfo('Pool repaired ✅ (donation + sync)')
+      await refreshPositionAndReserves()
+    } catch (e: any) {
+      setErr(e?.shortMessage || e?.message || 'Repair failed.')
+      setInfo(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+
   function trim6(s: string) {
     if (!s.includes('.')) return s
     const [a, b] = s.split('.')
@@ -913,7 +1285,7 @@ export default function Liquidity() {
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Liquidity</h1>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              Provide liquidity and verify it on-chain (V1).
+              Provide liquidity and verify it on-chain.
             </p>
           </div>
           <button
@@ -951,10 +1323,10 @@ export default function Liquidity() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Add Liquidity</div>
-                <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                {/* <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
                   Router:{' '}
                   <span className="font-mono text-xs">{ROUTER ? shortAddr(ROUTER) : '—'}</span>
-                </div>
+                </div> */}
               </div>
               <Badge>Network: Alkebuleum</Badge>
             </div>
@@ -974,7 +1346,7 @@ export default function Liquidity() {
                     onChange={(e) => setTokenA(e.target.value as TokenKey)}
                   >
                     {tokenOptions.map((k) => (
-                      <option key={k} value={k}>
+                      <option key={k} value={k} disabled={k === tokenB}>
                         {k}
                       </option>
                     ))}
@@ -1010,7 +1382,7 @@ export default function Liquidity() {
                     onChange={(e) => setTokenB(e.target.value as TokenKey)}
                   >
                     {tokenOptions.map((k) => (
-                      <option key={k} value={k}>
+                      <option key={k} value={k} disabled={k === tokenA}>
                         {k}
                       </option>
                     ))}
@@ -1033,7 +1405,7 @@ export default function Liquidity() {
               </div>
             </div>
 
-            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            {/*      <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
               {poolHasReserves ? (
                 <>
                   Pool ratio:{' '}
@@ -1044,7 +1416,7 @@ export default function Liquidity() {
               ) : (
                 <>No pool ratio yet — first liquidity sets the price.</>
               )}
-            </div>
+            </div> */}
 
             <div className="mt-3 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
               <span>Slippage</span>
@@ -1077,7 +1449,7 @@ export default function Liquidity() {
               </div>
             )}
 
-            {txLines.length > 0 && (
+            {/* {txLines.length > 0 && (
               <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="mb-2 font-semibold text-slate-800 dark:text-slate-100">
                   Transaction confirmation
@@ -1123,11 +1495,11 @@ export default function Liquidity() {
                   ))}
                 </div>
               </div>
-            )}
+            )} */}
 
             <button
               onClick={onAddLiquidity}
-              disabled={!walletConnected || !address || busy}
+              disabled={!walletConnected || !address || busy || (lpGate.blocked && !isAdmin)}
               className="mt-4 w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {busy ? 'Confirming on-chain…' : 'Preview & Add'}
@@ -1136,82 +1508,172 @@ export default function Liquidity() {
 
           {/* Position + pool state */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between">
-              <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Pool</div>
-              <Badge>V1</Badge>
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Pool</div>
+                {/*    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  Pair:{' '}
+                  <span className="font-mono text-xs text-slate-900 dark:text-slate-100">
+                    {pairAddr === '—' ? '—' : shortAddr(pairAddr)}
+                  </span>
+                </div> */}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Badge>Fee: 0.30%</Badge>
+              </div>
             </div>
 
-            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              Pair:{' '}
-              <span className="font-mono text-xs text-slate-900 dark:text-slate-100">
-                {pairAddr === '—' ? '—' : shortAddr(pairAddr)}
-              </span>
-            </div>
+            {/* Essentials (always visible) */}
+            <div className="mt-4 grid gap-2">
+              {/* Price */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
+                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Price</div>
+                <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
+                  {poolHasReserves ? (
+                    <>
+                      1 {tokenA} ≈ {ratioAtoB} {tokenB}
+                    </>
+                  ) : (
+                    <>—</>
+                  )}
+                </div>
+              </div>
 
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
+              {/* Reserves */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
                 <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Reserves</div>
                 <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
                   {reserveAUi} {tokenA} / {reserveBUi} {tokenB}
                 </div>
               </div>
 
+              {/* Your position (investor view) */}
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Your share</div>
-                <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
-                  {lpShareUi}
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Your position</div>
+                  <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{lpShareUi}</div>
                 </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">LP balance</div>
-                <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
-                  {lpBalUi}
+                <div className="mt-1 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
+                  {underAUi} {tokenA}
+                  <span className="mx-2 text-slate-400 dark:text-slate-600">/</span>
+                  {underBUi} {tokenB}
                 </div>
-              </div>
-
-              <div className="sm:col-span-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Underlying</div>
-                <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
-                  {underAUi} {tokenA} / {underBUi} {tokenB}
+                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  This is your share of the pool reserves right now.
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 border-t border-slate-200 pt-4 dark:border-slate-800">
-              <div className="flex items-center justify-between">
-                <div className="text-base font-bold text-slate-900 dark:text-slate-100">Remove</div>
-                <div className="text-sm font-semibold text-slate-700 tabular-nums dark:text-slate-200">
-                  {removePct}%
+            {/* See details toggle */}
+            <button
+              type="button"
+              onClick={() => setPoolDetailsOpen((v) => !v)}
+              className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              {poolDetailsOpen ? 'Hide details' : 'See details'}
+            </button>
+
+            {poolDetailsOpen && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="grid gap-2">
+                  <Row label="Pair address" value={pairAddr === '—' ? '—' : pairAddr} mono />
+                  <Row label="LP balance" value={lpBalUi} />
+                  <Row label="LP total supply" value={lpTotalSupplyUi} />
+                  <Row label={`1 ${tokenB} ≈`} value={poolHasReserves ? `${ratioBtoA} ${tokenA}` : '—'} />
+                  <Row label="Fees / P&L" value={feesPnlUi} />
+                  {feesPnlNote && (
+                    <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">{feesPnlNote}</div>
+                  )}
+
                 </div>
               </div>
+            )}
 
-              <div className="mt-2 flex flex-wrap gap-2">
-                {[25, 50, 75, 100].map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setRemovePct(p)}
-                    className={[
-                      'rounded-full px-2.5 py-1 text-xs font-semibold transition',
-                      removePct === p
-                        ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
-                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
-                    ].join(' ')}
-                  >
-                    {p}%
-                  </button>
-                ))}
+            {/* Manage (remove) toggle */}
+            <button
+              type="button"
+              onClick={() => setPoolManageOpen((v) => !v)}
+              className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              {poolManageOpen ? 'Hide manage' : 'Manage liquidity'}
+            </button>
+
+            {poolManageOpen && (
+              <div className="mt-3 border-t border-slate-200 pt-4 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <div className="text-base font-bold text-slate-900 dark:text-slate-100">Remove</div>
+                  <div className="text-sm font-semibold text-slate-700 tabular-nums dark:text-slate-200">
+                    {removePct}%
+                  </div>
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {[25, 50, 75, 100].map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setRemovePct(p)}
+                      className={[
+                        'rounded-full px-2.5 py-1 text-xs font-semibold transition',
+                        removePct === p
+                          ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
+                      ].join(' ')}
+                    >
+                      {p}%
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={onRemoveLiquidity}
+                  disabled={!walletConnected || !address || busy || pairAddr === '—'}
+                  className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                >
+                  {busy ? 'Confirming…' : 'Remove liquidity'}
+                </button>
+                {lpGate.blocked && (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                    <div className="font-semibold">Pool in repair mode</div>
+                    <div className="mt-1">{lpGate.reason}</div>
+                  </div>
+                )}
+
+                {isAdmin && pairAddr !== '—' && lpGate.blocked && (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100">Admin repair (Donate + Sync)</div>
+                    <div className="mt-2 grid gap-2">
+                      <input
+                        value={repairA}
+                        onChange={(e) => setRepairA(clampAmountStr(e.target.value))}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                        placeholder={`Donate ${tokenA}`}
+                        inputMode="decimal"
+                      />
+                      <input
+                        value={repairB}
+                        onChange={(e) => setRepairB(clampAmountStr(e.target.value))}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+                        placeholder={`Donate ${tokenB}`}
+                        inputMode="decimal"
+                      />
+                      <button
+                        onClick={onRepairPool}
+                        disabled={busy}
+                        className="w-full rounded-xl bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
+                      >
+                        Repair pool
+                      </button>
+                    </div>
+                  </div>
+                )}
+
               </div>
 
-              <button
-                onClick={onRemoveLiquidity}
-                disabled={!walletConnected || !address || busy || pairAddr === '—'}
-                className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-              >
-                {busy ? 'Confirming…' : 'Remove liquidity'}
-              </button>
-            </div>
+            )}
           </div>
+
         </div>
       </div>
     </div>
@@ -1228,11 +1690,20 @@ function Badge({ children }: { children: React.ReactNode }) {
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-slate-600 dark:text-slate-400">{label}</span>
-      <span className={mono ? 'font-mono text-xs text-slate-900 dark:text-slate-100' : 'font-semibold text-slate-900 dark:text-slate-100'}>
+    <div className="flex items-start justify-between gap-3">
+      <span className="shrink-0 text-slate-600 dark:text-slate-400">{label}</span>
+
+      <span
+        className={[
+          'min-w-0 text-right text-slate-900 dark:text-slate-100',
+          mono ? 'font-mono text-xs' : 'font-semibold',
+          // key fix:
+          'break-all',
+        ].join(' ')}
+      >
         {value}
       </span>
     </div>
   )
 }
+

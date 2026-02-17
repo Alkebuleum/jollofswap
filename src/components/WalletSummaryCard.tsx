@@ -85,11 +85,12 @@ export default function WalletSummaryCard({
                 {/* RIGHT: stats (grouped, cohesive) */}
                 {!!stats?.length && (
                     <div className="flex items-stretch justify-end gap-2 sm:gap-3">
-                        {stats.map((s) => (
-                            <StatPill key={s.label} label={s.label} value={s.value} />
+                        {stats.map((s, i) => (
+                            <StatPill key={`${s.label}-${i}`} label={s.label} value={s.value} />
                         ))}
                     </div>
                 )}
+
             </div>
 
             {!walletConnected && notConnectedHint ? (

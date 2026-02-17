@@ -506,7 +506,7 @@ export default function GetALKE() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Open MoonPay
+                  Buy USDC
                 </a>
                 <button
                   className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
@@ -516,9 +516,9 @@ export default function GetALKE() {
                 </button>
               </div>
 
-              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
+              {/*   <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
                 Use <span className="font-semibold">Polygon</span> and buy to your wallet address shown above.
-              </div>
+              </div> */}
             </div>
           )}
 
@@ -530,7 +530,7 @@ export default function GetALKE() {
                     Step 2 — Bridge USDC → MAH
                   </div>
                   <div className="mt-1 text-xs sm:text-sm text-slate-600 leading-snug dark:text-slate-400">
-                    Deposit USDC to the BridgeVault on Polygon. MAH mints to the same address on Alkebuleum.
+                    Deposit USDC to the BridgeVault on Polygon. MAH mints to your address on Alkebuleum.
                   </div>
                 </div>
                 <div className="shrink-0">
@@ -679,7 +679,7 @@ export default function GetALKE() {
         </div>
 
         <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-          Bridge API: <span className="font-mono">{BRIDGE_API}</span>
+          {/*  Bridge API: <span className="font-mono">{BRIDGE_API}</span> */}
           {mintOpen && mintDetails && (
             <ModalShell
               title="Bridge complete — MAH received ✅"

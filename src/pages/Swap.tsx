@@ -3,6 +3,11 @@ import { ethers } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
+import { db } from '../services/firebase'
+import { collection, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
+import ModernPriceChart from '../components/ModernPriceChart'
+
 
 import {
   ALK_CHAIN_ID,
@@ -32,6 +37,12 @@ const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
 const WAKE = (import.meta.env.VITE_WAKE_ALK as string) ?? ''
 
+const PAIR_META_IFACE = new ethers.Interface([
+  'function token0() view returns (address)',
+  'function token1() view returns (address)',
+])
+
+
 const FACTORY_IFACE = new ethers.Interface([
   'function getPair(address tokenA, address tokenB) view returns (address pair)',
 ])
@@ -39,6 +50,91 @@ const FACTORY_IFACE = new ethers.Interface([
 const PAIR_IFACE = new ethers.Interface([
   'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
 ])
+
+const MIN_SWAP_RESERVE_HUMAN = '0.001' // per side (token units). tune later.
+
+type PairState = {
+  pair: string
+  token0: string
+  token1: string
+  reserve0: bigint
+  reserve1: bigint
+}
+
+async function fetchPairState(provider: ethers.JsonRpcProvider, A: any, B: any): Promise<PairState | null> {
+  if (!FACTORY || !ethers.isAddress(FACTORY)) return null
+  if (!WAKE || !ethers.isAddress(WAKE)) return null
+
+  const aAddr = pairTokenAddress(A)
+  const bAddr = pairTokenAddress(B)
+  if (!aAddr || !bAddr || !ethers.isAddress(aAddr) || !ethers.isAddress(bAddr)) return null
+
+  const pairData = await provider.call({
+    to: FACTORY,
+    data: FACTORY_IFACE.encodeFunctionData('getPair', [aAddr, bAddr]),
+  })
+  const [pair] = FACTORY_IFACE.decodeFunctionResult('getPair', pairData) as any
+  if (!pair || pair === ethers.ZeroAddress) return null
+
+  const [t0Raw, t1Raw, resRaw] = await Promise.all([
+    provider.call({ to: pair, data: PAIR_META_IFACE.encodeFunctionData('token0', []) }),
+    provider.call({ to: pair, data: PAIR_META_IFACE.encodeFunctionData('token1', []) }),
+    provider.call({ to: pair, data: PAIR_IFACE.encodeFunctionData('getReserves', []) }),
+  ])
+
+  const [token0] = PAIR_META_IFACE.decodeFunctionResult('token0', t0Raw) as any
+  const [token1] = PAIR_META_IFACE.decodeFunctionResult('token1', t1Raw) as any
+  const [r0, r1] = PAIR_IFACE.decodeFunctionResult('getReserves', resRaw) as any
+
+  return {
+    pair: String(pair),
+    token0: String(token0),
+    token1: String(token1),
+    reserve0: BigInt(r0),
+    reserve1: BigInt(r1),
+  }
+}
+
+function reservesForFromTo(state: PairState, fromAddr: string, toAddr: string) {
+  const t0 = state.token0.toLowerCase()
+  const t1 = state.token1.toLowerCase()
+  const f = fromAddr.toLowerCase()
+  const t = toAddr.toLowerCase()
+
+  // map reserves into "from" + "to"
+  if (f === t0 && t === t1) return { reserveFrom: state.reserve0, reserveTo: state.reserve1 }
+  if (f === t1 && t === t0) return { reserveFrom: state.reserve1, reserveTo: state.reserve0 }
+  return { reserveFrom: 0n, reserveTo: 0n }
+}
+
+async function liquidityGuard(provider: ethers.JsonRpcProvider, A: any, B: any, symA: string, symB: string) {
+  const state = await fetchPairState(provider, A, B)
+  if (!state) {
+    return { blocked: true, reason: `No liquidity pool for ${symA}/${symB} yet. Add liquidity first.` }
+  }
+
+  const fromAddr = pairTokenAddress(A)
+  const toAddr = pairTokenAddress(B)
+  if (!fromAddr || !toAddr) return { blocked: true, reason: 'Invalid token addresses.' }
+
+  const fromDec = await readDecimals(A, provider)
+  const toDec = await readDecimals(B, provider)
+
+  const { reserveFrom, reserveTo } = reservesForFromTo(state, fromAddr, toAddr)
+
+  const minFrom = ethers.parseUnits(MIN_SWAP_RESERVE_HUMAN, fromDec)
+  const minTo = ethers.parseUnits(MIN_SWAP_RESERVE_HUMAN, toDec)
+
+  if (reserveFrom < minFrom || reserveTo < minTo) {
+    return {
+      blocked: true,
+      reason: `Liquidity too low (dust pool). Add liquidity before swapping ${symA}/${symB}.`,
+    }
+  }
+
+  return { blocked: false as const, reason: '' }
+}
+
 
 function pairTokenAddress(t: any) {
   // router uses WAKE for native; mirror that here
@@ -76,10 +172,10 @@ async function detectNoLiquidity(provider: ethers.JsonRpcProvider, A: any, B: an
 
 type PricePoint = { t: number; p: number }
 
-const PRICE_SAMPLE_MS = 5 * 60 * 1000 // 5 min
+//const PRICE_SAMPLE_MS = 5 * 60 * 1000 // 5 min
 const PRICE_WINDOW_MS = 24 * 60 * 60 * 1000 // 24h
-const priceKeyFor = (a: string, b: string) =>
-  `jswap:pricehist:v1:${(a || '').toUpperCase()}-${(b || '').toUpperCase()}`
+/* const priceKeyFor = (a: string, b: string) =>
+  `jswap:pricehist:v1:${(a || '').toUpperCase()}-${(b || '').toUpperCase()}` */
 
 
 function shortAddr(a?: string) {
@@ -295,25 +391,25 @@ export default function Swap() {
     gasTopup: { enabled: true, purpose: 'jswap-swap' },
   } as any
 
-  const priceKey = useMemo(() => priceKeyFor(from, to), [from, to])
+  //const priceKey = useMemo(() => priceKeyFor(from, to), [from, to])
   const [priceData, setPriceData] = useState<PricePoint[]>([])
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(priceKey)
-      const arr = raw ? (JSON.parse(raw) as PricePoint[]) : []
-      const now = Date.now()
-      setPriceData(
-        Array.isArray(arr)
-          ? arr.filter(
-            (x) => x && typeof x.t === 'number' && typeof x.p === 'number' && x.t >= now - PRICE_WINDOW_MS
-          )
-          : []
-      )
-    } catch {
-      setPriceData([])
-    }
-  }, [priceKey])
+  /* 
+    useEffect(() => {
+      try {
+        const raw = localStorage.getItem(priceKey)
+        const arr = raw ? (JSON.parse(raw) as PricePoint[]) : []
+        const now = Date.now()
+        setPriceData(
+          Array.isArray(arr)
+            ? arr.filter(
+              (x) => x && typeof x.t === 'number' && typeof x.p === 'number' && x.t >= now - PRICE_WINDOW_MS
+            )
+            : []
+        )
+      } catch {
+        setPriceData([])
+      }
+    }, [priceKey]) */
 
 
   useEffect(() => {
@@ -329,51 +425,162 @@ export default function Swap() {
     return () => window.removeEventListener('storage', onStorage)
   }, [])
 
+  /*  useEffect(() => {
+     let alive = true
+     let timer: number | null = null
+ 
+     async function sample() {
+       try {
+         if (from === to) return
+ 
+         const A = getToken(from)
+         const B = getToken(to)
+         if (!A || !B) return
+ 
+         const fromDec = await readDecimals(A, provider)
+         const toDec = await readDecimals(B, provider)
+ 
+         const amountIn = ethers.parseUnits('1', fromDec)
+         const { amountOut } = await getQuoteOut({ from: A, to: B, amountIn })
+ 
+         const p = Number(ethers.formatUnits(amountOut, toDec))
+         if (!Number.isFinite(p) || p <= 0) return
+ 
+         const now = Date.now()
+         const pt: PricePoint = { t: now, p }
+         if (!alive) return
+ 
+         setPriceData((prev) => {
+           const next = [...prev, pt].filter((x) => x.t >= now - PRICE_WINDOW_MS)
+           try {
+             localStorage.setItem(priceKey, JSON.stringify(next))
+           } catch { }
+           return next
+         })
+       } catch {
+         // no pool / quote fail => just skip sample
+       }
+     }
+ 
+     sample()
+     timer = window.setInterval(sample, PRICE_SAMPLE_MS)
+ 
+     return () => {
+       alive = false
+       if (timer) window.clearInterval(timer)
+     }
+   }, [provider, from, to, priceKey, bySymbol]) */
+
+
   useEffect(() => {
-    let alive = true
-    let timer: number | null = null
+    let unsub: (() => void) | null = null
 
-    async function sample() {
-      try {
-        if (from === to) return
+      ; (async () => {
+        try {
+          if (from === to) return setPriceData([])
 
-        const A = getToken(from)
-        const B = getToken(to)
-        if (!A || !B) return
+          const A = getToken(from)
+          const B = getToken(to)
+          if (!A || !B) return setPriceData([])
 
-        const fromDec = await readDecimals(A, provider)
-        const toDec = await readDecimals(B, provider)
+          if (!FACTORY || !ethers.isAddress(FACTORY)) return setPriceData([])
 
-        const amountIn = ethers.parseUnits('1', fromDec)
-        const { amountOut } = await getQuoteOut({ from: A, to: B, amountIn })
+          const aAddr = pairTokenAddress(A)
+          const bAddr = pairTokenAddress(B)
+          if (!aAddr || !bAddr || !ethers.isAddress(aAddr) || !ethers.isAddress(bAddr)) return setPriceData([])
 
-        const p = Number(ethers.formatUnits(amountOut, toDec))
-        if (!Number.isFinite(p) || p <= 0) return
+          // pair
+          const pairData = await provider.call({
+            to: FACTORY,
+            data: FACTORY_IFACE.encodeFunctionData('getPair', [aAddr, bAddr]),
+          })
+          const [pair] = FACTORY_IFACE.decodeFunctionResult('getPair', pairData) as any
+          if (!pair || pair === ethers.ZeroAddress) return setPriceData([])
 
-        const now = Date.now()
-        const pt: PricePoint = { t: now, p }
-        if (!alive) return
+          // token0/token1
+          const [t0Data, t1Data] = await Promise.all([
+            provider.call({ to: pair, data: PAIR_META_IFACE.encodeFunctionData('token0', []) }),
+            provider.call({ to: pair, data: PAIR_META_IFACE.encodeFunctionData('token1', []) }),
+          ])
+          const [token0] = PAIR_META_IFACE.decodeFunctionResult('token0', t0Data) as any
+          const [token1] = PAIR_META_IFACE.decodeFunctionResult('token1', t1Data) as any
 
-        setPriceData((prev) => {
-          const next = [...prev, pt].filter((x) => x.t >= now - PRICE_WINDOW_MS)
-          try {
-            localStorage.setItem(priceKey, JSON.stringify(next))
-          } catch { }
-          return next
-        })
-      } catch {
-        // no pool / quote fail => just skip sample
-      }
-    }
+          const fromAddr = String(aAddr).toLowerCase()
+          const toAddr = String(bAddr).toLowerCase()
+          const t0 = String(token0).toLowerCase()
+          const t1 = String(token1).toLowerCase()
 
-    sample()
-    timer = window.setInterval(sample, PRICE_SAMPLE_MS)
+          const fromDec = await readDecimals(A as any, provider)
+          const toDec = await readDecimals(B as any, provider)
+
+          function priceFromReserves(res0: bigint, res1: bigint): number | null {
+            if (res0 === 0n || res1 === 0n) return null
+
+            // res0=reserves of token0, res1=reserves of token1
+            // want: (to per 1 from)
+
+            if (fromAddr === t0 && toAddr === t1) {
+              const rFrom = Number(ethers.formatUnits(res0, fromDec))
+              const rTo = Number(ethers.formatUnits(res1, toDec))
+              if (!Number.isFinite(rFrom) || !Number.isFinite(rTo) || rFrom <= 0) return null
+              return rTo / rFrom
+            }
+
+            if (fromAddr === t1 && toAddr === t0) {
+              const rTo = Number(ethers.formatUnits(res0, toDec))
+              const rFrom = Number(ethers.formatUnits(res1, fromDec))
+              if (!Number.isFinite(rFrom) || !Number.isFinite(rTo) || rFrom <= 0) return null
+              return rTo / rFrom
+            }
+
+            return null
+          }
+
+          const pairKey = `${ALK_CHAIN_ID}_${String(pair).toLowerCase()}`
+          const minBlockTime = Math.floor((Date.now() - PRICE_WINDOW_MS) / 1000)
+
+          const qy = query(
+            collection(db, 'amm_events'),
+            where('pairKey', '==', pairKey),
+            where('event', '==', 'Sync'),
+            where('blockTime', '>=', minBlockTime),
+            orderBy('blockTime', 'asc'),
+            limit(600)
+          )
+
+          unsub = onSnapshot(qy, (snap) => {
+            const pts: PricePoint[] = []
+            snap.forEach((doc) => {
+              const x: any = doc.data()
+              const r0s = x?.args?.reserve0
+              const r1s = x?.args?.reserve1
+              const tMs =
+                typeof x?.blockTimeMs === 'number'
+                  ? x.blockTimeMs
+                  : typeof x?.blockTime === 'number'
+                    ? x.blockTime * 1000
+                    : null
+
+              if (!r0s || !r1s || !tMs) return
+
+              const p = priceFromReserves(BigInt(r0s), BigInt(r1s))
+              if (p == null) return
+              pts.push({ t: tMs, p })
+            })
+
+            setPriceData(pts)
+          })
+        } catch {
+          setPriceData([])
+        }
+      })()
 
     return () => {
-      alive = false
-      if (timer) window.clearInterval(timer)
+      if (unsub) unsub()
     }
-  }, [provider, from, to, priceKey, bySymbol])
+  }, [provider, from, to, tokenOptions.length])
+
+
 
 
   function tokenKeyFromParam(v: string | null): TokenSym | null {
@@ -495,7 +702,13 @@ export default function Swap() {
 
         const A = getToken(from)
         const B = getToken(to)
-        if (!A || !B) {
+        if (!A || !B) { setQuoteOut('—'); setMinOut('—'); return }
+
+        // ✅ dust/no-pool gate
+        const guard = await liquidityGuard(provider, A, B, from, to)
+        if (guard.blocked) {
+          setQuoteNoLiquidity(true)
+          setQuoteNotice(guard.reason)
           setQuoteOut('—')
           setMinOut('—')
           return
@@ -574,7 +787,7 @@ export default function Swap() {
       setPriceData((prev) => {
         const next = [...prev, pt].filter((x) => x.t >= now - PRICE_WINDOW_MS)
         try {
-          localStorage.setItem(priceKey, JSON.stringify(next))
+          //localStorage.setItem(priceKey, JSON.stringify(next))
         } catch { }
         return next
       })
@@ -655,9 +868,13 @@ export default function Swap() {
         .map((r: any) => r?.txHash as string | undefined)
         .filter(Boolean) as string[]
 
+      const swapHash = hashes[hashes.length - 1]
+
       setInfo('Waiting for on-chain confirmation…')
 
       let lastReason: string | null = null
+      let swapReceipt: ethers.TransactionReceipt | null = null
+
       for (const h of hashes) {
         const r = await waitForReceipt(provider, h)
         if (!r) {
@@ -668,15 +885,35 @@ export default function Swap() {
           lastReason = (await getRevertReasonFromChain(provider, h)) ?? 'reverted (no reason decoded)'
           break
         }
+
+        // ✅ only log after the actual swap tx confirms
+        if (h === swapHash) swapReceipt = r
       }
 
       if (lastReason) {
         setErr(`Swap reverted: ${lastReason}`)
         setInfo(null)
       } else {
+        // ✅ write Swap/Mint/Burn/Sync events from receipt logs into Firestore
+        if (swapReceipt) {
+          await logAmmEventsFromReceipt({
+            provider,
+            chainId: ALK_CHAIN_ID,
+            receipt: swapReceipt,
+            action: 'swap',
+            user: address,
+            ain: ainLoading ? null : (ain ?? null),
+            tokenA: from,
+            tokenB: to,
+            // no pairHint => logs all pairs touched (works for multi-hop too)
+            pairHint: null,
+          })
+        }
+
         setInfo('Swap confirmed on-chain ✅')
-        await refreshPriceNow()
+        //await refreshPriceNow()
       }
+
 
       window.setTimeout(async () => {
         if (!address) return
@@ -706,7 +943,7 @@ export default function Swap() {
         <div className="mb-4">
           <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Swap</h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Swap tokens on Alkebuleum using the V1 router.
+            Swap tokens on Alkebuleum.
           </p>
         </div>
 
@@ -727,9 +964,9 @@ export default function Swap() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Swap</div>
-                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {/*  <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                   Router: <span className="font-mono">{ROUTER ? shortAddr(ROUTER) : '—'}</span>
-                </div>
+                </div> */}
               </div>
               <Badge>Alkebuleum</Badge>
             </div>
@@ -868,9 +1105,9 @@ export default function Swap() {
                 {busy ? 'Confirm in AmVault…' : 'Preview & Swap'}
               </button>
 
-              <div className="text-xs text-slate-500 dark:text-slate-400">
+              {/* <div className="text-xs text-slate-500 dark:text-slate-400">
                 Uses router quote + slippage minOut. No auto-switching.
-              </div>
+              </div> */}
             </div>
           </div>
 
@@ -885,7 +1122,7 @@ export default function Swap() {
               <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Collecting price samples…</div>
             )}
 
-            <div className="mt-3 h-56">
+            {/* <div className="mt-3 h-56">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={priceData}>
                   <XAxis dataKey="t" hide />
@@ -894,6 +1131,9 @@ export default function Swap() {
                   <Line type="monotone" dataKey="p" dot={false} strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
+            </div> */}
+            <div className="mt-3 h-56">
+              <ModernPriceChart data={priceData} symbolLeft={from} symbolRight={to} />
             </div>
           </div>
         </div>

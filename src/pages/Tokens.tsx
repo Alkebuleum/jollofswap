@@ -172,8 +172,8 @@ export default function Tokens() {
   const regPollRef = useRef<number | null>(null)
 
   const factoryReady = useMemo(
-    () => TOKEN_FACTORY_ALK && ethers.isAddress(TOKEN_FACTORY_ALK),
-    [TOKEN_FACTORY_ALK]
+    () => Boolean(TOKEN_FACTORY_ALK && ethers.isAddress(TOKEN_FACTORY_ALK)),
+    []
   )
 
   const CREATE_PREFLIGHT = {
@@ -627,6 +627,14 @@ export default function Tokens() {
             </div>
           )}
 
+          {loading && (
+            <div className="mt-4 grid gap-4">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-slate-100 dark:border-slate-800 dark:bg-slate-800/50" />
+              ))}
+            </div>
+          )}
+
           {!err && !loading && filtered.length === 0 && (
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
               No tokens found yet.
@@ -875,7 +883,7 @@ function ModalShell({
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
+      <div className="w-full max-w-lg overflow-y-auto max-h-[90vh] rounded-2xl border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-lg font-bold text-slate-900 dark:text-slate-100">{title}</div>

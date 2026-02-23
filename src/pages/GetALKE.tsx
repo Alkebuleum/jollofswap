@@ -1,5 +1,5 @@
 // src/pages/GetALKE.tsx
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ethers, Interface } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
@@ -59,16 +59,6 @@ const BRIDGEVAULT_IFACE = new Interface([
   'function deposit(uint256 amount, address alkRecipient) returns (bytes32)',
 ])
 
-const THEME_KEY = 'jswap_theme'
-function readLS(key: string, fallback: string) {
-  try {
-    const v = window.localStorage.getItem(key)
-    return v == null ? fallback : v
-  } catch {
-    return fallback
-  }
-}
-
 function shortAddr(a?: string) {
   if (!a) return ''
   return `${a.slice(0, 6)}…${a.slice(-4)}`
@@ -79,12 +69,6 @@ function clampAmountStr(v: string) {
 }
 
 export default function GetALKE() {
-  // If you already do this globally in AppLayout, you can remove this block.
-  useLayoutEffect(() => {
-    const dark = readLS(THEME_KEY, 'light') === 'dark'
-    document.documentElement.classList.toggle('dark', dark)
-  }, [])
-
   const { session } = useAuth()
   const walletConnected = !!session
   const address = session?.address
@@ -98,6 +82,7 @@ export default function GetALKE() {
   const [polBal, setPolBal] = useState<string>('—')
 
   const [amount, setAmount] = useState('10')
+  const [depositing, setDepositing] = useState(false)
   const [bridgeErr, setBridgeErr] = useState<string | null>(null)
   const [bridgeInfo, setBridgeInfo] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
@@ -255,6 +240,7 @@ export default function GetALKE() {
   }
 
   async function onDeposit() {
+    if (depositing) return
     setBridgeErr(null)
     setBridgeInfo(null)
     setTxHash(null)
@@ -273,6 +259,7 @@ export default function GetALKE() {
     }
 
     try {
+      setDepositing(true)
       const usdcRead = new ethers.Contract(USDC_POLY, ERC20_ABI, polyProvider)
       const usdcDec: number = await usdcRead.decimals()
       const amt = ethers.parseUnits(amtStr, usdcDec)
@@ -345,11 +332,13 @@ export default function GetALKE() {
 
       setTxHash(depositHash)
       setBridgeInfo('Deposit sent. Waiting for confirmations…')
+      setDepositing(false)
       startPolling(depositHash)
     } catch (e: any) {
       console.error(e)
       setBridgeErr(normalizeAmvaultChainError(e))
       setBridgeInfo(null)
+      setDepositing(false)
     }
   }
 
@@ -448,11 +437,6 @@ export default function GetALKE() {
     tick()
     pollingRef.current = window.setInterval(tick, 4000)
   }
-
-  const canShowSwapNow = useMemo(() => {
-    const n = Number((mahBal || '').replace(/,/g, ''))
-    return Number.isFinite(n) && n > 0
-  }, [mahBal])
 
   return (
     <div className="page">
@@ -585,10 +569,10 @@ export default function GetALKE() {
 
                   <button
                     onClick={onDeposit}
-                    disabled={!walletConnected || !address || !feeQuote.ok}
+                    disabled={!walletConnected || !address || !feeQuote.ok || depositing}
                     className="mt-3 w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    Approve & Deposit
+                    {depositing ? 'Preparing…' : 'Approve & Deposit'}
                   </button>
 
                   <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
@@ -652,7 +636,7 @@ export default function GetALKE() {
                           className="text-xs text-slate-500 underline dark:text-slate-400"
                           onClick={() => setDebugOpen((v) => !v)}
                         >
-                          {debugOpen ? 'Hide debug' : 'Show debug'}
+                          {debugOpen ? 'Hide details' : 'Transaction details'}
                         </button>
 
                         {debugOpen && (
@@ -678,71 +662,64 @@ export default function GetALKE() {
 
         </div>
 
-        <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-          {/*  Bridge API: <span className="font-mono">{BRIDGE_API}</span> */}
-          {mintOpen && mintDetails && (
-            <ModalShell
-              title="Bridge complete — MAH received ✅"
-              subtitle="Your USDC deposit has been processed and MAH is now available on Alkebuleum."
-              onClose={() => setMintOpen(false)}
-            >
-              <div className="grid gap-3">
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
-                  <div className="font-semibold">What happened</div>
-                  <div className="mt-1">
-                    MAH was minted to your Alkebuleum wallet:
-                    <div className="mt-1 break-all font-mono text-xs">{address}</div>
-                  </div>
-
-                  {mintDetails.estMah && (
-                    <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                      Estimated received: <span className="font-semibold">{mintDetails.estMah} MAH</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid gap-2 text-xs text-slate-600 dark:text-slate-400">
-                  <div>
-                    Deposit Tx: <span className="font-mono">{shortAddr(mintDetails.depositTx)}</span>
-                  </div>
-                  {mintDetails.mintTx && (
-                    <div>
-                      Mint Tx: <span className="font-mono">{shortAddr(mintDetails.mintTx)}</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Link
-                    to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
-                    className="rounded-xl bg-orange-600 px-4 py-3 text-center font-semibold text-white shadow-sm transition hover:bg-orange-700"
-                    onClick={() => {
-                      setMintOpen(false)
-                      //setStep('swap')
-                    }}
-                  >
-                    Swap MAH → ALKE
-                  </Link>
-
-                  <button
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                    onClick={() => setMintOpen(false)}
-                  >
-                    Close
-                  </button>
-                </div>
-
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                  If your balance doesn’t update instantly, it may take a few seconds to refresh.
-                </div>
-              </div>
-            </ModalShell>
-          )}
-
-        </div>
       </div>
-    </div>
 
+      {mintOpen && mintDetails && (
+        <ModalShell
+          title="Bridge complete — MAH received ✅"
+          subtitle="Your USDC deposit has been processed and MAH is now available on Alkebuleum."
+          onClose={() => setMintOpen(false)}
+        >
+          <div className="grid gap-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
+              <div className="font-semibold">What happened</div>
+              <div className="mt-1">
+                MAH was minted to your Alkebuleum wallet:
+                <div className="mt-1 break-all font-mono text-xs">{address}</div>
+              </div>
+
+              {mintDetails.estMah && (
+                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                  Estimated received: <span className="font-semibold">{mintDetails.estMah} MAH</span>
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-2 text-xs text-slate-600 dark:text-slate-400">
+              <div>
+                Deposit Tx: <span className="font-mono">{shortAddr(mintDetails.depositTx)}</span>
+              </div>
+              {mintDetails.mintTx && (
+                <div>
+                  Mint Tx: <span className="font-mono">{shortAddr(mintDetails.mintTx)}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Link
+                to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
+                className="rounded-xl bg-orange-600 px-4 py-3 text-center font-semibold text-white shadow-sm transition hover:bg-orange-700"
+                onClick={() => setMintOpen(false)}
+              >
+                Swap MAH → ALKE
+              </Link>
+
+              <button
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                onClick={() => setMintOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+              If your balance doesn’t update instantly, it may take a few seconds to refresh.
+            </div>
+          </div>
+        </ModalShell>
+      )}
+    </div>
   )
 }
 

@@ -4,6 +4,7 @@ import { Link, NavLink, useLocation } from 'react-router-dom'
 import { Wallet2, LogOut, Copy, Check, Menu, X } from 'lucide-react'
 import { useThemeStore } from '../store/themeStore'
 import { FLAGS } from '../lib/flags'
+import { PRELAUNCH, isAllowedTester } from '../lib/prelaunch'
 import { useAuth } from 'amvault-connect'
 import LogoJollof from '../assets/logo-jollof.svg'
 import { ethers } from 'ethers'
@@ -58,7 +59,7 @@ export default function TopBar() {
       const sessionAny = session as any
       const fromSession = sessionAny?.ain ?? sessionAny?.AIN ?? null
       if (fromSession != null) {
-        if (!cancelled) setAin(String(fromSession))
+        if (!cancelled) setAin(String(fromSession).trim().toUpperCase())
         return
       }
 
@@ -86,7 +87,7 @@ export default function TopBar() {
           }
         }
 
-        if (!cancelled) setAin(found)
+        if (!cancelled) setAin(found ? found.trim().toUpperCase() : null)
       } finally {
         if (!cancelled) setAinLoading(false)
       }
@@ -98,6 +99,9 @@ export default function TopBar() {
     }
   }, [walletConnected, addr, session])
 
+
+  // In prelaunch mode, only show nav to allowed testers
+  const showNav = !PRELAUNCH || isAllowedTester(ain)
 
   const [open, setOpen] = useState(false) // desktop wallet dropdown
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -193,24 +197,29 @@ export default function TopBar() {
             </div>
           </Link>
 
-          {/* Desktop nav */}
-          <nav className="hidden md:flex items-center gap-1">
-            {navItems.map((it) => (
-              <NavLink key={it.to} to={it.to} className={({ isActive }) => linkClass(isActive)}>
-                {it.label}
-              </NavLink>
-            ))}
-          </nav>
+          {/* Desktop nav — hidden in prelaunch mode for non-testers */}
+          {showNav && (
+            <nav className="hidden md:flex items-center gap-1">
+              {navItems.map((it) => (
+                <NavLink key={it.to} to={it.to} className={({ isActive }) => linkClass(isActive)}>
+                  {it.label}
+                </NavLink>
+              ))}
+            </nav>
+          )}
 
           {/* Right actions */}
           <div className="flex items-center gap-2">
-            <button
-              className="md:hidden inline-flex items-center justify-center rounded-xl p-2 ring-1 ring-slate-200 bg-white hover:bg-slate-50 dark:ring-slate-700 dark:bg-slate-950 dark:hover:bg-slate-900"
-              onClick={() => setMobileOpen((v) => !v)}
-              aria-label="Open menu"
-            >
-              {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
+            {/* Hamburger — show when there is nav, or when connected (wallet panel) */}
+            {(showNav || walletConnected) && (
+              <button
+                className="md:hidden inline-flex items-center justify-center rounded-xl p-2 ring-1 ring-slate-200 bg-white hover:bg-slate-50 dark:ring-slate-700 dark:bg-slate-950 dark:hover:bg-slate-900"
+                onClick={() => setMobileOpen((v) => !v)}
+                aria-label="Open menu"
+              >
+                {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </button>
+            )}
 
             {!walletConnected ? (
               <button
@@ -310,7 +319,7 @@ export default function TopBar() {
       {mobileOpen && (
         <div className="md:hidden border-t border-slate-200/70 bg-white dark:border-slate-800/70 dark:bg-slate-950">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 grid gap-1">
-            {navItems.map((it) => (
+            {showNav && navItems.map((it) => (
               <NavLink
                 key={it.to}
                 to={it.to}

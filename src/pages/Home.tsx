@@ -145,7 +145,6 @@ export default function Home() {
       </section>
 
       {/* ACTIONS */}
-      {/* ACTIONS */}
       <section className="relative mx-auto max-w-7xl px-4 sm:px-6 -mt-14 pb-10">
         <div className="grid md:grid-cols-4 gap-4">
           <ActionCard

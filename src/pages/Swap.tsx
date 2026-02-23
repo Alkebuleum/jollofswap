@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
 import { db } from '../services/firebase'
-import { collection, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
+import { collection, onSnapshot, orderBy, query, where, limit, getDocs } from 'firebase/firestore'
 import ModernPriceChart from '../components/ModernPriceChart'
 
 
@@ -172,16 +171,6 @@ async function detectNoLiquidity(provider: ethers.JsonRpcProvider, A: any, B: an
 
 type PricePoint = { t: number; p: number }
 
-//const PRICE_SAMPLE_MS = 5 * 60 * 1000 // 5 min
-const PRICE_WINDOW_MS = 24 * 60 * 60 * 1000 // 24h
-/* const priceKeyFor = (a: string, b: string) =>
-  `jswap:pricehist:v1:${(a || '').toUpperCase()}-${(b || '').toUpperCase()}` */
-
-
-function shortAddr(a?: string) {
-  if (!a) return ''
-  return `${a.slice(0, 6)}…${a.slice(-4)}`
-}
 
 function hexValue(v: any): string {
   if (v == null) return '0x0'
@@ -218,13 +207,6 @@ async function waitForReceipt(provider: ethers.JsonRpcProvider, txHash: string, 
     await sleep(pollMs)
   }
   return null
-}
-
-type TxLine = {
-  hash: string
-  label: string
-  status: 'pending' | 'mined_ok' | 'mined_fail' | 'unknown'
-  reason?: string
 }
 
 function pickRevertData(err: any): string | null {
@@ -391,25 +373,7 @@ export default function Swap() {
     gasTopup: { enabled: true, purpose: 'jswap-swap' },
   } as any
 
-  //const priceKey = useMemo(() => priceKeyFor(from, to), [from, to])
   const [priceData, setPriceData] = useState<PricePoint[]>([])
-  /* 
-    useEffect(() => {
-      try {
-        const raw = localStorage.getItem(priceKey)
-        const arr = raw ? (JSON.parse(raw) as PricePoint[]) : []
-        const now = Date.now()
-        setPriceData(
-          Array.isArray(arr)
-            ? arr.filter(
-              (x) => x && typeof x.t === 'number' && typeof x.p === 'number' && x.t >= now - PRICE_WINDOW_MS
-            )
-            : []
-        )
-      } catch {
-        setPriceData([])
-      }
-    }, [priceKey]) */
 
 
   useEffect(() => {
@@ -424,52 +388,6 @@ export default function Swap() {
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
   }, [])
-
-  /*  useEffect(() => {
-     let alive = true
-     let timer: number | null = null
- 
-     async function sample() {
-       try {
-         if (from === to) return
- 
-         const A = getToken(from)
-         const B = getToken(to)
-         if (!A || !B) return
- 
-         const fromDec = await readDecimals(A, provider)
-         const toDec = await readDecimals(B, provider)
- 
-         const amountIn = ethers.parseUnits('1', fromDec)
-         const { amountOut } = await getQuoteOut({ from: A, to: B, amountIn })
- 
-         const p = Number(ethers.formatUnits(amountOut, toDec))
-         if (!Number.isFinite(p) || p <= 0) return
- 
-         const now = Date.now()
-         const pt: PricePoint = { t: now, p }
-         if (!alive) return
- 
-         setPriceData((prev) => {
-           const next = [...prev, pt].filter((x) => x.t >= now - PRICE_WINDOW_MS)
-           try {
-             localStorage.setItem(priceKey, JSON.stringify(next))
-           } catch { }
-           return next
-         })
-       } catch {
-         // no pool / quote fail => just skip sample
-       }
-     }
- 
-     sample()
-     timer = window.setInterval(sample, PRICE_SAMPLE_MS)
- 
-     return () => {
-       alive = false
-       if (timer) window.clearInterval(timer)
-     }
-   }, [provider, from, to, priceKey, bySymbol]) */
 
 
   useEffect(() => {
@@ -537,7 +455,20 @@ export default function Swap() {
           }
 
           const pairKey = `${ALK_CHAIN_ID}_${String(pair).toLowerCase()}`
-          const minBlockTime = Math.floor((Date.now() - PRICE_WINDOW_MS) / 1000)
+
+          // Find the most recent Sync for this pair to anchor the time window
+          const latestSnap = await getDocs(query(
+            collection(db, 'amm_events'),
+            where('pairKey', '==', pairKey),
+            where('event', '==', 'Sync'),
+            orderBy('blockTime', 'desc'),
+            limit(1)
+          ))
+
+          if (latestSnap.empty) return setPriceData([])
+
+          const latestBlockTime = latestSnap.docs[0].data().blockTime as number
+          const minBlockTime = latestBlockTime - 48 * 60 * 60 // 48 h before the latest record
 
           const qy = query(
             collection(db, 'amm_events'),
@@ -569,8 +500,11 @@ export default function Swap() {
             })
 
             setPriceData(pts)
+          }, (err) => {
+            console.error('[PriceChart] Firestore snapshot error:', err)
           })
-        } catch {
+        } catch (e) {
+          console.error('[PriceChart] setup error:', e)
           setPriceData([])
         }
       })()
@@ -680,9 +614,6 @@ export default function Swap() {
     if (quoteTimer.current) window.clearTimeout(quoteTimer.current)
 
     quoteTimer.current = window.setTimeout(async () => {
-      //setErr(null)
-      //setInfo(null)
-
       if (from === to) {
         setQuoteOut('—')
         setMinOut('—')
@@ -762,39 +693,6 @@ export default function Swap() {
     }
   }, [amount, from, to, slippageBps, address, provider])
 
-
-  async function refreshPriceNow() {
-    try {
-      if (from === to) return
-
-      const A = getToken(from)
-      const B = getToken(to)
-      if (!A || !B) return
-
-      const fromDec = await readDecimals(A, provider)
-      const toDec = await readDecimals(B, provider)
-
-      // price = quote for 1 "from" token
-      const amountIn = ethers.parseUnits('1', fromDec)
-      const { amountOut } = await getQuoteOut({ from: A, to: B, amountIn })
-
-      const p = Number(ethers.formatUnits(amountOut, toDec))
-      if (!Number.isFinite(p) || p <= 0) return
-
-      const now = Date.now()
-      const pt: PricePoint = { t: now, p }
-
-      setPriceData((prev) => {
-        const next = [...prev, pt].filter((x) => x.t >= now - PRICE_WINDOW_MS)
-        try {
-          //localStorage.setItem(priceKey, JSON.stringify(next))
-        } catch { }
-        return next
-      })
-    } catch {
-      // ignore (no pool / quote fail)
-    }
-  }
 
 
   async function onSwap() {
@@ -911,7 +809,6 @@ export default function Swap() {
         }
 
         setInfo('Swap confirmed on-chain ✅')
-        //await refreshPriceNow()
       }
 
 
@@ -964,9 +861,6 @@ export default function Swap() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Swap</div>
-                {/*  <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  Router: <span className="font-mono">{ROUTER ? shortAddr(ROUTER) : '—'}</span>
-                </div> */}
               </div>
               <Badge>Alkebuleum</Badge>
             </div>
@@ -1104,10 +998,6 @@ export default function Swap() {
               >
                 {busy ? 'Confirm in AmVault…' : 'Preview & Swap'}
               </button>
-
-              {/* <div className="text-xs text-slate-500 dark:text-slate-400">
-                Uses router quote + slippage minOut. No auto-switching.
-              </div> */}
             </div>
           </div>
 
@@ -1122,16 +1012,6 @@ export default function Swap() {
               <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Collecting price samples…</div>
             )}
 
-            {/* <div className="mt-3 h-56">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={priceData}>
-                  <XAxis dataKey="t" hide />
-                  <YAxis hide />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="p" dot={false} strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div> */}
             <div className="mt-3 h-56">
               <ModernPriceChart data={priceData} symbolLeft={from} symbolRight={to} />
             </div>

@@ -1,7 +1,7 @@
 // src/pages/Liquidity.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
-import { collection, onSnapshot, orderBy, query, where, limit, collectionGroup } from 'firebase/firestore'
+import { collection, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
 import { db } from '../services/firebase'
 
 import { ethers } from 'ethers'
@@ -51,11 +51,6 @@ function buildErc20TransferTx(tokenAddr: string, to: string, amount: bigint) {
 }
 
 
-
-function shortAddr(a?: string) {
-  if (!a) return ''
-  return `${a.slice(0, 6)}…${a.slice(-4)}`
-}
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
@@ -187,13 +182,6 @@ function buildRemoveLiquidityTx(args: {
   }
 }
 
-type TxLine = {
-  hash: string
-  label: string
-  status: 'pending' | 'mined_ok' | 'mined_fail' | 'unknown'
-  reason?: string
-}
-
 function pickRevertData(err: any): string | null {
   const candidates = [
     err?.data,
@@ -282,6 +270,7 @@ export default function Liquidity() {
   const [amtB, setAmtB] = useState('1')
   const didUserEditRef = useRef(false)
   const posReqRef = useRef(0)
+  const firstAddTimeRef = useRef<number | null>(null)
 
   const [lastEdited, setLastEdited] = useState<'A' | 'B'>('A')
 
@@ -402,7 +391,6 @@ export default function Liquidity() {
   const [underAUi, setUnderAUi] = useState<string>('—')
   const [underBUi, setUnderBUi] = useState<string>('—')
 
-  const [txLines, setTxLines] = useState<TxLine[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -456,6 +444,8 @@ export default function Liquidity() {
     setPairAddr('—')
     setLpBalUi('—')
     setLpShareUi('—')
+    setLpBalRaw(0n)
+    setLpSupplyRaw(0n)
     setReserveAUi('—')
     setReserveBUi('—')
     setUnderAUi('—')
@@ -484,8 +474,12 @@ export default function Liquidity() {
       setLpBalUi(fmtLp(pos.lpBalance))
       setLpTotalSupplyUi(fmtLp(pos.totalSupply))
 
-      setLpBalRaw(pos.lpBalance)
-      setLpSupplyRaw(pos.totalSupply)
+      if (pos.totalSupply > 0n && pos.lpBalance > 0n) {
+        const sharePct = Number((pos.lpBalance * 10000n) / pos.totalSupply) / 100
+        setLpShareUi(`${sharePct.toFixed(2)}%`)
+      } else {
+        setLpShareUi('—')
+      }
 
 
       if (!pair) {
@@ -571,8 +565,8 @@ export default function Liquidity() {
         setUnderAUi(fmtNum(ethers.formatUnits(underA, decA)))
         setUnderBUi(fmtNum(ethers.formatUnits(underB, decB)))
       } else {
-        setUnderAUi('0')
-        setUnderBUi('0')
+        setUnderAUi('—')
+        setUnderBUi('—')
       }
     } catch {
       // keep the cleared UI
@@ -674,7 +668,7 @@ export default function Liquidity() {
 
     // 1) user liquidity history (Mint/Burn + Sync in same tx)
     const qUser = query(
-      collectionGroup(db, 'amm_events'),
+      collection(db, 'amm_events'),
       where('pairKey', '==', pairKey),
       where('user', '==', userKey),
       orderBy('blockTime', 'asc'),
@@ -738,14 +732,16 @@ export default function Liquidity() {
       const pnlA = (curValueA + wdrValueA) - depValueA
       const pnlUi = `${pnlA >= 0n ? '+' : ''}${fmtNum(ethers.formatUnits(pnlA, decAState))} ${tokenA}`
 
-        ; (window as any).__jswap_firstAddTime = firstAddTime
+      firstAddTimeRef.current = firstAddTime
       setFeesPnlUi(`P&L: ${pnlUi} • Fees: …`)
       setFeesPnlNote('Fees are estimated (uses current LP share). Exact fees require LP share over time.')
+    }, (err) => {
+      console.error('[Liquidity] P&L user snapshot error:', err)
     })
 
     // 2) swaps fee estimate since first add
     const qSwaps = query(
-      collectionGroup(db, 'amm_events'),
+      collection(db, 'amm_events'),
       where('pairKey', '==', pairKey),
       where('event', '==', 'Swap'),
       orderBy('blockTime', 'asc'),
@@ -753,7 +749,7 @@ export default function Liquidity() {
     )
 
     const unsubSwaps = onSnapshot(qSwaps, (snap) => {
-      const firstAddTime: number | null = (window as any).__jswap_firstAddTime ?? null
+      const firstAddTime = firstAddTimeRef.current
       if (!firstAddTime) return
 
       if (lpSupplyRaw <= 0n || lpBalRaw <= 0n) {
@@ -789,6 +785,8 @@ export default function Liquidity() {
       const userFeesA = (feesValueA * sharePpm) / 1_000_000n
       const feesUi = `+${fmtNum(ethers.formatUnits(userFeesA, decAState))} ${tokenA} (est)`
       setFeesPnlUi((prev) => prev.replace(/Fees: .*/, `Fees: ${feesUi}`))
+    }, (err) => {
+      console.error('[Liquidity] P&L swaps snapshot error:', err)
     })
 
     return () => {
@@ -801,7 +799,6 @@ export default function Liquidity() {
   async function onAddLiquidity() {
     setErr(null)
     setInfo(null)
-    setTxLines([])
     setBusy(true)
     try {
       if (!walletConnected || !address) throw new Error('Connect amVault using the top bar to continue.')
@@ -902,29 +899,18 @@ export default function Liquidity() {
         return `approve #${i + 1}`
       })
 
-      setTxLines(
-        hashes.map((h, idx) => ({
-          hash: h,
-          label: labels[idx] ?? `tx #${idx + 1}`,
-          status: 'pending',
-        }))
-      )
-
       setInfo('Waiting for on-chain confirmation…')
 
       let anyFail = false
       let lastReason: string | null = null
-      const nextLines: TxLine[] = []
 
       for (let i = 0; i < hashes.length; i++) {
         const h = hashes[i]
         const r = await waitForReceipt(provider, h)
 
         if (!r) {
-          nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'unknown' })
           anyFail = true
         } else if (r.status === 1) {
-          nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'mined_ok' })
           if (labels[i] === 'addLiquidity') {
             await logAmmEventsFromReceipt({
               provider,
@@ -935,10 +921,9 @@ export default function Liquidity() {
               ain: ainLoading ? null : (ain ?? null),
               tokenA,
               tokenB,
-              pairHint: pairAddr !== '—' ? pairAddr : null, // optional
+              pairHint: pairAddr !== '—' ? pairAddr : null,
             })
           }
-
         } else {
           anyFail = true
 
@@ -951,27 +936,15 @@ export default function Liquidity() {
             }
           }
 
-          reason = reason ?? 'reverted (no reason decoded)'
-          lastReason = reason
-
-          nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'mined_fail', reason })
+          lastReason = reason ?? 'reverted (no reason decoded)'
         }
-
-        setTxLines([
-          ...nextLines,
-          ...hashes.slice(i + 1).map((hh, j): TxLine => ({
-            hash: hh,
-            label: labels[i + 1 + j] ?? `tx #${i + 2 + j}`,
-            status: 'pending',
-          })),
-        ])
       }
 
       if (anyFail) {
         setErr(
           lastReason
             ? `addLiquidity reverted: ${lastReason}`
-            : 'One or more transactions reverted or did not confirm. See statuses below.'
+            : 'One or more transactions reverted or did not confirm.'
         )
         setInfo(null)
       } else {
@@ -991,7 +964,6 @@ export default function Liquidity() {
   async function onRemoveLiquidity() {
     setErr(null)
     setInfo(null)
-    setTxLines([])
     setBusy(true)
 
     try {
@@ -1096,12 +1068,10 @@ export default function Liquidity() {
         return 'tx'
       })
 
-      setTxLines(hashes.map((h, i) => ({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'pending' })))
       setInfo('Waiting for on-chain confirmation…')
 
       let anyFail = false
       let lastReason: string | null = null
-      const nextLines: TxLine[] = []
 
       for (let i = 0; i < hashes.length; i++) {
         const h = hashes[i]
@@ -1109,9 +1079,7 @@ export default function Liquidity() {
 
         if (!r) {
           anyFail = true
-          nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'unknown' })
         } else if (r.status === 1) {
-          nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'mined_ok' })
           if (labels[i] === 'removeLiquidity') {
             await logAmmEventsFromReceipt({
               provider,
@@ -1125,8 +1093,6 @@ export default function Liquidity() {
               pairHint: pairAddr !== '—' ? pairAddr : null,
             })
           }
-
-
         } else {
           anyFail = true
           let reason = await getRevertReasonFromChain(provider, h)
@@ -1138,20 +1104,8 @@ export default function Liquidity() {
             }
           }
 
-          reason = reason ?? 'reverted (no reason decoded)'
-          lastReason = reason
-
-          nextLines.push({ hash: h, label: labels[i] ?? `tx #${i + 1}`, status: 'mined_fail', reason })
+          lastReason = reason ?? 'reverted (no reason decoded)'
         }
-
-        setTxLines([
-          ...nextLines,
-          ...hashes.slice(i + 1).map((hh, j): TxLine => ({
-            hash: hh,
-            label: labels[i + 1 + j] ?? `tx #${i + 2 + j}`,
-            status: 'pending',
-          })),
-        ])
       }
 
       if (anyFail) {
@@ -1174,7 +1128,6 @@ export default function Liquidity() {
   async function onRepairPool() {
     setErr(null)
     setInfo(null)
-    setTxLines([])
     setBusy(true)
 
     try {
@@ -1323,10 +1276,6 @@ export default function Liquidity() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Add Liquidity</div>
-                {/* <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                  Router:{' '}
-                  <span className="font-mono text-xs">{ROUTER ? shortAddr(ROUTER) : '—'}</span>
-                </div> */}
               </div>
               <Badge>Network: Alkebuleum</Badge>
             </div>
@@ -1405,7 +1354,7 @@ export default function Liquidity() {
               </div>
             </div>
 
-            {/*      <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
               {poolHasReserves ? (
                 <>
                   Pool ratio:{' '}
@@ -1416,7 +1365,7 @@ export default function Liquidity() {
               ) : (
                 <>No pool ratio yet — first liquidity sets the price.</>
               )}
-            </div> */}
+            </div>
 
             <div className="mt-3 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
               <span>Slippage</span>
@@ -1449,54 +1398,6 @@ export default function Liquidity() {
               </div>
             )}
 
-            {/* {txLines.length > 0 && (
-              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900">
-                <div className="mb-2 font-semibold text-slate-800 dark:text-slate-100">
-                  Transaction confirmation
-                </div>
-                <div className="grid gap-2">
-                  {txLines.map((t) => (
-                    <div
-                      key={t.hash}
-                      className="rounded-lg border border-slate-100 p-2 dark:border-slate-800"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2">
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                            {t.label}
-                          </span>
-                          <span className="font-mono text-xs text-slate-900 dark:text-slate-100">
-                            {shortAddr(t.hash)}
-                          </span>
-                        </div>
-
-                        <span
-                          className={[
-                            'text-xs font-semibold',
-                            t.status === 'pending' ? 'text-slate-600 dark:text-slate-300' : '',
-                            t.status === 'mined_ok' ? 'text-emerald-700 dark:text-emerald-300' : '',
-                            t.status === 'mined_fail' ? 'text-red-700 dark:text-red-300' : '',
-                            t.status === 'unknown' ? 'text-amber-700 dark:text-amber-300' : '',
-                          ].join(' ')}
-                        >
-                          {t.status === 'pending' && 'pending'}
-                          {t.status === 'mined_ok' && 'confirmed ✅'}
-                          {t.status === 'mined_fail' && 'reverted ❌'}
-                          {t.status === 'unknown' && 'not confirmed ⚠️'}
-                        </span>
-                      </div>
-
-                      {t.status === 'mined_fail' && t.reason && (
-                        <div className="mt-1 whitespace-pre-wrap text-xs text-red-700 dark:text-red-300">
-                          {t.reason}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )} */}
-
             <button
               onClick={onAddLiquidity}
               disabled={!walletConnected || !address || busy || (lpGate.blocked && !isAdmin)}
@@ -1512,12 +1413,6 @@ export default function Liquidity() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Pool</div>
-                {/*    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  Pair:{' '}
-                  <span className="font-mono text-xs text-slate-900 dark:text-slate-100">
-                    {pairAddr === '—' ? '—' : shortAddr(pairAddr)}
-                  </span>
-                </div> */}
               </div>
 
               <div className="flex items-center gap-2">

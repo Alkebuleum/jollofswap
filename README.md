@@ -28,5 +28,5 @@ npm run dev
 ## Push to Git
 git status
 git add -A
-git commit -m "Improve UX (minimal), fixed Errors"
+git commit -m "Improve UX (minimal) & px Chart, fixed Errors"
 git push

@@ -16,6 +16,8 @@ import Profile from './pages/Profile'
 import Settings from './pages/Settings'
 import Support from './pages/Support'
 import GetALKE from './pages/GetALKE'
+import PrivacyPolicy from './pages/PrivacyPolicy'
+import TermsOfService from './pages/TermsOfService'
 import { TokenRegistryProvider } from './lib/tokenRegistry'
 import { applyTheme } from './lib/prefs'
 
@@ -38,6 +40,8 @@ const router = createBrowserRouter([
       { path: 'profile', element: <Profile /> },
       { path: 'settings', element: <Settings /> },
       { path: 'support', element: <Support /> },
+      { path: 'privacy', element: <PrivacyPolicy /> },
+      { path: 'terms', element: <TermsOfService /> },
     ],
   },
 ],

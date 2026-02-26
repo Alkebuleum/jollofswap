@@ -1,4 +1,4 @@
-import { Outlet, Link } from 'react-router-dom'
+import { Outlet, Link, useLocation } from 'react-router-dom'
 import React from 'react'
 import { useAuth } from 'amvault-connect'
 import TopBar from './TopBar'
@@ -6,15 +6,19 @@ import { useWalletMetaStore } from '../store/walletMetaStore'
 import { PRELAUNCH, isAllowedTester } from '../lib/prelaunch'
 import Waitlist from '../pages/Waitlist'
 
+const LEGAL_PATHS = ['/privacy', '/terms']
+
 export default function AppLayout() {
   const { session } = useAuth()
   const { ain, ainLoading } = useWalletMetaStore()
+  const { pathname } = useLocation()
+  const isLegalPage = LEGAL_PATHS.includes(pathname)
 
   // --- Prelaunch gate ---
   // While the wallet is connected but AIN hasn't resolved yet, hold rendering
   // so a tester doesn't briefly flash the Waitlist page.
-  const awaitingAin = PRELAUNCH && !!session && ainLoading
-  const showWaitlist = PRELAUNCH && !awaitingAin && !isAllowedTester(ain)
+  const awaitingAin = PRELAUNCH && !!session && ainLoading && !isLegalPage
+  const showWaitlist = PRELAUNCH && !awaitingAin && !isAllowedTester(ain) && !isLegalPage
 
   return (
     <div className="min-h-screen flex flex-col bg-jlfIvory text-slate-900 dark:bg-slate-950 dark:text-slate-100">
@@ -56,6 +60,11 @@ export default function AppLayout() {
               </nav>
             </>
           )}
+
+          <nav className="flex gap-4 text-xs text-jlfCharcoal/50 dark:text-slate-500">
+            <Link to="/privacy" className="hover:underline">Privacy Policy</Link>
+            <Link to="/terms" className="hover:underline">Terms of Service</Link>
+          </nav>
         </div>
       </footer>
     </div>

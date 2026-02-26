@@ -8,23 +8,23 @@ import { useWalletMetaStore } from '../store/walletMetaStore'
 
 type Step = 'buy' | 'bridge'
 
-const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 80002) // Amoy
+const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137) // Polygon mainnet
 const ALK_CHAIN_ID = Number(import.meta.env.VITE_ALK_CHAIN_ID ?? 237422)
 
 
 
 const POLY_RPC =
-  (import.meta.env.VITE_POLY_RPC as string) ?? 'https://rpc-amoy.polygon.technology'
+  (import.meta.env.VITE_POLY_RPC as string) ?? 'https://polygon-bor-rpc.publicnode.com'
 const ALK_RPC = (import.meta.env.VITE_ALK_RPC as string) ?? 'https://rpc.alkebuleum.com'
 
 const USDC_POLY =
-  (import.meta.env.VITE_USDC_POLY as string) ?? '0x8B0180f2101c8260d49339abfEe87927412494B4'
+  (import.meta.env.VITE_USDC_POLY as string) ?? '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'
 
 const BRIDGEVAULT_POLY =
-  (import.meta.env.VITE_BRIDGEVAULT_POLY as string) ?? '0x92330A70BEF78140A543B6C13D0bf67bE148ADe3'
+  (import.meta.env.VITE_BRIDGEVAULT_POLY as string) ?? '0x2b53bd82a7ad6a7ce8bf9a9d201cde639b8ae5e0'
 
 const MAH_ALK =
-  (import.meta.env.VITE_MAH_ALK as string) ?? '0xe0763F860fB39002099Fd6cE7aA1BbEd1ca0804d'
+  (import.meta.env.VITE_MAH_ALK as string) ?? '0x9983Cf46eeC1A7e75639eA1142410086b874dbf6'
 
 const BRIDGE_API =
   (import.meta.env.VITE_BRIDGE_API as string) ?? 'https://bridge.jollofswap.com'
@@ -104,23 +104,58 @@ export default function GetALKE() {
 
   const estMahRef = useRef<string | null>(null)
 
+  const [transferModalOpen, setTransferModalOpen] = useState(false)
+  const [stripeLoading, setStripeLoading] = useState(false)
+  const [stripeErr, setStripeErr] = useState<string | null>(null)
+
 
   const BRIDGE_PREFLIGHT = {
     flow: 'bridge_usdc_to_mah',
     gasTopup: {
       enabled: true,
       purpose: 'jswap-bridge',
-      // optional hints (AmVault clamps anyway)
-      minBalanceWei: '39724141524600000',
-      targetBalanceWei: '47668969829520000',
+      // 0.1 POL minimum  — covers reservation up to ~189 gwei baseFee
+      // 0.2 POL target   — covers reservation up to ~393 gwei baseFee
+      // Faucet should give 0.2 POL so users can bridge 4–8x before needing more.
+      minBalanceWei: '100000000000000000',
+      targetBalanceWei: '200000000000000000',
     },
   } as any
 
-  const moonpayLink = useMemo(() => {
-    const params = new URLSearchParams()
-    params.set('currencyCode', 'usdc')
-    if (address) params.set('walletAddress', address)
-    return `${MOONPAY_BASE}?${params.toString()}`
+  const [moonpayUrl, setMoonpayUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    async function load() {
+      if (!address) {
+        setMoonpayUrl(null)
+        return
+      }
+
+      // Use your dashboard’s Polygon-USDC currencyCode (example shown)
+      const currencyCode = 'usdc_polygon'
+
+      try {
+        const r = await fetch(
+          `${BRIDGE_API}/moonpay/sign?walletAddress=${encodeURIComponent(address)}&currencyCode=${encodeURIComponent(currencyCode)}`
+        )
+        const j = await r.json()
+        if (!alive) return
+        setMoonpayUrl(j?.url ?? null)
+      } catch {
+        if (!alive) return
+        // fallback (may be ignored by MoonPay without signature)
+        const params = new URLSearchParams()
+        params.set('currencyCode', currencyCode)
+        params.set('walletAddress', address)
+        setMoonpayUrl(`${MOONPAY_BASE}?${params.toString()}`)
+      }
+    }
+
+    load()
+    return () => {
+      alive = false
+    }
   }, [address])
 
   const feeQuote = useMemo(() => {
@@ -175,9 +210,15 @@ export default function GetALKE() {
           if (!Number.isFinite(n)) return s
           return n.toLocaleString(undefined, { maximumFractionDigits: 6 })
         }
+        const fmtPol = (s: string) => {
+          const n = Number(s)
+          if (!Number.isFinite(n)) return s
+          // Always show at least 4 decimal places so small gas amounts like 0.0050 are visible
+          return n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+        }
         setUsdcBal(fmt(usdcFmt))
         setMahBal(fmt(mahFmt))
-        setPolBal(fmt(polFmt))
+        setPolBal(fmtPol(polFmt))
       } catch (e: any) {
         if (!alive) return
         console.warn('balance refresh failed', e?.message || e)
@@ -213,8 +254,16 @@ export default function GetALKE() {
     ) {
       return (
         `AmVault isn’t configured for Polygon transactions yet.\n\n` +
-        `Fix in AmVault: route chainId ${POLY_CHAIN_ID} to a Polygon Amoy RPC.\n` +
+        `Fix in AmVault: route chainId ${POLY_CHAIN_ID} to a Polygon mainnet RPC.\n` +
         `After that, Approve & Deposit can be sent via AmVault without MetaMask.`
+      )
+    }
+
+    if (msg.toLowerCase().includes('replacement transaction underpriced') || msg.toLowerCase().includes('replacement fee too low')) {
+      return (
+        `A previous transaction is still pending in the network.\n\n` +
+        `This usually clears on its own within a few minutes. Please wait and try again.\n` +
+        `If it keeps happening, contact support with your wallet address.`
       )
     }
 
@@ -223,7 +272,7 @@ export default function GetALKE() {
         `Not enough POL to pay Polygon gas.\n\n` +
         `We can *try* to top up a small amount of POL automatically, but it’s not guaranteed.\n` +
         `If the top-up fails or is unavailable:\n` +
-        `• Add POL to your wallet on Polygon Amoy (chainId ${POLY_CHAIN_ID})\n` +
+        `• Add POL to your wallet on Polygon mainnet (chainId ${POLY_CHAIN_ID})\n` +
         `• Or try again later`
       )
     }
@@ -231,12 +280,37 @@ export default function GetALKE() {
     if (msg.toLowerCase().includes('topup') || msg.toLowerCase().includes('faucet')) {
       return (
         `Gas top-up is temporarily unavailable.\n\n` +
-        `You can still continue by adding a small amount of POL to your wallet on Polygon Amoy (chainId ${POLY_CHAIN_ID}), ` +
+        `You can still continue by adding a small amount of POL to your wallet on Polygon (chainId ${POLY_CHAIN_ID}), ` +
         `or try again later.`
       )
     }
 
     return e?.shortMessage || e?.message || 'Deposit failed.'
+  }
+
+  async function onBuyWithStripe() {
+    if (!address) {
+      setStripeErr('Connect amVault first so Stripe can send USDC to your wallet.')
+      return
+    }
+    setStripeLoading(true)
+    setStripeErr(null)
+    try {
+      const res = await fetch(`${BRIDGE_API}/stripe/onramp/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress: address }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.redirectUrl) {
+        throw new Error(data?.error || 'Could not create Stripe session.')
+      }
+      window.open(data.redirectUrl, '_blank', 'noreferrer')
+    } catch (e: any) {
+      setStripeErr(e?.message || 'Stripe session failed. Please try again or contact support.')
+    } finally {
+      setStripeLoading(false)
+    }
   }
 
   async function onDeposit() {
@@ -264,7 +338,13 @@ export default function GetALKE() {
       const usdcDec: number = await usdcRead.decimals()
       const amt = ethers.parseUnits(amtStr, usdcDec)
 
-      const allowance: bigint = await usdcRead.allowance(address, BRIDGEVAULT_POLY)
+      // Standard EIP-1559 gas: maxFeePerGas = 2*baseFee + priority.
+      // The 2× headroom ensures the tx stays eligible even if baseFee spikes
+      // over the next few blocks. Without it, txs get stuck when baseFee rises.
+      // Users need ~0.2 POL (faucet amount) to cover reservation at normal–elevated prices.
+      const feeData = await polyProvider.getFeeData()
+      const maxFeeGwei      = Math.ceil(Number(ethers.formatUnits(feeData.maxFeePerGas      ?? 500_000_000_000n, 'gwei')))
+      const maxPriorityGwei = Math.ceil(Number(ethers.formatUnits(feeData.maxPriorityFeePerGas ?? 30_000_000_000n,  'gwei')))
 
       const txs: Array<{
         to?: string
@@ -275,32 +355,30 @@ export default function GetALKE() {
         maxPriorityFeePerGasGwei?: number
       }> = []
 
-      let approveIncluded = false
-
-      if (allowance < amt) {
-        const dataApprove = ERC20_IFACE.encodeFunctionData('approve', [BRIDGEVAULT_POLY, amt])
-        txs.push({
-          to: USDC_POLY,
-          data: dataApprove,
-          value: 0,
-          gas: 120_000,
-        })
-        approveIncluded = true
-      }
+      // Always include approve so AmVault receives a batch (2 txs).
+      // A batch triggers the preflight gas top-up. A single deposit tx skips
+      // preflight entirely and fails with "insufficient funds" when POL is low.
+      const dataApprove = ERC20_IFACE.encodeFunctionData('approve', [BRIDGEVAULT_POLY, amt])
+      txs.push({
+        to: USDC_POLY,
+        data: dataApprove,
+        value: 0,
+        gas: 65_000,   // USDC approve actual ~46k; 65k gives safe headroom
+        maxFeePerGasGwei: maxFeeGwei,
+        maxPriorityFeePerGasGwei: maxPriorityGwei,
+      })
 
       const dataDeposit = BRIDGEVAULT_IFACE.encodeFunctionData('deposit', [amt, address])
       txs.push({
         to: BRIDGEVAULT_POLY,
         data: dataDeposit,
         value: 0,
-        gas: 300_000,
+        gas: 180_000,  // vault deposit actual ~100–150k; 180k gives safe headroom
+        maxFeePerGasGwei: maxFeeGwei,
+        maxPriorityFeePerGasGwei: maxPriorityGwei,
       })
 
-      setBridgeInfo(
-        approveIncluded
-          ? 'Approve + Deposit queued. Confirm in AmVault… (it may top up POL automatically)'
-          : 'Deposit queued. Confirm in AmVault… (it may top up POL automatically)'
-      )
+      setBridgeInfo('Approve + Deposit queued. Confirm in AmVault… (it may top up POL automatically)')
 
       try {
         const mahRead = new ethers.Contract(MAH_ALK, ERC20_ABI, alkProvider)
@@ -462,7 +540,7 @@ export default function GetALKE() {
         />
 
         <div className="mb-4 flex flex-col gap-2 sm:flex-row">
-          <StepTab active={step === 'buy'} n="1" title="Buy USDC" subtitle="Polygon" onClick={() => setStep('buy')} />
+          <StepTab active={step === 'buy'} n="1" title="Get USDC" subtitle="Polygon" onClick={() => setStep('buy')} />
           <StepTab active={step === 'bridge'} n="2" title="Bridge to MAH" subtitle="Alkebuleum" onClick={() => setStep('bridge')} />
         </div>
 
@@ -472,10 +550,10 @@ export default function GetALKE() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <div className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                    Step 1 — Buy USDC (Polygon)
+                    Step 1 — Get USDC on Polygon
                   </div>
                   <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                    Buy USDC on Polygon to your address, then bridge it to MAH.
+                    Buy USDC directly or transfer from an existing wallet, then bridge to MAH.
                   </div>
                 </div>
                 <div className="shrink-0">
@@ -483,26 +561,63 @@ export default function GetALKE() {
                 </div>
               </div>
 
+              {/* Two option cards */}
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <a
-                  className="rounded-xl bg-orange-600 px-4 py-3 text-center font-semibold text-white shadow-sm transition hover:bg-orange-700"
-                  href={moonpayLink}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Buy USDC
-                </a>
-                <button
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                  onClick={() => setStep('bridge')}
-                >
-                  I already have USDC → Continue
-                </button>
+
+                {/* --- Buy with Stripe --- */}
+                <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-bold text-slate-900 dark:text-slate-100">Buy USDC</div>
+                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+                        Stripe
+                      </span>
+                    </div>
+                    <p className="mt-1.5 text-xs text-slate-600 dark:text-slate-400">
+                      Buy USDC with a card or bank transfer via Stripe. USDC is sent directly to your connected wallet on Polygon.
+                    </p>
+                  </div>
+                  {stripeErr && (
+                    <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
+                      {stripeErr}
+                    </div>
+                  )}
+                  <button
+                    onClick={onBuyWithStripe}
+                    disabled={stripeLoading}
+                    className="mt-3 w-full rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {stripeLoading ? 'Opening…' : 'Buy USDC →'}
+                  </button>
+                </div>
+
+                {/* --- Transfer from external wallet --- */}
+                <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
+                  <div>
+                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Transfer from external wallet
+                    </div>
+                    <p className="mt-1.5 text-xs text-slate-600 dark:text-slate-400">
+                      Already have USDC on Binance, Coinbase, or another wallet? Send it directly to your JollofSwap address on Polygon.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setTransferModalOpen(true)}
+                    className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    How to transfer →
+                  </button>
+                </div>
               </div>
 
-              {/*   <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
-                Use <span className="font-semibold">Polygon</span> and buy to your wallet address shown above.
-              </div> */}
+              <div className="mt-4">
+                <button
+                  className="w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700"
+                  onClick={() => setStep('bridge')}
+                >
+                  I have USDC on Polygon → Continue to Bridge
+                </button>
+              </div>
             </div>
           )}
 
@@ -663,6 +778,80 @@ export default function GetALKE() {
         </div>
 
       </div>
+
+      {/* Transfer from external wallet modal */}
+      {transferModalOpen && (
+        <ModalShell
+          title="Transfer USDC from external wallet"
+          subtitle="Send USDC on Polygon to your JollofSwap address."
+          onClose={() => setTransferModalOpen(false)}
+        >
+          <div className="grid gap-4">
+
+            {/* Critical warning */}
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10">
+              <div className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                Read before you send
+              </div>
+              <ul className="mt-2 list-disc space-y-1.5 pl-4 text-sm text-amber-800 dark:text-amber-300">
+                <li>
+                  You must send on the <span className="font-semibold">Polygon network</span> — not Ethereum, not BNB Chain, not any other chain.
+                </li>
+                <li>
+                  Send to the <span className="font-semibold">exact wallet address you connected to JollofSwap with</span> (shown below). That is the address that will receive MAH after bridging.
+                </li>
+                <li>
+                  Sending from a different address means MAH is minted to that other address — <span className="font-semibold">not your JollofSwap wallet</span>.
+                </li>
+              </ul>
+            </div>
+
+            {/* Wallet address */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Your wallet address — send USDC here on Polygon
+              </div>
+              {address ? (
+                <div className="mt-2 flex items-start gap-3">
+                  <span className="break-all font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">
+                    {address}
+                  </span>
+                  <div className="shrink-0">
+                    <CopyAddr value={address} />
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                  Connect amVault (top bar) to see your address.
+                </div>
+              )}
+              <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                Paste this as the destination address in your exchange or wallet. Always select Polygon as the network.
+              </div>
+            </div>
+
+            {/* Steps */}
+            <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+              <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                How to send USDC from an exchange
+              </div>
+              <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600 dark:text-slate-400">
+                <li>Log in to your exchange or wallet (Binance, Coinbase, Kraken, OKX, Bybit, etc.).</li>
+                <li>Go to Withdraw → USDC and select <span className="font-semibold text-slate-800 dark:text-slate-200">Polygon</span> as the network.</li>
+                <li>Paste your address above as the destination. Double-check it before confirming.</li>
+                <li>Wait for USDC to arrive (usually 1–5 minutes), then close this and click <span className="font-semibold text-slate-800 dark:text-slate-200">Continue to Bridge</span>.</li>
+              </ol>
+            </div>
+
+            <button
+              className="w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700"
+              onClick={() => { setTransferModalOpen(false); setStep('bridge') }}
+            >
+              I've sent USDC → Continue to Bridge
+            </button>
+          </div>
+        </ModalShell>
+      )}
 
       {mintOpen && mintDetails && (
         <ModalShell

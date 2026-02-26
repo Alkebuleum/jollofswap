@@ -31,6 +31,26 @@ const BRIDGE_API =
 
 const MOONPAY_BASE = (import.meta.env.VITE_MOONPAY_BASE as string) ?? 'https://buy.moonpay.com'
 
+const STRIPE_PK = (import.meta.env.VITE_STRIPE_PK as string) ?? ''
+
+function loadScript(src: string): Promise<void> {
+  if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = src
+    s.onload = () => resolve()
+    s.onerror = () => reject(new Error(`Failed to load script: ${src}`))
+    document.head.appendChild(s)
+  })
+}
+
+async function loadStripeOnrampScript(): Promise<void> {
+  if ((window as any).StripeOnramp) return
+  // Stripe.js must be loaded before the onramp script
+  await loadScript('https://js.stripe.com/v3/')
+  await loadScript('https://crypto-js.stripe.com/crypto-onramp-outer.js')
+}
+
 // These two are used by amvault-connect to route requests to your vault
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
@@ -107,6 +127,8 @@ export default function GetALKE() {
   const [transferModalOpen, setTransferModalOpen] = useState(false)
   const [stripeLoading, setStripeLoading] = useState(false)
   const [stripeErr, setStripeErr] = useState<string | null>(null)
+  const [stripeModalOpen, setStripeModalOpen] = useState(false)
+  const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null)
 
 
   const BRIDGE_PREFLIGHT = {
@@ -302,10 +324,12 @@ export default function GetALKE() {
         body: JSON.stringify({ walletAddress: address }),
       })
       const data = await res.json().catch(() => null)
-      if (!res.ok || !data?.redirectUrl) {
+      if (!res.ok || !data?.clientSecret) {
         throw new Error(data?.error || 'Could not create Stripe session.')
       }
-      window.open(data.redirectUrl, '_blank', 'noreferrer')
+      await loadStripeOnrampScript()
+      setStripeClientSecret(data.clientSecret)
+      setStripeModalOpen(true)
     } catch (e: any) {
       setStripeErr(e?.message || 'Stripe session failed. Please try again or contact support.')
     } finally {
@@ -853,6 +877,13 @@ export default function GetALKE() {
         </ModalShell>
       )}
 
+      {stripeModalOpen && stripeClientSecret && (
+        <StripeOnrampModal
+          clientSecret={stripeClientSecret}
+          onClose={() => { setStripeModalOpen(false); setStripeClientSecret(null) }}
+        />
+      )}
+
       {mintOpen && mintDetails && (
         <ModalShell
           title="Bridge complete — MAH received ✅"
@@ -908,6 +939,60 @@ export default function GetALKE() {
           </div>
         </ModalShell>
       )}
+    </div>
+  )
+}
+
+// Single StripeOnramp instance — created once after scripts load, reused across sessions
+let stripeOnrampInstance: any = null
+function getStripeOnramp() {
+  if (!stripeOnrampInstance) {
+    stripeOnrampInstance = (window as any).StripeOnramp(STRIPE_PK)
+  }
+  return stripeOnrampInstance
+}
+
+function StripeOnrampModal({ clientSecret, onClose }: { clientSecret: string; onClose: () => void }) {
+  const containerRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    if (!containerRef.current) return
+    containerRef.current.innerHTML = ''
+
+    const session = getStripeOnramp()
+      .createSession({
+        clientSecret,
+        appearance: { theme: 'stripe' },
+      })
+      .addEventListener('onramp_session_updated', (e: any) => {
+        console.log('[Stripe onramp] status:', e.payload?.session?.status)
+      })
+      .mount(containerRef.current)
+
+    return () => {
+      try { session.unmount?.() } catch { /* ignore */ }
+      try { session.destroy?.() } catch { /* ignore */ }
+      if (containerRef.current) containerRef.current.innerHTML = ''
+    }
+  }, [clientSecret])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/60"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="relative mx-auto my-8 w-full max-w-md rounded-2xl bg-white shadow-xl dark:bg-slate-900">
+        <button
+          onClick={onClose}
+          className="absolute right-3 top-3 z-10 rounded-full bg-white/80 p-1.5 text-slate-600 shadow hover:bg-white dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-800"
+          aria-label="Close"
+        >
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+        <div ref={containerRef} />
+      </div>
     </div>
   )
 }

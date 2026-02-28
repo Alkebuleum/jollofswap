@@ -31,26 +31,6 @@ const BRIDGE_API =
 
 const MOONPAY_BASE = (import.meta.env.VITE_MOONPAY_BASE as string) ?? 'https://buy.moonpay.com'
 
-const STRIPE_PK = (import.meta.env.VITE_STRIPE_PK as string) ?? ''
-
-function loadScript(src: string): Promise<void> {
-  if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve()
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script')
-    s.src = src
-    s.onload = () => resolve()
-    s.onerror = () => reject(new Error(`Failed to load script: ${src}`))
-    document.head.appendChild(s)
-  })
-}
-
-async function loadStripeOnrampScript(): Promise<void> {
-  if ((window as any).StripeOnramp) return
-  // Stripe.js must be loaded before the onramp script
-  await loadScript('https://js.stripe.com/v3/')
-  await loadScript('https://crypto-js.stripe.com/crypto-onramp-outer.js')
-}
-
 // These two are used by amvault-connect to route requests to your vault
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
@@ -125,10 +105,8 @@ export default function GetALKE() {
   const estMahRef = useRef<string | null>(null)
 
   const [transferModalOpen, setTransferModalOpen] = useState(false)
-  const [stripeLoading, setStripeLoading] = useState(false)
-  const [stripeErr, setStripeErr] = useState<string | null>(null)
-  const [stripeModalOpen, setStripeModalOpen] = useState(false)
-  const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null)
+  const [coinbaseLoading, setCoinbaseLoading] = useState(false)
+  const [coinbaseErr, setCoinbaseErr] = useState<string | null>(null)
 
 
   const BRIDGE_PREFLIGHT = {
@@ -310,30 +288,32 @@ export default function GetALKE() {
     return e?.shortMessage || e?.message || 'Deposit failed.'
   }
 
-  async function onBuyWithStripe() {
+  async function onBuyWithCoinbase() {
     if (!address) {
-      setStripeErr('Connect amVault first so Stripe can send USDC to your wallet.')
+      setCoinbaseErr('Connect amVault first so Coinbase can send USDC to your wallet.')
       return
     }
-    setStripeLoading(true)
-    setStripeErr(null)
+    setCoinbaseLoading(true)
+    setCoinbaseErr(null)
     try {
-      const res = await fetch(`${BRIDGE_API}/stripe/onramp/session`, {
+      const res = await fetch(`${BRIDGE_API}/coinbase/onramp/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ walletAddress: address }),
+        body: JSON.stringify({
+          walletAddress: address,
+          sourceAmount: '20',
+          returnUrl: 'https://jollofswap.com/get-alk',
+        }),
       })
       const data = await res.json().catch(() => null)
-      if (!res.ok || !data?.clientSecret) {
-        throw new Error(data?.error || 'Could not create Stripe session.')
+      if (!data?.ok || !data?.onrampUrl) {
+        throw new Error(data?.error || 'Could not create Coinbase onramp session.')
       }
-      await loadStripeOnrampScript()
-      setStripeClientSecret(data.clientSecret)
-      setStripeModalOpen(true)
+      window.location.href = data.onrampUrl
     } catch (e: any) {
-      setStripeErr(e?.message || 'Stripe session failed. Please try again or contact support.')
+      setCoinbaseErr(e?.message || 'Coinbase onramp failed. Please try again or contact support.')
     } finally {
-      setStripeLoading(false)
+      setCoinbaseLoading(false)
     }
   }
 
@@ -593,25 +573,25 @@ export default function GetALKE() {
                   <div>
                     <div className="flex items-center gap-2">
                       <div className="text-sm font-bold text-slate-900 dark:text-slate-100">Buy USDC</div>
-                      <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
-                        Stripe
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
+                        Coinbase
                       </span>
                     </div>
                     <p className="mt-1.5 text-xs text-slate-600 dark:text-slate-400">
-                      Buy USDC with a card or bank transfer via Stripe. USDC is sent directly to your connected wallet on Polygon.
+                      Buy USDC with a card or bank transfer via Coinbase Pay. USDC is sent directly to your connected wallet on Polygon.
                     </p>
                   </div>
-                  {stripeErr && (
+                  {coinbaseErr && (
                     <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
-                      {stripeErr}
+                      {coinbaseErr}
                     </div>
                   )}
                   <button
-                    onClick={onBuyWithStripe}
-                    disabled={stripeLoading}
+                    onClick={onBuyWithCoinbase}
+                    disabled={coinbaseLoading || !address}
                     className="mt-3 w-full rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {stripeLoading ? 'Opening…' : 'Buy USDC →'}
+                    {coinbaseLoading ? 'Opening…' : 'Buy USDC →'}
                   </button>
                 </div>
 
@@ -877,13 +857,6 @@ export default function GetALKE() {
         </ModalShell>
       )}
 
-      {stripeModalOpen && stripeClientSecret && (
-        <StripeOnrampModal
-          clientSecret={stripeClientSecret}
-          onClose={() => { setStripeModalOpen(false); setStripeClientSecret(null) }}
-        />
-      )}
-
       {mintOpen && mintDetails && (
         <ModalShell
           title="Bridge complete — MAH received ✅"
@@ -939,60 +912,6 @@ export default function GetALKE() {
           </div>
         </ModalShell>
       )}
-    </div>
-  )
-}
-
-// Single StripeOnramp instance — created once after scripts load, reused across sessions
-let stripeOnrampInstance: any = null
-function getStripeOnramp() {
-  if (!stripeOnrampInstance) {
-    stripeOnrampInstance = (window as any).StripeOnramp(STRIPE_PK)
-  }
-  return stripeOnrampInstance
-}
-
-function StripeOnrampModal({ clientSecret, onClose }: { clientSecret: string; onClose: () => void }) {
-  const containerRef = React.useRef<HTMLDivElement>(null)
-
-  React.useEffect(() => {
-    if (!containerRef.current) return
-    containerRef.current.innerHTML = ''
-
-    const session = getStripeOnramp()
-      .createSession({
-        clientSecret,
-        appearance: { theme: 'stripe' },
-      })
-      .addEventListener('onramp_session_updated', (e: any) => {
-        console.log('[Stripe onramp] status:', e.payload?.session?.status)
-      })
-      .mount(containerRef.current)
-
-    return () => {
-      try { session.unmount?.() } catch { /* ignore */ }
-      try { session.destroy?.() } catch { /* ignore */ }
-      if (containerRef.current) containerRef.current.innerHTML = ''
-    }
-  }, [clientSecret])
-
-  return (
-    <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/60"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
-    >
-      <div className="relative mx-auto my-8 w-full max-w-md rounded-2xl bg-white shadow-xl dark:bg-slate-900">
-        <button
-          onClick={onClose}
-          className="absolute right-3 top-3 z-10 rounded-full bg-white/80 p-1.5 text-slate-600 shadow hover:bg-white dark:bg-slate-800/80 dark:text-slate-300 dark:hover:bg-slate-800"
-          aria-label="Close"
-        >
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        </button>
-        <div ref={containerRef} />
-      </div>
     </div>
   )
 }

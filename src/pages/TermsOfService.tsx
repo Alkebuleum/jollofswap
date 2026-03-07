@@ -2,7 +2,7 @@
 import React from 'react'
 
 const SUPPORT_EMAIL = (import.meta.env.VITE_SUPPORT_EMAIL as string) ?? 'info@alkebuleum.org'
-const EFFECTIVE_DATE = 'February 25, 2026'
+const EFFECTIVE_DATE = 'March 7, 2026'
 
 function H2({ children }: { children: React.ReactNode }) {
   return (
@@ -75,8 +75,7 @@ export default function TermsOfService() {
             <li>Provide and remove liquidity from token pools.</li>
             <li>Bridge USDC from Polygon to MAH on Alkebuleum via the JollofSwap Bridge.</li>
             <li>Create and register new tokens via the Token Factory.</li>
-            <li>Purchase cryptocurrency via a third-party fiat on-ramp (MoonPay).</li>
-            <li>Participate in referral and rewards programmes.</li>
+            <li>Purchase USDC via a third-party fiat on-ramp (Coinbase Pay) and transfer it to your connected wallet on Polygon.</li>
           </UL>
           <P>
             The Platform interacts with publicly deployed smart contracts. All transactions are
@@ -125,28 +124,28 @@ export default function TermsOfService() {
           </P>
 
           <H2>5. Third-Party Services</H2>
-          <H3>5.1 MoonPay Fiat On-Ramp</H3>
+          <H3>5.1 Coinbase Pay Fiat On-Ramp</H3>
           <P>
-            The Platform integrates MoonPay, a third-party fiat-to-crypto payment service, to allow
-            users to purchase cryptocurrency with fiat currency. When you use the MoonPay service:
+            The Platform integrates Coinbase Pay, a third-party fiat-to-crypto payment service, to
+            allow users to purchase USDC on Polygon with fiat currency. When you use this service:
           </P>
           <UL>
             <li>
-              You are subject to MoonPay's own Terms of Service and Privacy Policy, which you must
+              You are subject to Coinbase's own Terms of Service and Privacy Policy, which you must
               accept independently.
             </li>
             <li>
-              MoonPay performs its own identity verification (KYC/AML) and compliance checks.
+              Coinbase performs its own identity verification (KYC/AML) and compliance checks.
               JollofSwap does not perform or control this process.
             </li>
             <li>
-              All fiat payments, transaction fees charged by MoonPay, and delivery of cryptocurrency
-              are the sole responsibility of MoonPay. JollofSwap is not liable for any failure,
-              delay, error, or loss arising from your use of MoonPay.
+              All fiat payments, transaction fees charged by Coinbase, and delivery of cryptocurrency
+              are the sole responsibility of Coinbase. JollofSwap is not liable for any failure,
+              delay, error, or loss arising from your use of Coinbase Pay.
             </li>
             <li>
-              By passing your wallet address to MoonPay, you consent to the cryptocurrency being
-              delivered to your connected wallet address on the specified network (Polygon).
+              By initiating a Coinbase Pay session, you consent to USDC being delivered to your
+              connected wallet address on the Polygon network.
             </li>
           </UL>
 
@@ -167,12 +166,27 @@ export default function TermsOfService() {
 
           <H2>6. Fees</H2>
           <P>
-            JollofSwap charges fees for certain services, including bridge transactions. Fee details
-            are displayed in the user interface before you confirm a transaction. Fees are
-            non-refundable once a transaction is submitted to the blockchain. In addition to
-            JollofSwap fees, you are responsible for all gas fees charged by the underlying
-            blockchain networks.
+            JollofSwap charges fees for certain services. Fee details are always displayed in the
+            user interface before you confirm a transaction. Fees are non-refundable once a
+            transaction is submitted to the blockchain.
           </P>
+          <UL>
+            <li>
+              <strong>Bridge fee:</strong> A fee is charged on USDC→MAH bridge deposits. The fee is
+              0.10% of the deposit amount, with a minimum of $0.10 and a maximum of $2.00 USD.
+              The exact fee for your deposit is shown on the Bridge screen before you proceed.
+            </li>
+            <li>
+              <strong>Swap fee:</strong> A 0.30% liquidity provider fee is charged on all token
+              swaps. This fee goes entirely to liquidity providers.
+            </li>
+            <li>
+              <strong>Gas fees:</strong> You are responsible for all network gas fees charged by
+              the Alkebuleum and Polygon blockchains. The Platform may automatically arrange a
+              small gas top-up on your behalf if your balance is insufficient to cover a
+              transaction; any such top-up is disclosed in the amVault signing flow.
+            </li>
+          </UL>
 
           <H2>7. Risks</H2>
           <P>
@@ -259,7 +273,7 @@ export default function TermsOfService() {
           <UL>
             <li>Your use of or inability to use the Platform.</li>
             <li>Smart contract bugs, exploits, or failures.</li>
-            <li>Third-party service failures (MoonPay, amVault, blockchain networks).</li>
+            <li>Third-party service failures (Coinbase Pay, amVault, blockchain networks).</li>
             <li>Unauthorised access to your wallet or private keys.</li>
             <li>Market volatility or loss of token value.</li>
             <li>Any error, omission, or inaccuracy in the Platform's interface or data.</li>

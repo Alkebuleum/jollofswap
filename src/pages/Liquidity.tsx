@@ -379,7 +379,9 @@ export default function Liquidity() {
   }, [])
 
   const [balA, setBalA] = useState('—')
+  const [balANum, setBalANum] = useState<number>(0)
   const [balB, setBalB] = useState('—')
+  const [balBNum, setBalBNum] = useState<number>(0)
   const [loadingBalances, setLoadingBalances] = useState(false)
 
   const [pairAddr, setPairAddr] = useState<string>('—')
@@ -394,6 +396,19 @@ export default function Liquidity() {
   const [err, setErr] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // Add liquidity progress dialog
+  const [addLiqDialogOpen, setAddLiqDialogOpen] = useState(false)
+  const [addLiqDialogPhase, setAddLiqDialogPhase] = useState<'confirming' | 'success' | 'error'>('confirming')
+  const [addLiqDialogErr, setAddLiqDialogErr] = useState<string | null>(null)
+  const [addLiqDialogDetails, setAddLiqDialogDetails] = useState<{
+    symA: string
+    symB: string
+    amtA: string
+    amtB: string
+    txHash: string
+  } | null>(null)
+  const [preAddBals, setPreAddBals] = useState<{ a: string; b: string } | null>(null)
   const [removePct, setRemovePct] = useState(100)
 
   const REMOVE_PREFLIGHT = {
@@ -411,7 +426,9 @@ export default function Liquidity() {
   async function refreshBalances() {
     if (!address) {
       setBalA('—')
+      setBalANum(0)
       setBalB('—')
+      setBalBNum(0)
       return
     }
     const [b1, b2] = await Promise.all([
@@ -419,8 +436,12 @@ export default function Liquidity() {
       getBalance(address, TOKENS[tokenB], provider),
     ])
     const [d1, d2] = await Promise.all([readDecimals(TOKENS[tokenA], provider), readDecimals(TOKENS[tokenB], provider)])
-    setBalA(fmtNum(ethers.formatUnits(b1, d1)))
-    setBalB(fmtNum(ethers.formatUnits(b2, d2)))
+    const rawA = ethers.formatUnits(b1, d1)
+    const rawB = ethers.formatUnits(b2, d2)
+    setBalA(fmtNum(rawA))
+    setBalANum(Number(rawA))
+    setBalB(fmtNum(rawB))
+    setBalBNum(Number(rawB))
   }
 
   function fmtLp(balance: bigint) {
@@ -798,8 +819,12 @@ export default function Liquidity() {
 
   async function onAddLiquidity() {
     setErr(null)
-    setInfo(null)
+    setAddLiqDialogErr(null)
+    setAddLiqDialogDetails(null)
     setBusy(true)
+
+    let dialogOpened = false
+
     try {
       if (!walletConnected || !address) throw new Error('Connect amVault using the top bar to continue.')
       if (!ROUTER) throw new Error('Missing VITE_JOLLOF_ROUTER_ALK')
@@ -809,11 +834,17 @@ export default function Liquidity() {
         throw new Error(lpGate.reason ?? 'Pool needs admin repair before adding liquidity.')
       }
 
-
       const aStr = clampAmountStr(amtA.trim())
       const bStr = clampAmountStr(amtB.trim())
       if (!aStr || Number(aStr) <= 0) throw new Error('Enter a valid Amount A.')
       if (!bStr || Number(bStr) <= 0) throw new Error('Enter a valid Amount B.')
+
+      if (balANum > 0 && Number(aStr) > balANum) {
+        throw new Error(`Insufficient ${tokenA} balance. You have ${balA} ${tokenA}.`)
+      }
+      if (balBNum > 0 && Number(bStr) > balBNum) {
+        throw new Error(`Insufficient ${tokenB} balance. You have ${balB} ${tokenB}.`)
+      }
 
       const A = TOKENS[tokenA]
       const B = TOKENS[tokenB]
@@ -836,11 +867,8 @@ export default function Liquidity() {
       const minA = plan.minA
       const minB = plan.minB
 
-      if (usedA !== amountA || usedB !== amountB) {
-        const usedAUi = fmtNum(ethers.formatUnits(usedA, decA))
-        const usedBUi = fmtNum(ethers.formatUnits(usedB, decB))
-        setInfo(`Pool ratio adjusted amounts: ~${usedAUi} ${tokenA} + ~${usedBUi} ${tokenB}. Confirm in amVault…`)
-      }
+      const usedAUi = fmtNum(ethers.formatUnits(usedA, decA))
+      const usedBUi = fmtNum(ethers.formatUnits(usedB, decB))
 
       const txs: any[] = []
 
@@ -874,7 +902,8 @@ export default function Liquidity() {
 
       const safeTxs = txs.map(normalizeTxForAmVault)
 
-      setInfo('Submitted to amVault. Confirm…')
+      // Snapshot balances before sending
+      setPreAddBals({ a: balA, b: balB })
 
       const results = await sendTransactions(
         {
@@ -893,13 +922,25 @@ export default function Liquidity() {
         .map((r: any) => r?.txHash as string | undefined)
         .filter(Boolean) as string[]
 
+      const addLiqHash = hashes[hashes.length - 1]
+
+      // AmVault has popped — open the progress dialog
+      setAddLiqDialogDetails({
+        symA: tokenA,
+        symB: tokenB,
+        amtA: usedAUi,
+        amtB: usedBUi,
+        txHash: addLiqHash,
+      })
+      setAddLiqDialogPhase('confirming')
+      setAddLiqDialogOpen(true)
+      dialogOpened = true
+
       const labels: string[] = safeTxs.map((t: any, i: number) => {
         const isRouter = (t?.to || '').toLowerCase() === ROUTER.toLowerCase()
         if (isRouter) return 'addLiquidity'
         return `approve #${i + 1}`
       })
-
-      setInfo('Waiting for on-chain confirmation…')
 
       let anyFail = false
       let lastReason: string | null = null
@@ -926,36 +967,38 @@ export default function Liquidity() {
           }
         } else {
           anyFail = true
-
           let reason = await getRevertReasonFromChain(provider, h)
-
           if (!reason) {
             const txObj = await provider.getTransaction(h)
             if (txObj?.gasLimit && r.gasUsed >= txObj.gasLimit - 1000n) {
               reason = `Out of gas (gasUsed≈gasLimit). Increase gasLimit.`
             }
           }
-
           lastReason = reason ?? 'reverted (no reason decoded)'
         }
       }
 
       if (anyFail) {
-        setErr(
+        setAddLiqDialogPhase('error')
+        setAddLiqDialogErr(
           lastReason
             ? `addLiquidity reverted: ${lastReason}`
             : 'One or more transactions reverted or did not confirm.'
         )
-        setInfo(null)
       } else {
-        setInfo('Liquidity confirmed on-chain ✅')
+        setAddLiqDialogPhase('success')
       }
 
       await refreshBalances()
       await refreshPositionAndReserves()
     } catch (e: any) {
-      setErr(e?.shortMessage || e?.message || 'Add Liquidity failed.')
-      setInfo(null)
+      const msg = e?.shortMessage || e?.message || 'Add Liquidity failed.'
+      if (dialogOpened) {
+        setAddLiqDialogErr(msg)
+        setAddLiqDialogPhase('error')
+      } else {
+        setErr(msg)
+      }
     } finally {
       setBusy(false)
     }
@@ -1392,19 +1435,38 @@ export default function Liquidity() {
                 {err}
               </div>
             )}
-            {info && (
-              <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
-                {info}
-              </div>
-            )}
 
-            <button
-              onClick={onAddLiquidity}
-              disabled={!walletConnected || !address || busy || (lpGate.blocked && !isAdmin)}
-              className="mt-4 w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {busy ? 'Confirming on-chain…' : 'Preview & Add'}
-            </button>
+            {(() => {
+              const aNum = Number(clampAmountStr(amtA.trim()))
+              const bNum = Number(clampAmountStr(amtB.trim()))
+              const insuffA = !loadingBalances && walletConnected && !!address && aNum > 0 && aNum > balANum
+              const insuffB = !loadingBalances && walletConnected && !!address && bNum > 0 && bNum > balBNum
+              const insuff = insuffA || insuffB
+              return (
+                <button
+                  onClick={onAddLiquidity}
+                  disabled={!walletConnected || !address || busy || (lpGate.blocked && !isAdmin) || insuff}
+                  className="mt-4 w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busy
+                    ? 'Confirming on-chain…'
+                    : insuffA
+                    ? `Insufficient ${tokenA} balance`
+                    : insuffB
+                    ? `Insufficient ${tokenB} balance`
+                    : 'Preview & Add'}
+                </button>
+              )
+            })()}
+
+            {addLiqDialogDetails && !addLiqDialogOpen && (
+              <button
+                onClick={() => setAddLiqDialogOpen(true)}
+                className="mt-2 w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200"
+              >
+                View liquidity status →
+              </button>
+            )}
           </div>
 
           {/* Position + pool state */}
@@ -1569,6 +1631,266 @@ export default function Liquidity() {
             )}
           </div>
 
+        </div>
+      </div>
+
+      {addLiqDialogOpen && addLiqDialogDetails && (
+        <AddLiqProgressModal
+          phase={addLiqDialogPhase}
+          details={addLiqDialogDetails}
+          preAddBals={preAddBals}
+          balA={balA}
+          balB={balB}
+          lpShareUi={lpShareUi}
+          err={addLiqDialogErr}
+          onClose={() => setAddLiqDialogOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function AddLiqProgressModal({
+  phase,
+  details,
+  preAddBals,
+  balA,
+  balB,
+  lpShareUi,
+  err,
+  onClose,
+}: {
+  phase: 'confirming' | 'success' | 'error'
+  details: { symA: string; symB: string; amtA: string; amtB: string; txHash: string }
+  preAddBals: { a: string; b: string } | null
+  balA: string
+  balB: string
+  lpShareUi: string
+  err: string | null
+  onClose: () => void
+}) {
+  const isDone = phase === 'success'
+  const isError = phase === 'error'
+  const isActive = !isDone && !isError
+
+  const steps: Array<{ label: string; sublabel?: string; done: boolean; active: boolean }> = [
+    {
+      label: 'Transaction submitted',
+      sublabel: `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}`,
+      done: true,
+      active: false,
+    },
+    {
+      label: 'Awaiting on-chain confirmation',
+      done: isDone,
+      active: isActive,
+    },
+    {
+      label: 'Liquidity added',
+      done: isDone,
+      active: false,
+    },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900" style={{ maxHeight: '90vh' }}>
+
+        {/* Header */}
+        <div
+          className={[
+            'px-5 py-4',
+            isDone
+              ? 'bg-green-50 dark:bg-green-950/30'
+              : isError
+              ? 'bg-red-50 dark:bg-red-950/30'
+              : 'bg-orange-50 dark:bg-orange-950/20',
+          ].join(' ')}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                {isDone
+                  ? 'Liquidity added'
+                  : isError
+                  ? 'Transaction failed'
+                  : 'Adding liquidity…'}
+              </div>
+              <div className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
+                {isDone
+                  ? `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} deposited.`
+                  : isError
+                  ? 'See details below.'
+                  : `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} · Alkebuleum`}
+              </div>
+            </div>
+            {(isDone || isError) && (
+              <button
+                onClick={onClose}
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+
+          {/* Step list */}
+          {!isError && (
+            <div>
+              {steps.map((step, i) => (
+                <div key={i} className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <div
+                      className={[
+                        'relative grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold',
+                        step.done
+                          ? 'bg-green-500 text-white'
+                          : step.active
+                          ? 'bg-orange-500 text-white'
+                          : 'bg-slate-100 text-slate-400 dark:bg-slate-800',
+                      ].join(' ')}
+                    >
+                      {step.active && (
+                        <span className="absolute inset-0 animate-ping rounded-full bg-orange-400 opacity-40" />
+                      )}
+                      {step.done ? (
+                        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M3 8l3.5 3.5L13 5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : step.active ? (
+                        <svg viewBox="0 0 16 16" className="h-4 w-4 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="8" cy="8" r="6" strokeOpacity="0.25" />
+                          <path d="M8 2a6 6 0 0 1 6 6" strokeLinecap="round" />
+                        </svg>
+                      ) : (
+                        <span>{i + 1}</span>
+                      )}
+                    </div>
+                    {i < steps.length - 1 && (
+                      <div
+                        className={[
+                          'my-1 w-0.5',
+                          step.done ? 'bg-green-400' : 'bg-slate-200 dark:bg-slate-700',
+                        ].join(' ')}
+                        style={{ minHeight: 20 }}
+                      />
+                    )}
+                  </div>
+
+                  <div className="min-w-0 pb-5">
+                    <div
+                      className={[
+                        'text-sm font-semibold',
+                        step.done
+                          ? 'text-green-700 dark:text-green-400'
+                          : step.active
+                          ? 'text-orange-700 dark:text-orange-400'
+                          : 'text-slate-400 dark:text-slate-600',
+                      ].join(' ')}
+                    >
+                      {step.label}
+                    </div>
+                    {step.sublabel && (
+                      <div className="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">
+                        {step.sublabel}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Error panel */}
+          {isError && err && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/40 dark:bg-red-950/30">
+              <div className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">Error</div>
+              <div className="whitespace-pre-wrap text-sm text-red-600 dark:text-red-300">{err}</div>
+            </div>
+          )}
+
+          {/* Live balances */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+            <div className="mb-3 flex items-center gap-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                {isDone ? 'Updated balances' : 'Live balances'}
+              </div>
+              {isActive && (
+                <span className="flex items-center gap-1">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-orange-500" />
+                  </span>
+                  <span className="text-[10px] font-medium text-orange-600 dark:text-orange-400">live</span>
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Token A */}
+              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">{details.symA}</div>
+                <div className={[
+                  'mt-1 text-lg font-bold tabular-nums',
+                  isDone ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100',
+                ].join(' ')}>
+                  {balA}
+                </div>
+                {isDone && preAddBals && preAddBals.a !== balA && (
+                  <div className="mt-0.5 text-xs text-slate-400 line-through dark:text-slate-500">
+                    {preAddBals.a}
+                  </div>
+                )}
+              </div>
+
+              {/* Token B */}
+              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">{details.symB}</div>
+                <div className={[
+                  'mt-1 text-lg font-bold tabular-nums',
+                  isDone ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100',
+                ].join(' ')}>
+                  {balB}
+                </div>
+                {isDone && preAddBals && preAddBals.b !== balB && (
+                  <div className="mt-0.5 text-xs text-slate-400 line-through dark:text-slate-500">
+                    {preAddBals.b}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* LP share on success */}
+            {isDone && lpShareUi !== '—' && (
+              <div className="mt-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 dark:border-green-900/40 dark:bg-green-950/20">
+                <div className="text-xs text-green-700 dark:text-green-400">
+                  Your pool share
+                </div>
+                <div className="mt-0.5 text-sm font-bold text-green-800 dark:text-green-300">
+                  {lpShareUi}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          {(isDone || isError) && (
+            <button
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              onClick={onClose}
+            >
+              {isDone ? 'Close' : 'Dismiss'}
+            </button>
+          )}
+
+          {isActive && (
+            <div className="text-center text-xs text-slate-400 dark:text-slate-600">
+              Alkebuleum transactions typically confirm in under 30 seconds.
+            </div>
+          )}
         </div>
       </div>
     </div>

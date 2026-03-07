@@ -2,7 +2,7 @@
 import React from 'react'
 
 const SUPPORT_EMAIL = (import.meta.env.VITE_SUPPORT_EMAIL as string) ?? 'info@alkebuleum.org'
-const EFFECTIVE_DATE = 'February 25, 2026'
+const EFFECTIVE_DATE = 'March 7, 2026'
 
 function H2({ children }: { children: React.ReactNode }) {
   return (
@@ -109,26 +109,29 @@ export default function PrivacyPolicy() {
           <H3>2.4 Information from Third-Party Services</H3>
           <UL>
             <li>
-              <strong>MoonPay:</strong> If you use the fiat on-ramp feature to purchase cryptocurrency,
-              MoonPay collects and processes your payment and identity information independently under
-              their own privacy policy. We receive only your wallet address for routing purposes.
-              MoonPay's privacy policy is available at{' '}
+              <strong>Coinbase Pay:</strong> If you use the Coinbase Pay on-ramp feature to purchase
+              USDC, Coinbase collects and processes your payment and identity information independently
+              under their own privacy policy. We pass only your wallet address and requested currency
+              to initiate the session; all payment processing and KYC/AML checks are handled by
+              Coinbase. Coinbase's privacy policy is available at{' '}
               <a
-                href="https://www.moonpay.com/legal/privacy_policy"
+                href="https://www.coinbase.com/legal/privacy"
                 target="_blank"
                 rel="noreferrer"
                 className="font-medium underline text-slate-900 dark:text-slate-100"
               >
-                moonpay.com/legal/privacy_policy
+                coinbase.com/legal/privacy
               </a>.
             </li>
             <li>
-              <strong>Firebase (Google):</strong> We use Firebase for authentication and session
+              <strong>Firebase (Google):</strong> We use Firebase (Firestore) for storing on-chain
+              AMM event logs (swaps, liquidity additions/removals, price history) and for session
               management. Firebase may collect usage data subject to Google's Privacy Policy.
             </li>
             <li>
-              <strong>amVault:</strong> amVault is a self-custodial wallet service. Your interaction
-              with amVault is governed by amVault's own privacy policy and terms.
+              <strong>amVault:</strong> amVault is a self-custodial wallet service used to sign and
+              broadcast transactions. Your interaction with amVault is governed by amVault's own
+              privacy policy and terms.
             </li>
           </UL>
 
@@ -141,7 +144,6 @@ export default function PrivacyPolicy() {
             <li>Monitor and improve the performance and user experience of the Platform.</li>
             <li>Comply with applicable legal obligations and regulatory requirements.</li>
             <li>Communicate important updates, security notices, or changes to our terms.</li>
-            <li>Manage access control during pre-launch and waitlist phases.</li>
           </UL>
           <P>
             We do not sell, rent, or trade your personal information to third parties for marketing
@@ -153,7 +155,7 @@ export default function PrivacyPolicy() {
           <UL>
             <li>
               <strong>Service providers:</strong> Third-party vendors who assist in operating the
-              Platform (e.g., Firebase, MoonPay, amVault) strictly as needed to deliver the service.
+              Platform (e.g., Firebase, Coinbase, amVault) strictly as needed to deliver the service.
             </li>
             <li>
               <strong>Legal compliance:</strong> If required by law, court order, or government

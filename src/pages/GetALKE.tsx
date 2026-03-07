@@ -47,6 +47,8 @@ const ALKE = {
   networkName: 'Alkebuleum',
 }
 
+const REQUIRED_CONFIRMATIONS = 10
+
 const ERC20_ABI = [
   'function decimals() view returns (uint8)',
   'function balanceOf(address) view returns (uint256)',
@@ -77,6 +79,7 @@ export default function GetALKE() {
   const [step, setStep] = useState<Step>('buy')
 
   const [usdcBal, setUsdcBal] = useState<string>('—')
+  const [usdcBalNum, setUsdcBalNum] = useState<number>(0)
   const [mahBal, setMahBal] = useState<string>('—')
   const [loadingBalances, setLoadingBalances] = useState(false)
   const [polBal, setPolBal] = useState<string>('—')
@@ -84,23 +87,26 @@ export default function GetALKE() {
   const [amount, setAmount] = useState('10')
   const [depositing, setDepositing] = useState(false)
   const [bridgeErr, setBridgeErr] = useState<string | null>(null)
-  const [bridgeInfo, setBridgeInfo] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
   const [mintedTx, setMintedTx] = useState<string | null>(null)
-  const [pollStatus, setPollStatus] = useState<string | null>(null)
   const pollingRef = useRef<number | null>(null)
   const mahBeforeRef = useRef<bigint | null>(null)
   const pollTickRef = useRef(0)
 
-  const [debugOpen, setDebugOpen] = useState(false)
   const [lastBridgeJson, setLastBridgeJson] = useState<string>('')
 
-  const [mintOpen, setMintOpen] = useState(false)
   const [mintDetails, setMintDetails] = useState<{
     depositTx: string
     mintTx?: string | null
     estMah?: string | null
   } | null>(null)
+
+  // Bridge progress dialog
+  const [bridgeDialogOpen, setBridgeDialogOpen] = useState(false)
+  const [bridgeDialogPhase, setBridgeDialogPhase] = useState<'confirming' | 'minting' | 'success' | 'error'>('confirming')
+  const [bridgeConf, setBridgeConf] = useState(0)
+  const [bridgeDialogErr, setBridgeDialogErr] = useState<string | null>(null)
+  const [preBridgeBals, setPreBridgeBals] = useState<{ usdc: string; mah: string } | null>(null)
 
   const estMahRef = useRef<string | null>(null)
 
@@ -186,6 +192,7 @@ export default function GetALKE() {
         if (!address) {
           if (!alive) return
           setUsdcBal('—')
+          setUsdcBalNum(0)
           setMahBal('—')
           setPolBal('—')
           return
@@ -217,6 +224,7 @@ export default function GetALKE() {
           return n.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 })
         }
         setUsdcBal(fmt(usdcFmt))
+        setUsdcBalNum(Number(usdcFmt))
         setMahBal(fmt(mahFmt))
         setPolBal(fmtPol(polFmt))
       } catch (e: any) {
@@ -320,10 +328,10 @@ export default function GetALKE() {
   async function onDeposit() {
     if (depositing) return
     setBridgeErr(null)
-    setBridgeInfo(null)
     setTxHash(null)
     setMintedTx(null)
-    setPollStatus(null)
+    setBridgeDialogErr(null)
+    setMintDetails(null)
 
     if (!walletConnected || !address) {
       setBridgeErr('Connect amVault using the top bar to continue.')
@@ -333,6 +341,14 @@ export default function GetALKE() {
     const amtStr = clampAmountStr(amount.trim())
     if (!amtStr || Number(amtStr) <= 0) {
       setBridgeErr('Enter a valid USDC amount.')
+      return
+    }
+    if (usdcBalNum <= 0) {
+      setBridgeErr('You have no USDC on Polygon. Get USDC first (Step 1).')
+      return
+    }
+    if (Number(amtStr) > usdcBalNum) {
+      setBridgeErr(`Amount exceeds your USDC balance (${usdcBal} USDC).`)
       return
     }
 
@@ -382,7 +398,8 @@ export default function GetALKE() {
         maxPriorityFeePerGasGwei: maxPriorityGwei,
       })
 
-      setBridgeInfo('Approve + Deposit queued. Confirm in AmVault… (it may top up POL automatically)')
+      // Snapshot balances before AmVault opens
+      setPreBridgeBals({ usdc: usdcBal, mah: mahBal })
 
       try {
         const mahRead = new ethers.Contract(MAH_ALK, ERC20_ABI, alkProvider)
@@ -413,13 +430,14 @@ export default function GetALKE() {
       if (!depositHash) throw new Error('No deposit txHash returned from AmVault')
 
       setTxHash(depositHash)
-      setBridgeInfo('Deposit sent. Waiting for confirmations…')
+      setBridgeConf(0)
+      setBridgeDialogPhase('confirming')
+      setBridgeDialogOpen(true)
       setDepositing(false)
       startPolling(depositHash)
     } catch (e: any) {
       console.error(e)
       setBridgeErr(normalizeAmvaultChainError(e))
-      setBridgeInfo(null)
       setDepositing(false)
     }
   }
@@ -427,24 +445,34 @@ export default function GetALKE() {
   function startPolling(hash: string) {
     if (pollingRef.current) window.clearInterval(pollingRef.current)
 
-    const REQUIRED = 10
+    function completeMint(mintTxHash: string | null) {
+      if (mintTxHash) setMintedTx(mintTxHash)
+      const details = {
+        depositTx: hash,
+        mintTx: mintTxHash ?? null,
+        estMah: estMahRef.current,
+      }
+      setMintDetails(details)
+      setBridgeDialogPhase('success')
+      setBridgeDialogOpen(true)
+      if (pollingRef.current) window.clearInterval(pollingRef.current)
+      pollingRef.current = null
+    }
 
     const tick = async () => {
       try {
-        setPollStatus('Checking bridge status…')
-
         const url = `${BRIDGE_API}/deposits/${hash}?t=${Date.now()}`
         const res = await fetch(url, { cache: 'no-store' })
         const data = await res.json().catch(() => null)
         setLastBridgeJson(JSON.stringify(data, null, 2))
 
         if (!res.ok || !data?.ok) {
-          const err = data?.error || res.statusText || 'unknown'
-          setPollStatus(`Bridge status unavailable: ${err}`)
+          // Non-fatal: keep polling
           return
         }
 
         const conf = Number(data?.polygon?.confirmations ?? 0)
+        setBridgeConf(conf)
 
         const deposits = Array.isArray(data?.deposits) ? data.deposits : []
         const mintTxHash =
@@ -463,27 +491,14 @@ export default function GetALKE() {
           null
 
         if (mintTxHash || mintedAt) {
-          if (mintTxHash) setMintedTx(mintTxHash)
-
-          setMintDetails({
-            depositTx: hash,
-            mintTx: mintTxHash ?? null,
-            estMah: estMahRef.current,
-          })
-          setMintOpen(true)
-
-          setBridgeInfo(null)
-          setPollStatus(null)
-          if (pollingRef.current) window.clearInterval(pollingRef.current)
-          pollingRef.current = null
+          completeMint(mintTxHash)
           return
         }
 
-
-        if (conf >= REQUIRED) {
-          setPollStatus('Confirmed ✅ Waiting for bridge worker to mint…')
+        if (conf >= REQUIRED_CONFIRMATIONS) {
+          setBridgeDialogPhase('minting')
         } else {
-          setPollStatus(`Confirmations: ${conf}/${REQUIRED}`)
+          setBridgeDialogPhase('confirming')
         }
 
         pollTickRef.current += 1
@@ -491,28 +506,16 @@ export default function GetALKE() {
           try {
             const mahRead = new ethers.Contract(MAH_ALK, ERC20_ABI, alkProvider)
             const now = await mahRead.balanceOf(address)
-
             if (now > mahBeforeRef.current) {
-              setMintDetails({
-                depositTx: hash,
-                mintTx: null,
-                estMah: estMahRef.current,
-              })
-              setMintOpen(true)
-
-              setBridgeInfo(null)
-              setPollStatus(null)
-              if (pollingRef.current) window.clearInterval(pollingRef.current)
-              pollingRef.current = null
+              completeMint(null)
               return
             }
-
           } catch {
             // ignore
           }
         }
       } catch {
-        setPollStatus('Deposit sent. Mint will appear when processed.')
+        // keep polling silently
       }
     }
 
@@ -616,7 +619,7 @@ export default function GetALKE() {
 
               <div className="mt-4">
                 <button
-                  className="w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700"
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-700"
                   onClick={() => setStep('bridge')}
                 >
                   I have USDC on Polygon → Continue to Bridge
@@ -688,10 +691,23 @@ export default function GetALKE() {
 
                   <button
                     onClick={onDeposit}
-                    disabled={!walletConnected || !address || !feeQuote.ok || depositing}
+                    disabled={
+                      !walletConnected ||
+                      !address ||
+                      !feeQuote.ok ||
+                      depositing ||
+                      (!loadingBalances && usdcBalNum <= 0) ||
+                      (!loadingBalances && feeQuote.amt > usdcBalNum)
+                    }
                     className="mt-3 w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {depositing ? 'Preparing…' : 'Approve & Deposit'}
+                    {depositing
+                      ? 'Preparing…'
+                      : !loadingBalances && walletConnected && usdcBalNum <= 0
+                      ? 'No USDC balance'
+                      : !loadingBalances && walletConnected && feeQuote.amt > usdcBalNum
+                      ? 'Amount exceeds balance'
+                      : 'Approve & Deposit'}
                   </button>
 
                   <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
@@ -706,10 +722,13 @@ export default function GetALKE() {
                       {bridgeErr}
                     </div>
                   )}
-                  {bridgeInfo && (
-                    <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
-                      {bridgeInfo}
-                    </div>
+                  {txHash && !bridgeDialogOpen && (
+                    <button
+                      onClick={() => setBridgeDialogOpen(true)}
+                      className="mt-3 w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/20"
+                    >
+                      View bridge status →
+                    </button>
                   )}
                 </div>
 
@@ -741,35 +760,9 @@ export default function GetALKE() {
                     </div>
                   )}
 
-                  {pollStatus && (
-                    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
-                      {pollStatus}
-                      {mintedTx && (
-                        <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                          Mint Tx: <span className="font-mono">{shortAddr(mintedTx)}</span>
-                        </div>
-                      )}
-
-                      <div className="mt-3">
-                        <button
-                          className="text-xs text-slate-500 underline dark:text-slate-400"
-                          onClick={() => setDebugOpen((v) => !v)}
-                        >
-                          {debugOpen ? 'Hide details' : 'Transaction details'}
-                        </button>
-
-                        {debugOpen && (
-                          <pre className="mt-2 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200">
-                            {lastBridgeJson || '—'}
-                          </pre>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
                   <Link
                     to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
-                    className="mt-3 block w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-center font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                    className="mt-3 block w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-center font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-700"
                   >
                     I already have MAH → Get ALKE
                   </Link>
@@ -857,60 +850,20 @@ export default function GetALKE() {
         </ModalShell>
       )}
 
-      {mintOpen && mintDetails && (
-        <ModalShell
-          title="Bridge complete — MAH received ✅"
-          subtitle="Your USDC deposit has been processed and MAH is now available on Alkebuleum."
-          onClose={() => setMintOpen(false)}
-        >
-          <div className="grid gap-3">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-200">
-              <div className="font-semibold">What happened</div>
-              <div className="mt-1">
-                MAH was minted to your Alkebuleum wallet:
-                <div className="mt-1 break-all font-mono text-xs">{address}</div>
-              </div>
-
-              {mintDetails.estMah && (
-                <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                  Estimated received: <span className="font-semibold">{mintDetails.estMah} MAH</span>
-                </div>
-              )}
-            </div>
-
-            <div className="grid gap-2 text-xs text-slate-600 dark:text-slate-400">
-              <div>
-                Deposit Tx: <span className="font-mono">{shortAddr(mintDetails.depositTx)}</span>
-              </div>
-              {mintDetails.mintTx && (
-                <div>
-                  Mint Tx: <span className="font-mono">{shortAddr(mintDetails.mintTx)}</span>
-                </div>
-              )}
-            </div>
-
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Link
-                to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
-                className="rounded-xl bg-orange-600 px-4 py-3 text-center font-semibold text-white shadow-sm transition hover:bg-orange-700"
-                onClick={() => setMintOpen(false)}
-              >
-                Swap MAH → ALKE
-              </Link>
-
-              <button
-                className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                onClick={() => setMintOpen(false)}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="text-[11px] text-slate-500 dark:text-slate-400">
-              If your balance doesn’t update instantly, it may take a few seconds to refresh.
-            </div>
-          </div>
-        </ModalShell>
+      {bridgeDialogOpen && (
+        <BridgeProgressModal
+          phase={bridgeDialogPhase}
+          conf={bridgeConf}
+          required={REQUIRED_CONFIRMATIONS}
+          txHash={txHash}
+          mintDetails={mintDetails}
+          error={bridgeDialogErr}
+          address={address}
+          usdcBal={usdcBal}
+          mahBal={mahBal}
+          preBridgeBals={preBridgeBals}
+          onClose={() => setBridgeDialogOpen(false)}
+        />
       )}
     </div>
   )
@@ -997,6 +950,324 @@ function ModalShell({
   )
 }
 
+
+function BridgeProgressModal({
+  phase,
+  conf,
+  required,
+  txHash,
+  mintDetails,
+  error,
+  address,
+  usdcBal,
+  mahBal,
+  preBridgeBals,
+  onClose,
+}: {
+  phase: 'confirming' | 'minting' | 'success' | 'error'
+  conf: number
+  required: number
+  txHash: string | null
+  mintDetails: { depositTx: string; mintTx?: string | null; estMah?: string | null } | null
+  error: string | null
+  address?: string
+  usdcBal: string
+  mahBal: string
+  preBridgeBals: { usdc: string; mah: string } | null
+  onClose: () => void
+}) {
+  const isDone = phase === 'success'
+  const isError = phase === 'error'
+  const isActive = !isDone && !isError
+
+  const steps: Array<{ label: string; sublabel?: string; done: boolean; active: boolean }> = [
+    {
+      label: 'Deposit submitted',
+      sublabel: txHash ? `${txHash.slice(0, 10)}…${txHash.slice(-6)}` : undefined,
+      done: true,
+      active: false,
+    },
+    {
+      label: 'Awaiting confirmations',
+      sublabel:
+        phase === 'confirming'
+          ? `${conf} / ${required}`
+          : `${required} / ${required}`,
+      done: phase !== 'confirming',
+      active: phase === 'confirming',
+    },
+    {
+      label: 'Bridge processing',
+      sublabel: phase === 'minting' ? 'Minting MAH on Alkebuleum…' : undefined,
+      done: isDone,
+      active: phase === 'minting',
+    },
+    {
+      label: 'MAH received',
+      sublabel: mintDetails?.estMah ? `≈ ${mintDetails.estMah} MAH` : undefined,
+      done: isDone,
+      active: false,
+    },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900" style={{ maxHeight: '90vh' }}>
+
+        {/* Header band */}
+        <div
+          className={[
+            'px-5 py-4',
+            isDone
+              ? 'bg-green-50 dark:bg-green-950/30'
+              : isError
+              ? 'bg-red-50 dark:bg-red-950/30'
+              : 'bg-orange-50 dark:bg-orange-950/20',
+          ].join(' ')}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                {isDone ? 'Bridge complete' : isError ? 'Bridge failed' : 'Bridging in progress'}
+              </div>
+              <div className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
+                {isDone
+                  ? 'MAH has been minted to your wallet.'
+                  : isError
+                  ? 'Something went wrong — see details below.'
+                  : 'USDC (Polygon) → MAH (Alkebuleum)'}
+              </div>
+            </div>
+            {(isDone || isError) && (
+              <button
+                onClick={onClose}
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto p-5">
+
+          {/* Step list — hide on error */}
+          {!isError && (
+            <div>
+              {steps.map((step, i) => (
+                <div key={i} className="flex gap-3">
+                  {/* Circle + connector line */}
+                  <div className="flex flex-col items-center">
+                    <div
+                      className={[
+                        'relative grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold',
+                        step.done
+                          ? 'bg-green-500 text-white'
+                          : step.active
+                          ? 'bg-orange-500 text-white'
+                          : 'bg-slate-100 text-slate-400 dark:bg-slate-800',
+                      ].join(' ')}
+                    >
+                      {step.active && (
+                        <span className="absolute inset-0 animate-ping rounded-full bg-orange-400 opacity-40" />
+                      )}
+                      {step.done ? (
+                        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M3 8l3.5 3.5L13 5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : (
+                        <span>{i + 1}</span>
+                      )}
+                    </div>
+                    {i < steps.length - 1 && (
+                      <div
+                        className={[
+                          'my-1 w-0.5 flex-1',
+                          step.done ? 'bg-green-400' : 'bg-slate-200 dark:bg-slate-700',
+                        ].join(' ')}
+                        style={{ minHeight: 20 }}
+                      />
+                    )}
+                  </div>
+
+                  {/* Step content */}
+                  <div className="min-w-0 pb-5">
+                    <div
+                      className={[
+                        'text-sm font-semibold',
+                        step.done
+                          ? 'text-green-700 dark:text-green-400'
+                          : step.active
+                          ? 'text-orange-700 dark:text-orange-400'
+                          : 'text-slate-400 dark:text-slate-600',
+                      ].join(' ')}
+                    >
+                      {step.label}
+                    </div>
+                    {step.sublabel && (
+                      <div className="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">
+                        {step.sublabel}
+                      </div>
+                    )}
+                    {/* Confirmation progress bar */}
+                    {step.active && phase === 'confirming' && (
+                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                        <div
+                          className="h-full rounded-full bg-orange-500 transition-all duration-700"
+                          style={{ width: `${Math.min(100, (conf / required) * 100)}%` }}
+                        />
+                      </div>
+                    )}
+                    {/* Animated dots for minting */}
+                    {step.active && phase === 'minting' && (
+                      <div className="mt-2 flex gap-1">
+                        {[0, 1, 2].map((j) => (
+                          <div
+                            key={j}
+                            className="h-1.5 w-1.5 animate-bounce rounded-full bg-orange-400"
+                            style={{ animationDelay: `${j * 0.15}s` }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Error panel */}
+          {isError && error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/40 dark:bg-red-950/30">
+              <div className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">Error</div>
+              <div className="whitespace-pre-wrap text-sm text-red-600 dark:text-red-300">{error}</div>
+            </div>
+          )}
+
+          {/* Live balances */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+            <div className="mb-3 flex items-center gap-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                {isDone ? 'Updated balances' : 'Live balances'}
+              </div>
+              {isActive && (
+                <span className="flex items-center gap-1">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-orange-500" />
+                  </span>
+                  <span className="text-[10px] font-medium text-orange-600 dark:text-orange-400">live</span>
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* USDC — goes down */}
+              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">USDC (Polygon)</div>
+                <div className={[
+                  'mt-1 text-lg font-bold tabular-nums',
+                  isDone ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100',
+                ].join(' ')}>
+                  {usdcBal}
+                </div>
+                {isDone && preBridgeBals && preBridgeBals.usdc !== usdcBal && (
+                  <div className="mt-0.5 text-xs text-slate-400 line-through dark:text-slate-500">
+                    {preBridgeBals.usdc}
+                  </div>
+                )}
+              </div>
+
+              {/* MAH — goes up */}
+              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">MAH (Alkebuleum)</div>
+                <div className={[
+                  'mt-1 text-lg font-bold tabular-nums',
+                  isDone ? 'text-green-600 dark:text-green-400' : 'text-slate-900 dark:text-slate-100',
+                ].join(' ')}>
+                  {mahBal}
+                </div>
+                {isDone && preBridgeBals && preBridgeBals.mah !== mahBal && (
+                  <div className="mt-0.5 text-xs text-slate-400 line-through dark:text-slate-500">
+                    {preBridgeBals.mah}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Success details */}
+          {isDone && mintDetails && (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900/40 dark:bg-green-950/20">
+                <div className="text-sm font-semibold text-green-800 dark:text-green-300">
+                  MAH minted to your wallet
+                </div>
+                {address && (
+                  <div className="mt-1 break-all font-mono text-xs text-green-700 dark:text-green-400">
+                    {address}
+                  </div>
+                )}
+                {mintDetails.estMah && (
+                  <div className="mt-1.5 text-xs text-green-700 dark:text-green-400">
+                    Estimated received:{' '}
+                    <span className="font-semibold">{mintDetails.estMah} MAH</span>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
+                <div>
+                  Deposit Tx:{' '}
+                  <span className="font-mono">{shortAddr(mintDetails.depositTx)}</span>
+                </div>
+                {mintDetails.mintTx && (
+                  <div>
+                    Mint Tx:{' '}
+                    <span className="font-mono">{shortAddr(mintDetails.mintTx)}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
+          {isDone && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Link
+                to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
+                className="rounded-xl bg-orange-600 px-4 py-3 text-center font-semibold text-white shadow-sm transition hover:bg-orange-700"
+                onClick={onClose}
+              >
+                Swap MAH to ALKE
+              </Link>
+              <button
+                className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                onClick={onClose}
+              >
+                Close
+              </button>
+            </div>
+          )}
+          {isError && (
+            <button
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              onClick={onClose}
+            >
+              Dismiss
+            </button>
+          )}
+
+          {/* Active hint */}
+          {isActive && (
+            <div className="text-center text-xs text-slate-400 dark:text-slate-600">
+              Keep this window open. Bridging usually completes in 1–3 minutes.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function StepTab({
   active,

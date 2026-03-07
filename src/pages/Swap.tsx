@@ -335,6 +335,7 @@ export default function Swap() {
   const [amount, setAmount] = useState('10')
 
   const [fromBal, setFromBal] = useState('—')
+  const [fromBalNum, setFromBalNum] = useState<number>(0)
   const [toBal, setToBal] = useState('—')
   const [loadingBalances, setLoadingBalances] = useState(false)
 
@@ -345,8 +346,20 @@ export default function Swap() {
   const [minOut, setMinOut] = useState<string>('—')
 
   const [err, setErr] = useState<string | null>(null)
-  const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // Swap progress dialog
+  const [swapDialogOpen, setSwapDialogOpen] = useState(false)
+  const [swapDialogPhase, setSwapDialogPhase] = useState<'confirming' | 'success' | 'error'>('confirming')
+  const [swapDialogErr, setSwapDialogErr] = useState<string | null>(null)
+  const [swapDialogDetails, setSwapDialogDetails] = useState<{
+    fromSym: string
+    toSym: string
+    amountIn: string
+    estimatedOut: string
+    txHash: string
+  } | null>(null)
+  const [preSwapBals, setPreSwapBals] = useState<{ from: string; to: string } | null>(null)
 
   const quoteTimer = useRef<number | null>(null)
 
@@ -571,6 +584,7 @@ export default function Swap() {
         if (!address) {
           if (!alive) return
           setFromBal('—')
+          setFromBalNum(0)
           setToBal('—')
           return
         }
@@ -591,7 +605,9 @@ export default function Swap() {
         const d1 = await readDecimals(A, provider)
         const d2 = await readDecimals(B, provider)
 
-        setFromBal(fmtNum(ethers.formatUnits(b1, d1)))
+        const fromRaw = ethers.formatUnits(b1, d1)
+        setFromBal(fmtNum(fromRaw))
+        setFromBalNum(Number(fromRaw))
         setToBal(fmtNum(ethers.formatUnits(b2, d2)))
       } catch (e: any) {
         if (!alive) return
@@ -697,8 +713,11 @@ export default function Swap() {
 
   async function onSwap() {
     setErr(null)
-    setInfo(null)
+    setSwapDialogErr(null)
+    setSwapDialogDetails(null)
     setBusy(true)
+
+    let dialogOpened = false
 
     try {
       if (!walletConnected || !address) throw new Error('Connect amVault using the top bar to continue.')
@@ -708,10 +727,13 @@ export default function Swap() {
       const amtStr = clampAmountStr(amount.trim())
       if (!amtStr || Number(amtStr) <= 0) throw new Error('Enter a valid amount.')
 
+      if (fromBalNum > 0 && Number(amtStr) > fromBalNum) {
+        throw new Error(`Insufficient ${from} balance. You have ${fromBal} ${from}.`)
+      }
+
       if (quoteNoLiquidity) {
         throw new Error(`No liquidity pool for ${from}/${to} yet. Add liquidity or pick another pair.`)
       }
-
 
       const fromToken = getToken(from)
       const toToken = getToken(to)
@@ -745,7 +767,8 @@ export default function Swap() {
       })
       txs.push(swapTx)
 
-      setInfo('Swap queued. Confirm in AmVault…')
+      // Snapshot balances just before sending
+      setPreSwapBals({ from: fromBal, to: toBal })
 
       const safeTxs = txs.map(normalizeTxForAmVault)
 
@@ -768,7 +791,17 @@ export default function Swap() {
 
       const swapHash = hashes[hashes.length - 1]
 
-      setInfo('Waiting for on-chain confirmation…')
+      // AmVault has popped — open the progress dialog immediately
+      setSwapDialogDetails({
+        fromSym: from,
+        toSym: to,
+        amountIn: amtStr,
+        estimatedOut: quoteOut !== '—' ? quoteOut : fmtNum(ethers.formatUnits(amountOut, toDec)),
+        txHash: swapHash,
+      })
+      setSwapDialogPhase('confirming')
+      setSwapDialogOpen(true)
+      dialogOpened = true
 
       let lastReason: string | null = null
       let swapReceipt: ethers.TransactionReceipt | null = null
@@ -783,16 +816,13 @@ export default function Swap() {
           lastReason = (await getRevertReasonFromChain(provider, h)) ?? 'reverted (no reason decoded)'
           break
         }
-
-        // ✅ only log after the actual swap tx confirms
         if (h === swapHash) swapReceipt = r
       }
 
       if (lastReason) {
-        setErr(`Swap reverted: ${lastReason}`)
-        setInfo(null)
+        setSwapDialogPhase('error')
+        setSwapDialogErr(`Swap reverted: ${lastReason}`)
       } else {
-        // ✅ write Swap/Mint/Burn/Sync events from receipt logs into Firestore
         if (swapReceipt) {
           await logAmmEventsFromReceipt({
             provider,
@@ -803,15 +833,13 @@ export default function Swap() {
             ain: ainLoading ? null : (ain ?? null),
             tokenA: from,
             tokenB: to,
-            // no pairHint => logs all pairs touched (works for multi-hop too)
             pairHint: null,
           })
         }
-
-        setInfo('Swap confirmed on-chain ✅')
+        setSwapDialogPhase('success')
       }
 
-
+      // Refresh balances shortly after
       window.setTimeout(async () => {
         if (!address) return
         try {
@@ -819,13 +847,20 @@ export default function Swap() {
             getBalance(address, fromToken, provider),
             getBalance(address, toToken, provider),
           ])
-          setFromBal(fmtNum(ethers.formatUnits(b1, fromDec)))
+          const fromRaw = ethers.formatUnits(b1, fromDec)
+          setFromBal(fmtNum(fromRaw))
+          setFromBalNum(Number(fromRaw))
           setToBal(fmtNum(ethers.formatUnits(b2, toDec)))
         } catch { }
       }, 2500)
     } catch (e: any) {
-      setErr(e?.shortMessage || e?.message || 'Swap failed.')
-      setInfo(null)
+      const msg = e?.shortMessage || e?.message || 'Swap failed.'
+      if (dialogOpened) {
+        setSwapDialogErr(msg)
+        setSwapDialogPhase('error')
+      } else {
+        setErr(msg)
+      }
     } finally {
       setBusy(false)
     }
@@ -897,7 +932,6 @@ export default function Swap() {
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
                     onClick={() => {
                       setErr(null)
-                      setInfo(null)
                       setFrom(to)
                       setTo(from)
                     }}
@@ -985,19 +1019,33 @@ export default function Swap() {
                   {err}
                 </div>
               )}
-              {info && (
-                <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-sm text-orange-900 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
-                  {info}
-                </div>
-              )}
 
-              <button
-                onClick={onSwap}
-                disabled={!walletConnected || !address || busy || quoteNoLiquidity}
-                className="w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {busy ? 'Confirm in AmVault…' : 'Preview & Swap'}
-              </button>
+              {(() => {
+                const amtNum = Number(clampAmountStr(amount.trim()))
+                const insufficientBal = !loadingBalances && walletConnected && !!address && amtNum > 0 && amtNum > fromBalNum
+                return (
+                  <button
+                    onClick={onSwap}
+                    disabled={!walletConnected || !address || busy || quoteNoLiquidity || insufficientBal}
+                    className="w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {busy
+                      ? 'Confirm in AmVault…'
+                      : insufficientBal
+                      ? `Insufficient ${from} balance`
+                      : 'Preview & Swap'}
+                  </button>
+                )
+              })()}
+
+              {swapDialogDetails && !swapDialogOpen && (
+                <button
+                  onClick={() => setSwapDialogOpen(true)}
+                  className="w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200"
+                >
+                  View swap status →
+                </button>
+              )}
             </div>
           </div>
 
@@ -1018,6 +1066,18 @@ export default function Swap() {
           </div>
         </div>
       </div>
+
+      {swapDialogOpen && swapDialogDetails && (
+        <SwapProgressModal
+          phase={swapDialogPhase}
+          details={swapDialogDetails}
+          preSwapBals={preSwapBals}
+          fromBal={fromBal}
+          toBal={toBal}
+          err={swapDialogErr}
+          onClose={() => setSwapDialogOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -1027,5 +1087,238 @@ function Badge({ children }: { children: React.ReactNode }) {
     <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
       {children}
     </span>
+  )
+}
+
+function SwapProgressModal({
+  phase,
+  details,
+  preSwapBals,
+  fromBal,
+  toBal,
+  err,
+  onClose,
+}: {
+  phase: 'confirming' | 'success' | 'error'
+  details: { fromSym: string; toSym: string; amountIn: string; estimatedOut: string; txHash: string }
+  preSwapBals: { from: string; to: string } | null
+  fromBal: string
+  toBal: string
+  err: string | null
+  onClose: () => void
+}) {
+  const isDone = phase === 'success'
+  const isError = phase === 'error'
+  const isActive = !isDone && !isError
+
+  const steps: Array<{ label: string; sublabel?: string; done: boolean; active: boolean }> = [
+    {
+      label: 'Transaction submitted',
+      sublabel: `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}`,
+      done: true,
+      active: false,
+    },
+    {
+      label: 'Awaiting on-chain confirmation',
+      done: isDone,
+      active: isActive,
+    },
+    {
+      label: 'Swap complete',
+      done: isDone,
+      active: false,
+    },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900" style={{ maxHeight: '90vh' }}>
+
+        {/* Header */}
+        <div
+          className={[
+            'px-5 py-4',
+            isDone
+              ? 'bg-green-50 dark:bg-green-950/30'
+              : isError
+              ? 'bg-red-50 dark:bg-red-950/30'
+              : 'bg-orange-50 dark:bg-orange-950/20',
+          ].join(' ')}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-lg font-bold text-slate-900 dark:text-slate-100">
+                {isDone
+                  ? 'Swap complete'
+                  : isError
+                  ? 'Swap failed'
+                  : `Swapping ${details.fromSym} → ${details.toSym}`}
+              </div>
+              <div className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
+                {isDone
+                  ? `${details.amountIn} ${details.fromSym} → ~${details.estimatedOut} ${details.toSym}`
+                  : isError
+                  ? 'See details below.'
+                  : 'Waiting for on-chain confirmation…'}
+              </div>
+            </div>
+            {(isDone || isError) && (
+              <button
+                onClick={onClose}
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+
+          {/* Step list */}
+          {!isError && (
+            <div>
+              {steps.map((step, i) => (
+                <div key={i} className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <div
+                      className={[
+                        'relative grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold',
+                        step.done
+                          ? 'bg-green-500 text-white'
+                          : step.active
+                          ? 'bg-orange-500 text-white'
+                          : 'bg-slate-100 text-slate-400 dark:bg-slate-800',
+                      ].join(' ')}
+                    >
+                      {step.active && (
+                        <span className="absolute inset-0 animate-ping rounded-full bg-orange-400 opacity-40" />
+                      )}
+                      {step.done ? (
+                        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M3 8l3.5 3.5L13 5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      ) : step.active ? (
+                        <svg viewBox="0 0 16 16" className="h-4 w-4 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="8" cy="8" r="6" strokeOpacity="0.25" />
+                          <path d="M8 2a6 6 0 0 1 6 6" strokeLinecap="round" />
+                        </svg>
+                      ) : (
+                        <span>{i + 1}</span>
+                      )}
+                    </div>
+                    {i < steps.length - 1 && (
+                      <div
+                        className={[
+                          'my-1 w-0.5',
+                          step.done ? 'bg-green-400' : 'bg-slate-200 dark:bg-slate-700',
+                        ].join(' ')}
+                        style={{ minHeight: 20 }}
+                      />
+                    )}
+                  </div>
+
+                  <div className="min-w-0 pb-5">
+                    <div
+                      className={[
+                        'text-sm font-semibold',
+                        step.done
+                          ? 'text-green-700 dark:text-green-400'
+                          : step.active
+                          ? 'text-orange-700 dark:text-orange-400'
+                          : 'text-slate-400 dark:text-slate-600',
+                      ].join(' ')}
+                    >
+                      {step.label}
+                    </div>
+                    {step.sublabel && (
+                      <div className="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">
+                        {step.sublabel}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Error panel */}
+          {isError && err && (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/40 dark:bg-red-950/30">
+              <div className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">Error</div>
+              <div className="whitespace-pre-wrap text-sm text-red-600 dark:text-red-300">{err}</div>
+            </div>
+          )}
+
+          {/* Live balances card */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+            <div className="mb-3 flex items-center gap-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                {isDone ? 'Updated balances' : 'Live balances'}
+              </div>
+              {isActive && (
+                <span className="flex items-center gap-1">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-orange-500" />
+                  </span>
+                  <span className="text-[10px] font-medium text-orange-600 dark:text-orange-400">live</span>
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* From token */}
+              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">{details.fromSym}</div>
+                <div className={[
+                  'mt-1 text-lg font-bold tabular-nums',
+                  isDone ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100',
+                ].join(' ')}>
+                  {fromBal}
+                </div>
+                {isDone && preSwapBals && preSwapBals.from !== fromBal && (
+                  <div className="mt-0.5 text-xs text-slate-400 dark:text-slate-500 line-through">
+                    {preSwapBals.from}
+                  </div>
+                )}
+              </div>
+
+              {/* To token */}
+              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+                <div className="text-xs text-slate-500 dark:text-slate-400">{details.toSym}</div>
+                <div className={[
+                  'mt-1 text-lg font-bold tabular-nums',
+                  isDone ? 'text-green-600 dark:text-green-400' : 'text-slate-900 dark:text-slate-100',
+                ].join(' ')}>
+                  {toBal}
+                </div>
+                {isDone && preSwapBals && preSwapBals.to !== toBal && (
+                  <div className="mt-0.5 text-xs text-slate-400 dark:text-slate-500 line-through">
+                    {preSwapBals.to}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          {(isDone || isError) && (
+            <button
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+              onClick={onClose}
+            >
+              {isDone ? 'Close' : 'Dismiss'}
+            </button>
+          )}
+
+          {isActive && (
+            <div className="text-center text-xs text-slate-400 dark:text-slate-600">
+              Alkebuleum transactions typically confirm in under 30 seconds.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }

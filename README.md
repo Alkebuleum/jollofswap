@@ -28,5 +28,5 @@ npm run dev
 ## Push to Git
 git status
 git add -A
-git commit -m "Improve UX add coinbase onRamp"
+git commit -m "Change LP contract"
 git push

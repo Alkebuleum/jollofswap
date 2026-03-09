@@ -28,5 +28,5 @@ npm run dev
 ## Push to Git
 git status
 git add -A
-git commit -m "Change LP contract"
+git commit -m "UX improvement and terms-policy updated"
 git push

@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ethers, Interface } from 'ethers'
-import { useAuth, sendTransactions } from 'amvault-connect'
+import { useAuth, sendTransactions, signMessage } from 'amvault-connect'
 import WalletSummaryCard from '../components/WalletSummaryCard'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 
@@ -304,9 +304,45 @@ export default function GetALKE() {
     setCoinbaseLoading(true)
     setCoinbaseErr(null)
     try {
-      const res = await fetch(`${BRIDGE_API}/coinbase/onramp/session`, {
+      // Step 1: Get SIWE challenge from Alkebuleum Auth
+      const challengeRes = await fetch('https://auth.alkebuleum.com/v1/siwe/challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address, chainId: ALK_CHAIN_ID }),
+      })
+      const challengeData = await challengeRes.json().catch(() => null)
+      if (!challengeData?.challengeId || !challengeData?.message) {
+        throw new Error(challengeData?.error || 'Failed to get auth challenge.')
+      }
+
+      // Step 2: Sign the challenge message via amvault
+      const signature = await signMessage(
+        { chainId: ALK_CHAIN_ID, message: challengeData.message },
+        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
+      )
+
+      // Step 3: Verify signature to get JWT
+      const verifyRes = await fetch('https://auth.alkebuleum.com/v1/siwe/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          challengeId: challengeData.challengeId,
+          message: challengeData.message,
+          signature,
+        }),
+      })
+      const verifyData = await verifyRes.json().catch(() => null)
+      if (!verifyData?.token) {
+        throw new Error(verifyData?.error || 'Auth verification failed.')
+      }
+
+      // Step 4: Create Coinbase onramp session with JWT
+      const res = await fetch(`${BRIDGE_API}/coinbase/onramp/session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${verifyData.token}`,
+        },
         body: JSON.stringify({
           walletAddress: address,
           sourceAmount: '20',

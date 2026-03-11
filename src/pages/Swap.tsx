@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
 import { useAuth, sendTransactions } from 'amvault-connect'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { ArrowDownUp } from 'lucide-react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
 import { db } from '../services/firebase'
 import { collection, onSnapshot, orderBy, query, where, limit, getDocs } from 'firebase/firestore'
@@ -35,6 +36,26 @@ const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 
 const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
 const WAKE = (import.meta.env.VITE_WAKE_ALK as string) ?? ''
+
+// USD context — VITE_USD_STABLE is your on-chain stablecoin symbol (default "MAH").
+// VITE_USD_STABLE_PRICE is its USD value. For JollofSwap: 1 USD = 100 MAH → price = 0.01.
+const STABLE_SYM = ((import.meta.env.VITE_USD_STABLE as string) ?? 'MAH').toUpperCase()
+const STABLE_USD_PRICE = Number(import.meta.env.VITE_USD_STABLE_PRICE ?? 0.01)
+
+function fmtRate(r: number): string {
+  if (!isFinite(r) || r <= 0) return '—'
+  if (r >= 1000) return r.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  if (r >= 1) return r.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  if (r >= 0.0001) return r.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+  return r.toExponential(4)
+}
+
+function fmtUsd(v: number): string {
+  if (!isFinite(v) || v < 0) return '—'
+  if (v >= 1) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  if (v >= 0.0001) return v.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+  return v.toExponential(3)
+}
 
 const PAIR_META_IFACE = new ethers.Interface([
   'function token0() view returns (address)',
@@ -332,7 +353,7 @@ export default function Swap() {
   const [from, setFrom] = useState<TokenSym>('MAH')
   const [to, setTo] = useState<TokenSym>('ALKE')
 
-  const [amount, setAmount] = useState('10')
+  const [amount, setAmount] = useState('1000')
 
   const [fromBal, setFromBal] = useState('—')
   const [fromBalNum, setFromBalNum] = useState<number>(0)
@@ -869,6 +890,37 @@ export default function Swap() {
   const fromBalDisplay = hideBalances ? '•••' : (loadingBalances ? '…' : fromBal)
   const toBalDisplay = hideBalances ? '•••' : (loadingBalances ? '…' : toBal)
 
+  // Derived USD / rate values — no extra API calls, uses the existing AMM quote
+  const amtNumVal = Number(clampAmountStr(amount.trim()) || '0')
+  const quoteNumVal = quoteOut === '—' ? NaN : Number(quoteOut.replace(/,/g, ''))
+  const spotRate = amtNumVal > 0 && !isNaN(quoteNumVal) && quoteNumVal > 0
+    ? quoteNumVal / amtNumVal
+    : null
+
+  // USD value of the amount being spent
+  const usdValue: number | null =
+    from.toUpperCase() === STABLE_SYM && amtNumVal > 0
+      ? amtNumVal * STABLE_USD_PRICE
+      : to.toUpperCase() === STABLE_SYM && !isNaN(quoteNumVal) && quoteNumVal > 0
+        ? quoteNumVal * STABLE_USD_PRICE
+        : null
+
+  // USD price of the non-stable token (shown in the rate pill)
+  // from=MAH, spotRate=25 ALKE/MAH → 1 ALKE = $0.01/25 = $0.0004
+  // to=MAH,   spotRate=0.04 MAH/ALKE → 1 ALKE = 0.04 × $0.01 = $0.0004
+  const nonStableSym = from.toUpperCase() === STABLE_SYM ? to : from
+  const altUsdPerToken: number | null =
+    from.toUpperCase() === STABLE_SYM && spotRate !== null && spotRate > 0
+      ? STABLE_USD_PRICE / spotRate
+      : to.toUpperCase() === STABLE_SYM && spotRate !== null && spotRate > 0
+        ? spotRate * STABLE_USD_PRICE
+        : null
+
+  // USD hint passed to the chart (shown as secondary "≈ $X per TOKEN" line)
+  const chartUsdHint = altUsdPerToken !== null
+    ? { sym: nonStableSym, price: altUsdPerToken }
+    : undefined
+
   return (
     <div className="page">
       <div className="mx-auto w-full max-w-3xl">
@@ -900,95 +952,103 @@ export default function Swap() {
               <Badge>Alkebuleum</Badge>
             </div>
 
-            <div className="mt-4 grid gap-3">
-              <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">From</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">Bal: {fromBalDisplay}</div>
-                </div>
+            <div className="mt-4 flex flex-col gap-3">
 
-                <div className="mt-2 flex items-center gap-2">
-                  <select
-                    className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-orange-500/20"
-                    value={from}
-                    onChange={(e) => setFrom(e.target.value)}
-                  >
-                    {tokenOptions.map((k) => (
-                      <option key={k} value={k}>
-                        {k}
-                      </option>
-                    ))}
-                  </select>
+              {/* ── From + flip button + To as one visual unit ── */}
+              <div className="flex flex-col">
 
-                  <input
-                    value={amount}
-                    onChange={(e) => setAmount(clampAmountStr(e.target.value))}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-orange-500/20"
-                    placeholder="10"
-                    inputMode="decimal"
-                  />
-
-                  <button
-                    className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                    onClick={() => {
-                      setErr(null)
-                      setFrom(to)
-                      setTo(from)
-                    }}
-                    title="Flip"
-                  >
-                    ↕
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">To</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">Bal: {toBalDisplay}</div>
-                </div>
-
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <select
-                    className="w-28 shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-orange-500/20"
-                    value={to}
-                    onChange={(e) => setTo(e.target.value)}
-                  >
-                    {tokenOptions.map((k) => (
-                      <option key={k} value={k}>
-                        {k}
-                      </option>
-                    ))}
-                  </select>
-
-                  <div className="flex-1 min-w-0 rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-950/40">
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                      <span className="text-slate-500 dark:text-slate-400">Est.</span>
-                      <span className="text-right font-semibold tabular-nums whitespace-nowrap text-slate-900 dark:text-slate-100">
-                        {quoteOut}
+                {/* From box */}
+                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/40">
+                  <div className="flex items-center gap-3">
+                    <select
+                      className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-900 outline-none cursor-pointer hover:bg-slate-200 focus:ring-2 focus:ring-orange-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus:ring-orange-500/20"
+                      value={from}
+                      onChange={(e) => setFrom(e.target.value)}
+                    >
+                      {tokenOptions.map((k) => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                    <input
+                      value={amount}
+                      onChange={(e) => setAmount(clampAmountStr(e.target.value))}
+                      className="w-full min-w-0 bg-transparent text-right text-2xl font-semibold text-slate-900 outline-none placeholder:text-slate-300 dark:text-slate-100 dark:placeholder:text-slate-700"
+                      placeholder="0"
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                    <span>Balance: {fromBalDisplay}</span>
+                    {usdValue !== null && (
+                      <span className="tabular-nums">
+                        ≈&nbsp;${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
-
-                      <span className="text-slate-500 dark:text-slate-400">Min</span>
-                      <span className="text-right font-semibold tabular-nums whitespace-nowrap text-slate-700 dark:text-slate-300">
-                        {minOut}
-                      </span>
-                    </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="mt-3 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                {/* Centered flip button — overlaps both boxes */}
+                <div className="flex justify-center -my-3.5 relative z-10">
+                  <button
+                    onClick={() => { setErr(null); setFrom(to); setTo(from) }}
+                    title="Flip tokens"
+                    className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:scale-110 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
+                  >
+                    <ArrowDownUp className="h-3.5 w-3.5 text-slate-600 dark:text-slate-300" />
+                  </button>
+                </div>
+
+                {/* To box */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/60">
+                  <div className="flex items-center gap-3">
+                    <select
+                      className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-900 outline-none cursor-pointer hover:bg-slate-200 focus:ring-2 focus:ring-orange-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus:ring-orange-500/20"
+                      value={to}
+                      onChange={(e) => setTo(e.target.value)}
+                    >
+                      {tokenOptions.map((k) => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                    <div className="w-full text-right text-2xl font-semibold tabular-nums leading-none text-slate-900 dark:text-slate-100">
+                      {quoteOut !== '—'
+                        ? quoteOut
+                        : <span className="text-slate-300 dark:text-slate-700">0</span>}
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                    <span>Balance: {toBalDisplay}</span>
+                    <span className="tabular-nums">
+                      {usdValue !== null && (
+                        <span>≈&nbsp;${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}&ensp;·&ensp;</span>
+                      )}
+                      {minOut !== '—' && <span>Min&nbsp;{minOut}</span>}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Rate + Slippage info bar ── */}
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+                {spotRate !== null && (
+                  <div className="mb-2.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">
+                    1&nbsp;{from}&nbsp;=&nbsp;{fmtRate(spotRate)}&nbsp;{to}
+                    {altUsdPerToken !== null && (
+                      <span className="ml-2 text-slate-400 dark:text-slate-500">
+                        ·&ensp;1&nbsp;{nonStableSym}&nbsp;≈&nbsp;${fmtUsd(altUsdPerToken)}
+                      </span>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
                   <span>Slippage</span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     {[30, 50, 100].map((bps) => (
                       <button
                         key={bps}
+                        onClick={() => setSlippageBps(bps)}
                         className={[
-                          'rounded-full px-2.5 py-1 font-semibold',
+                          'rounded-full px-2.5 py-1 font-semibold transition',
                           slippageBps === bps
                             ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
-                            : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
                         ].join(' ')}
-                        onClick={() => setSlippageBps(bps)}
                       >
                         {(bps / 100).toFixed(2)}%
                       </button>
@@ -996,11 +1056,11 @@ export default function Swap() {
                   </div>
                 </div>
               </div>
+
               {quoteNotice && (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
                   <div className="font-semibold">{quoteNoLiquidity ? 'No liquidity yet' : 'Quote notice'}</div>
                   <div className="mt-1">{quoteNotice}</div>
-
                   {quoteNoLiquidity && (
                     <div className="mt-2">
                       <Link
@@ -1027,7 +1087,7 @@ export default function Swap() {
                   <button
                     onClick={onSwap}
                     disabled={!walletConnected || !address || busy || quoteNoLiquidity || insufficientBal}
-                    className="w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="w-full rounded-xl bg-orange-600 px-4 py-3.5 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {busy
                       ? 'Confirm in AmVault…'
@@ -1049,19 +1109,15 @@ export default function Swap() {
             </div>
           </div>
 
-          {/* Price */}
+          {/* Price chart — self-contained with header, flip toggle, time range tabs */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between">
-              <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Price</div>
-              <Badge>V1</Badge>
-            </div>
-
-            {priceData.length < 2 && (
-              <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">Collecting price samples…</div>
-            )}
-
-            <div className="mt-3 h-56">
-              <ModernPriceChart data={priceData} symbolLeft={from} symbolRight={to} />
+            <div className="h-[300px]">
+              <ModernPriceChart
+                data={priceData}
+                symbolFrom={from}
+                symbolTo={to}
+                usdHint={chartUsdHint}
+              />
             </div>
           </div>
         </div>

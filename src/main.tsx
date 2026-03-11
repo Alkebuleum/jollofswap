@@ -20,6 +20,7 @@ import PrivacyPolicy from './pages/PrivacyPolicy'
 import TermsOfService from './pages/TermsOfService'
 import { TokenRegistryProvider } from './lib/tokenRegistry'
 import { applyTheme } from './lib/prefs'
+import AuthGate from './components/AuthGate'
 
 applyTheme()
 
@@ -29,15 +30,15 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <Home /> },
-      { path: 'get-alk', element: <GetALKE /> },
-      { path: 'p2p/buy', element: <P2PBuy /> },
-      { path: 'p2p/sell', element: <P2PSell /> },
-      { path: 'swap', element: <Swap /> },
-      { path: 'liquidity', element: <Liquidity /> },
-      { path: 'farms', element: <Farms /> },
-      { path: 'tokens', element: <Tokens /> },
-      { path: 'wallet', element: <Wallet /> },
-      { path: 'profile', element: <Profile /> },
+      { path: 'get-alk', element: <AuthGate><GetALKE /></AuthGate> },
+      { path: 'p2p/buy', element: <AuthGate><P2PBuy /></AuthGate> },
+      { path: 'p2p/sell', element: <AuthGate><P2PSell /></AuthGate> },
+      { path: 'swap', element: <AuthGate><Swap /></AuthGate> },
+      { path: 'liquidity', element: <AuthGate><Liquidity /></AuthGate> },
+      { path: 'farms', element: <AuthGate><Farms /></AuthGate> },
+      { path: 'tokens', element: <AuthGate><Tokens /></AuthGate> },
+      { path: 'wallet', element: <AuthGate><Wallet /></AuthGate> },
+      { path: 'profile', element: <AuthGate><Profile /></AuthGate> },
       { path: 'settings', element: <Settings /> },
       { path: 'support', element: <Support /> },
       { path: 'privacy', element: <PrivacyPolicy /> },

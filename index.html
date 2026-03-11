@@ -18,6 +18,15 @@
       }
     })(window.location);
   </script>
+  <!-- Apply saved theme before any CSS renders to prevent flash of light mode -->
+  <script>
+    try {
+      if (localStorage.getItem('jswap:pref:theme') === 'dark') {
+        document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = 'dark';
+      }
+    } catch (e) {}
+  </script>
 
 </head>
 

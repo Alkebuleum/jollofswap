@@ -1,6 +1,11 @@
 // src/pages/Settings.tsx
 import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react'
-
+import {
+  readTheme, writeTheme, applyTheme,
+  readSlippageBps, writeSlippageBps,
+  readHideBalances, writeHideBalances,
+  PREF,
+} from '../lib/prefs'
 
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
@@ -8,44 +13,19 @@ const ALK_CHAIN_ID = Number(import.meta.env.VITE_ALK_CHAIN_ID ?? 237422)
 const ALK_RPC = (import.meta.env.VITE_ALK_RPC as string) ?? 'https://rpc.alkebuleum.com'
 const ALK_EXPLORER = (import.meta.env.VITE_ALK_EXPLORER as string) ?? ''
 
-const LS = {
-  theme: 'jswap_theme', // 'light' | 'dark'
-  slippageBps: 'jswap_slippage_bps', // number
-  hideBalances: 'jswap_hide_balances', // '1' | '0'
-  advanced: 'jswap_advanced', // '1' | '0'
-}
-
-function readLS(key: string, fallback: string) {
-  try {
-    const v = window.localStorage.getItem(key)
-    return v == null ? fallback : v
-  } catch {
-    return fallback
-  }
-}
-function writeLS(key: string, val: string) {
-  try {
-    window.localStorage.setItem(key, val)
-  } catch { }
-}
-
 export default function Settings() {
-  const [darkMode, setDarkMode] = useState<boolean>(() => readLS(LS.theme, 'light') === 'dark')
-  const [slippageBps, setSlippageBps] = useState<number>(() => {
-    const n = Number(readLS(LS.slippageBps, '50'))
-    return Number.isFinite(n) ? n : 50
-  })
-  const [hideBalances, setHideBalances] = useState<boolean>(() => readLS(LS.hideBalances, '0') === '1')
-  const [advanced, setAdvanced] = useState<boolean>(() => readLS(LS.advanced, '0') === '1')
+  const [darkMode, setDarkMode] = useState<boolean>(() => readTheme() === 'dark')
+  const [slippageBps, setSlippageBps] = useState<number>(() => readSlippageBps(50))
+  const [hideBalances, setHideBalances] = useState<boolean>(() => readHideBalances())
+  const [advanced, setAdvanced] = useState<boolean>(false)
 
   useLayoutEffect(() => {
-    writeLS(LS.theme, darkMode ? 'dark' : 'light')
-    document.documentElement.classList.toggle('dark', darkMode)
+    writeTheme(darkMode ? 'dark' : 'light')
+    applyTheme(darkMode ? 'dark' : 'light')
   }, [darkMode])
 
-  useEffect(() => writeLS(LS.slippageBps, String(slippageBps)), [slippageBps])
-  useEffect(() => writeLS(LS.hideBalances, hideBalances ? '1' : '0'), [hideBalances])
-  useEffect(() => writeLS(LS.advanced, advanced ? '1' : '0'), [advanced])
+  useEffect(() => writeSlippageBps(slippageBps), [slippageBps])
+  useEffect(() => writeHideBalances(hideBalances), [hideBalances])
 
   const slippageOptions = useMemo(() => [30, 50, 100], [])
 
@@ -110,7 +90,7 @@ export default function Settings() {
               <button
                 onClick={() => {
                   try {
-                    Object.values(LS).forEach((k) => window.localStorage.removeItem(k))
+                    Object.values(PREF).forEach((k) => window.localStorage.removeItem(k))
                   } catch { }
                   setDarkMode(false)
                   setSlippageBps(50)

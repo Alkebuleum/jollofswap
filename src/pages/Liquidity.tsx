@@ -1,7 +1,7 @@
 // src/pages/Liquidity.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
-import { collection, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
+import { collection, getDocs, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
 import { db } from '../services/firebase'
 
 import { ethers } from 'ethers'
@@ -28,6 +28,8 @@ import {
   quote,
 } from '../lib/jollofAmm'
 import { routerIface } from '../lib/jollofAmm'
+import { ArrowDownUp } from 'lucide-react'
+import ModernPriceChart from '../components/ModernPriceChart'
 import WalletSummaryCard from '../components/WalletSummaryCard'
 import { readHideBalances, readSlippageBps, writeSlippageBps, PREF } from '../lib/prefs'
 import { useWalletMetaStore } from '../store/walletMetaStore'
@@ -36,7 +38,39 @@ const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amv
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 
 const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
+const WAKE = (import.meta.env.VITE_WAKE_ALK as string) ?? ''
 const MIN_POOL_RESERVE_HUMAN = '0.01' // per side, tune
+
+const STABLE_SYM = ((import.meta.env.VITE_USD_STABLE as string) ?? 'MAH').toUpperCase()
+const STABLE_USD_PRICE = Number(import.meta.env.VITE_USD_STABLE_PRICE ?? 0.01)
+
+type PricePoint = { t: number; p: number }
+
+function fmtUsd(v: number): string {
+  if (!isFinite(v) || v < 0) return '—'
+  if (v >= 1) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  if (v >= 0.0001) return v.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+  return v.toExponential(3)
+}
+
+function fmtRate(r: number): string {
+  if (!isFinite(r) || r <= 0) return '—'
+  if (r >= 1000) return r.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  if (r >= 1) return r.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  if (r >= 0.0001) return r.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+  return r.toExponential(4)
+}
+
+const FACTORY_IFACE_LIQ = new ethers.Interface([
+  'function getPair(address tokenA, address tokenB) view returns (address pair)',
+])
+const PAIR_META_IFACE_LIQ = new ethers.Interface([
+  'function token0() view returns (address)',
+  'function token1() view returns (address)',
+])
+const PAIR_RES_IFACE_LIQ = new ethers.Interface([
+  'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
+])
 
 const FACTORY_ABI = ['function protocolTreasury() view returns (address)']
 const ERC20_XFER_IFACE = new ethers.Interface(['function transfer(address to,uint256 value) returns (bool)'])
@@ -307,6 +341,7 @@ export default function Liquidity() {
   })
   const [repairA, setRepairA] = useState('') // human units
   const [repairB, setRepairB] = useState('')
+  const [priceData, setPriceData] = useState<PricePoint[]>([])
 
 
 
@@ -655,6 +690,116 @@ export default function Liquidity() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, tokenA, tokenB])
 
+
+  // ---------------- Price chart data ----------------
+  useEffect(() => {
+    let unsub: (() => void) | null = null
+
+      ; (async () => {
+        try {
+          if (tokenA === tokenB) return setPriceData([])
+          if (!FACTORY || !ethers.isAddress(FACTORY)) return setPriceData([])
+          if (!WAKE || !ethers.isAddress(WAKE)) return setPriceData([])
+
+          const A = TOKENS[tokenA]
+          const B = TOKENS[tokenB]
+
+          const aAddr = A.isNative ? WAKE : A.address
+          const bAddr = B.isNative ? WAKE : B.address
+          if (!aAddr || !bAddr || !ethers.isAddress(aAddr) || !ethers.isAddress(bAddr)) return setPriceData([])
+
+          const pairData = await provider.call({
+            to: FACTORY,
+            data: FACTORY_IFACE_LIQ.encodeFunctionData('getPair', [aAddr, bAddr]),
+          })
+          const [pair] = FACTORY_IFACE_LIQ.decodeFunctionResult('getPair', pairData) as any
+          if (!pair || pair === ethers.ZeroAddress) return setPriceData([])
+
+          const [t0Data, t1Data] = await Promise.all([
+            provider.call({ to: pair, data: PAIR_META_IFACE_LIQ.encodeFunctionData('token0', []) }),
+            provider.call({ to: pair, data: PAIR_META_IFACE_LIQ.encodeFunctionData('token1', []) }),
+          ])
+          const [token0] = PAIR_META_IFACE_LIQ.decodeFunctionResult('token0', t0Data) as any
+          const [token1] = PAIR_META_IFACE_LIQ.decodeFunctionResult('token1', t1Data) as any
+
+          const fromAddr = String(aAddr).toLowerCase()
+          const toAddr = String(bAddr).toLowerCase()
+          const t0 = String(token0).toLowerCase()
+          const t1 = String(token1).toLowerCase()
+
+          const fromDec = await readDecimals(A, provider)
+          const toDec = await readDecimals(B, provider)
+
+          function priceFromReserves(res0: bigint, res1: bigint): number | null {
+            if (res0 === 0n || res1 === 0n) return null
+            if (fromAddr === t0 && toAddr === t1) {
+              const rFrom = Number(ethers.formatUnits(res0, fromDec))
+              const rTo = Number(ethers.formatUnits(res1, toDec))
+              if (!Number.isFinite(rFrom) || !Number.isFinite(rTo) || rFrom <= 0) return null
+              return rTo / rFrom
+            }
+            if (fromAddr === t1 && toAddr === t0) {
+              const rTo = Number(ethers.formatUnits(res0, toDec))
+              const rFrom = Number(ethers.formatUnits(res1, fromDec))
+              if (!Number.isFinite(rFrom) || !Number.isFinite(rTo) || rFrom <= 0) return null
+              return rTo / rFrom
+            }
+            return null
+          }
+
+          const pairKey = `${ALK_CHAIN_ID}_${String(pair).toLowerCase()}`
+
+          const latestSnap = await getDocs(query(
+            collection(db, 'amm_events'),
+            where('pairKey', '==', pairKey),
+            where('event', '==', 'Sync'),
+            orderBy('blockTime', 'desc'),
+            limit(1)
+          ))
+          if (latestSnap.empty) return setPriceData([])
+
+          const latestBlockTime = latestSnap.docs[0].data().blockTime as number
+          const minBlockTime = latestBlockTime - 48 * 60 * 60
+
+          const qy = query(
+            collection(db, 'amm_events'),
+            where('pairKey', '==', pairKey),
+            where('event', '==', 'Sync'),
+            where('blockTime', '>=', minBlockTime),
+            orderBy('blockTime', 'asc'),
+            limit(600)
+          )
+
+          unsub = onSnapshot(qy, (snap) => {
+            const pts: PricePoint[] = []
+            snap.forEach((doc) => {
+              const x: any = doc.data()
+              const r0s = x?.args?.reserve0
+              const r1s = x?.args?.reserve1
+              const tMs =
+                typeof x?.blockTimeMs === 'number'
+                  ? x.blockTimeMs
+                  : typeof x?.blockTime === 'number'
+                    ? x.blockTime * 1000
+                    : null
+              if (!r0s || !r1s || !tMs) return
+              const p = priceFromReserves(BigInt(r0s), BigInt(r1s))
+              if (p == null) return
+              pts.push({ t: tMs, p })
+            })
+            setPriceData(pts)
+          }, (err) => {
+            console.error('[LiquidityChart] Firestore snapshot error:', err)
+          })
+        } catch (e) {
+          console.error('[LiquidityChart] setup error:', e)
+          setPriceData([])
+        }
+      })()
+
+    return () => { if (unsub) unsub() }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider, tokenA, tokenB])
 
   // ---------------- Fees / P&L (from Firestore logs) ----------------
   useEffect(() => {
@@ -1274,6 +1419,45 @@ export default function Liquidity() {
   const balADisplay = hideBalances ? '•••' : (loadingBalances ? '…' : balA)
   const balBDisplay = hideBalances ? '•••' : (loadingBalances ? '…' : balB)
 
+  // USD values for the input amounts
+  const amtANum = Number(clampAmountStr(amtA.trim())) || 0
+  const amtBNum = Number(clampAmountStr(amtB.trim())) || 0
+
+  const ratioAtoBNum: number | null = (() => {
+    if (!poolHasReserves || rawReserveA === 0n || rawReserveB === 0n) return null
+    try {
+      const oneA = ethers.parseUnits('1', decAState)
+      const outB = quote(oneA, rawReserveA, rawReserveB)
+      return Number(ethers.formatUnits(outB, decBState))
+    } catch { return null }
+  })()
+
+  const nonStableSym = tokenA.toUpperCase() === STABLE_SYM ? tokenB : tokenA
+  const altUsdPerToken: number | null =
+    tokenA.toUpperCase() === STABLE_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0
+      ? STABLE_USD_PRICE / ratioAtoBNum
+      : tokenB.toUpperCase() === STABLE_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0
+        ? ratioAtoBNum * STABLE_USD_PRICE
+        : null
+
+  const usdA: number | null =
+    tokenA.toUpperCase() === STABLE_SYM && amtANum > 0
+      ? amtANum * STABLE_USD_PRICE
+      : tokenB.toUpperCase() === STABLE_SYM && altUsdPerToken !== null && amtANum > 0
+        ? amtANum * altUsdPerToken
+        : null
+
+  const usdB: number | null =
+    tokenB.toUpperCase() === STABLE_SYM && amtBNum > 0
+      ? amtBNum * STABLE_USD_PRICE
+      : tokenA.toUpperCase() === STABLE_SYM && altUsdPerToken !== null && amtBNum > 0
+        ? amtBNum * altUsdPerToken
+        : null
+
+  const chartUsdHint = altUsdPerToken !== null
+    ? { sym: nonStableSym, price: altUsdPerToken }
+    : undefined
+
   return (
     <div className="page">
       <div className="mx-auto w-full max-w-3xl">
@@ -1323,27 +1507,20 @@ export default function Liquidity() {
               <Badge>Network: Alkebuleum</Badge>
             </div>
 
-            <div className="mt-4 grid gap-3">
-              {/* Token A */}
-              <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">Token A</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">Bal: {balADisplay}</div>
-                </div>
+            <div className="mt-4 flex flex-col">
 
-                <div className="mt-2 flex items-center gap-2">
+              {/* Token A box */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/40">
+                <div className="flex items-center gap-3">
                   <select
-                    className="w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-orange-500/20"
+                    className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-900 outline-none cursor-pointer hover:bg-slate-200 focus:ring-2 focus:ring-orange-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus:ring-orange-500/20"
                     value={tokenA}
                     onChange={(e) => setTokenA(e.target.value as TokenKey)}
                   >
                     {tokenOptions.map((k) => (
-                      <option key={k} value={k} disabled={k === tokenB}>
-                        {k}
-                      </option>
+                      <option key={k} value={k} disabled={k === tokenB}>{k}</option>
                     ))}
                   </select>
-
                   <input
                     value={amtA}
                     onChange={(e) => {
@@ -1353,33 +1530,51 @@ export default function Liquidity() {
                       setAmtA(v)
                       syncBFromA(v)
                     }}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-orange-500/20"
-                    placeholder="100"
+                    className="w-full min-w-0 bg-transparent text-right text-2xl font-semibold text-slate-900 outline-none placeholder:text-slate-300 dark:text-slate-100 dark:placeholder:text-slate-700"
+                    placeholder="0"
                     inputMode="decimal"
                   />
                 </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                  <span>Balance: {balADisplay}</span>
+                  {usdA !== null && (
+                    <span className="tabular-nums">
+                      ≈&nbsp;${usdA.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  )}
+                </div>
               </div>
 
-              {/* Token B */}
-              <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">Token B</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">Bal: {balBDisplay}</div>
-                </div>
+              {/* Centered swap-pair button */}
+              <div className="flex justify-center -my-3.5 relative z-10">
+                <button
+                  onClick={() => {
+                    const [a, b] = [tokenA, tokenB]
+                    const [va, vb] = [amtA, amtB]
+                    setTokenA(b); setTokenB(a)
+                    setAmtA(vb); setAmtB(va)
+                    setLastEdited('A')
+                    didUserEditRef.current = true
+                  }}
+                  title="Swap token positions"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:scale-110 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
+                >
+                  <ArrowDownUp className="h-3.5 w-3.5 text-slate-600 dark:text-slate-300" />
+                </button>
+              </div>
 
-                <div className="mt-2 flex items-center gap-2">
+              {/* Token B box */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/60">
+                <div className="flex items-center gap-3">
                   <select
-                    className="w-28 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-orange-500/20"
+                    className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-900 outline-none cursor-pointer hover:bg-slate-200 focus:ring-2 focus:ring-orange-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus:ring-orange-500/20"
                     value={tokenB}
                     onChange={(e) => setTokenB(e.target.value as TokenKey)}
                   >
                     {tokenOptions.map((k) => (
-                      <option key={k} value={k} disabled={k === tokenA}>
-                        {k}
-                      </option>
+                      <option key={k} value={k} disabled={k === tokenA}>{k}</option>
                     ))}
                   </select>
-
                   <input
                     value={amtB}
                     onChange={(e) => {
@@ -1389,44 +1584,56 @@ export default function Liquidity() {
                       setAmtB(v)
                       syncAFromB(v)
                     }}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-orange-500/20"
-                    placeholder="1"
+                    className="w-full min-w-0 bg-transparent text-right text-2xl font-semibold text-slate-900 outline-none placeholder:text-slate-300 dark:text-slate-100 dark:placeholder:text-slate-700"
+                    placeholder="0"
                     inputMode="decimal"
                   />
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                  <span>Balance: {balBDisplay}</span>
+                  {usdB !== null && (
+                    <span className="tabular-nums">
+                      ≈&nbsp;${usdB.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              {poolHasReserves ? (
-                <>
-                  Pool ratio:{' '}
-                  <span className="font-semibold text-slate-800 dark:text-slate-100">
-                    1 {tokenA} ≈ {ratioAtoB} {tokenB}
-                  </span>
-                </>
+            {/* Rate + Slippage info bar */}
+            <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+              {poolHasReserves && ratioAtoBNum !== null ? (
+                <div className="mb-2.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">
+                  1&nbsp;{tokenA}&nbsp;≈&nbsp;{fmtRate(ratioAtoBNum)}&nbsp;{tokenB}
+                  {altUsdPerToken !== null && (
+                    <span className="ml-2 text-slate-400 dark:text-slate-500">
+                      ·&ensp;1&nbsp;{nonStableSym}&nbsp;≈&nbsp;${fmtUsd(altUsdPerToken)}
+                    </span>
+                  )}
+                </div>
               ) : (
-                <>No pool ratio yet — first liquidity sets the price.</>
+                <div className="mb-2.5 text-xs text-slate-400 dark:text-slate-500">
+                  No pool yet — first deposit sets the price.
+                </div>
               )}
-            </div>
-
-            <div className="mt-3 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-              <span>Slippage</span>
-              <div className="flex items-center gap-2">
-                {[30, 50, 100].map((bps) => (
-                  <button
-                    key={bps}
-                    className={[
-                      'rounded-full px-2.5 py-1 font-semibold',
-                      slippageBps === bps
-                        ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
-                        : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
-                    ].join(' ')}
-                    onClick={() => setSlippageBps(bps)}
-                  >
-                    {(bps / 100).toFixed(2)}%
-                  </button>
-                ))}
+              <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                <span>Slippage</span>
+                <div className="flex items-center gap-1.5">
+                  {[30, 50, 100].map((bps) => (
+                    <button
+                      key={bps}
+                      className={[
+                        'rounded-full px-2.5 py-1 font-semibold transition',
+                        slippageBps === bps
+                          ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
+                      ].join(' ')}
+                      onClick={() => setSlippageBps(bps)}
+                    >
+                      {(bps / 100).toFixed(2)}%
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -1482,43 +1689,34 @@ export default function Liquidity() {
               </div>
             </div>
 
-            {/* Essentials (always visible) */}
-            <div className="mt-4 grid gap-2">
-              {/* Price */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Price</div>
-                <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
-                  {poolHasReserves ? (
-                    <>
-                      1 {tokenA} ≈ {ratioAtoB} {tokenB}
-                    </>
-                  ) : (
-                    <>—</>
-                  )}
+            {/* Your position — personalized, shown first */}
+            <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-500/20 dark:bg-orange-500/5">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-orange-700 dark:text-orange-400">
+                  {ain ? `AIN-${ain}'s position` : 'Your position'}
                 </div>
+                <div className="text-xs font-bold text-orange-700 dark:text-orange-400">{lpShareUi}</div>
               </div>
+              <div className="mt-1 text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
+                {underAUi !== '—' ? (
+                  <>
+                    {underAUi}&nbsp;<span className="text-sm font-semibold text-slate-500">{tokenA}</span>
+                    <span className="mx-2 text-slate-300 dark:text-slate-600">/</span>
+                    {underBUi}&nbsp;<span className="text-sm font-semibold text-slate-500">{tokenB}</span>
+                  </>
+                ) : (
+                  <span className="text-sm font-normal text-slate-400 dark:text-slate-500">No position yet</span>
+                )}
+              </div>
+            </div>
 
+            {/* Pool stats */}
+            <div className="mt-3 grid gap-2">
               {/* Reserves */}
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Reserves</div>
+                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Pool reserves</div>
                 <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
                   {reserveAUi} {tokenA} / {reserveBUi} {tokenB}
-                </div>
-              </div>
-
-              {/* Your position (investor view) */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="flex items-center justify-between">
-                  <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Your position</div>
-                  <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">{lpShareUi}</div>
-                </div>
-                <div className="mt-1 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
-                  {underAUi} {tokenA}
-                  <span className="mx-2 text-slate-400 dark:text-slate-600">/</span>
-                  {underBUi} {tokenB}
-                </div>
-                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                  This is your share of the pool reserves right now.
                 </div>
               </div>
             </div>

@@ -9,7 +9,7 @@ export default function MobileTabbar() {
       <div className="mx-auto max-w-7xl px-2">
         <div className="grid grid-cols-5 h-16">
           <Tab to="/" icon={<Home className="w-5 h-5" />} label="Home" />
-          <Tab to="/get-alk" icon={<HandCoins className="w-5 h-5" />} label="Get" />
+          <Tab to="/get-alk" icon={<HandCoins className="w-5 h-5" />} label="Get MAH" />
           <Tab to="/swap" icon={<ArrowLeftRight className="w-5 h-5" />} label="Swap" />
           <Tab to="/liquidity" icon={<Droplets className="w-5 h-5" />} label="LP" />
           <Tab to="/tokens" icon={<Coins className="w-5 h-5" />} label="Tokens" />

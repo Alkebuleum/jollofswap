@@ -11,12 +11,13 @@ import {
 import { ArrowLeftRight } from 'lucide-react'
 
 type PricePoint = { t: number; p: number } // t in ms, p = quote per base
-type TimeRange = '1H' | '24H' | '1W'
+type TimeRange = '1H' | '24H' | '1W' | 'ALL'
 
 const RANGE_MS: Record<TimeRange, number> = {
     '1H':  1 * 60 * 60 * 1000,
     '24H': 24 * 60 * 60 * 1000,
     '1W':  7 * 24 * 60 * 60 * 1000,
+    'ALL': Infinity,
 }
 
 // ── Hooks ────────────────────────────────────────────────────────────────────
@@ -87,7 +88,7 @@ export default function ModernPriceChart({
     const seriesRef  = useRef<ISeriesApi<'Area'> | null>(null)
 
     const [flipped, setFlipped]       = useState(false)
-    const [timeRange, setTimeRange]   = useState<TimeRange>('1W')
+    const [timeRange, setTimeRange]   = useState<TimeRange>('ALL')
 
     // Reset flip when the token pair changes
     useEffect(() => { setFlipped(false) }, [symbolFrom, symbolTo])
@@ -104,7 +105,8 @@ export default function ModernPriceChart({
 
     // Filter by time range, then apply flip
     const displayData = useMemo(() => {
-        const cutoff = Date.now() - RANGE_MS[timeRange]
+        const rangeMs = RANGE_MS[timeRange]
+        const cutoff = rangeMs === Infinity ? 0 : Date.now() - rangeMs
         const filtered = (data || []).filter(d => d.t >= cutoff && d.p > 0)
         if (flipped) return filtered.map(d => ({ t: d.t, p: 1 / d.p }))
         return filtered
@@ -290,7 +292,7 @@ export default function ModernPriceChart({
 
                 {/* Right: time range tabs */}
                 <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-                    {(['1H', '24H', '1W'] as const).map(r => (
+                    {(['1H', '24H', '1W', 'ALL'] as const).map(r => (
                         <button
                             key={r}
                             onClick={() => setTimeRange(r)}

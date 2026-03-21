@@ -28,5 +28,5 @@ npm run dev
 ## Push to Git
 git status
 git add -A
-git commit -m "add auth for coinbase"
+git commit -m "gated signup, improve UX"
 git push

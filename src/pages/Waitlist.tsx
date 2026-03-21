@@ -143,7 +143,7 @@ export default function Waitlist() {
             /* Not connected */
             <div>
               <button
-                onClick={signin}
+                onClick={() => signin()}
                 disabled={connectBusy}
                 className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-jlfTomato px-5 py-3.5 text-sm font-semibold text-jlfIvory shadow-sm hover:opacity-95 active:opacity-90 disabled:opacity-60 transition"
               >

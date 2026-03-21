@@ -45,7 +45,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
               Open your amVault and connect to this app.
             </p>
             <button
-              onClick={signin}
+              onClick={() => signin()}
               disabled={status === 'checking'}
               className={btnPrimary + ' mt-3 w-full'}
             >

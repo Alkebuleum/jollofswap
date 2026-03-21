@@ -1,7 +1,8 @@
 // src/pages/Tokens.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers, Interface } from 'ethers'
-import { useAuth, sendTransactions } from 'amvault-connect'
+import { useAuth } from 'amvault-connect'
+import { useSignerSession } from '../hooks/useSignerSession'
 import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore'
 import { db } from '../services/firebase'
 import { Link } from 'react-router-dom'
@@ -132,6 +133,7 @@ export default function Tokens() {
   const { session } = useAuth()
   const walletConnected = !!session
   const address = session?.address
+  const { sessionSendTransactions } = useSignerSession()
 
   const alkProvider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
 
@@ -294,14 +296,15 @@ export default function Tokens() {
       const rawTxs = [{ to: TOKEN_FACTORY_ALK, data, value: 0n, gasLimit: 2_200_000 }]
       const txs = rawTxs.map(normalizeTxForAmVault)
 
-      const results = await sendTransactions(
+      const results = await sessionSendTransactions(
         {
           chainId: ALK_CHAIN_ID,
           txs,
           failFast: true,
           preflight: CREATE_PREFLIGHT,
         } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL }
+        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
+        'token_create',
       )
 
       const firstFail = results?.find((r: any) => r?.ok === false)
@@ -478,14 +481,15 @@ export default function Tokens() {
       const rawTxs = [{ to: REGISTRY_TREASURY_ALK, value: feeWei, gasLimit: 80_000 }]
       const txs = rawTxs.map(normalizeTxForAmVault)
 
-      const payRes = await sendTransactions(
+      const payRes = await sessionSendTransactions(
         {
           chainId: ALK_CHAIN_ID,
           txs,
           failFast: true,
           preflight: REG_PAY_PREFLIGHT,
         } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL }
+        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
+        'registry_listing',
       )
 
       const firstFail = payRes?.find((r: any) => r?.ok === false)

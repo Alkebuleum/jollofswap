@@ -3,11 +3,22 @@
 
 <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <script>
-        // Redirect /any/path to /?/any/path so index.html can restore it
-        var l = window.location;
-        var redirect = "/?/" + l.pathname.replace(/^\//, "") + l.search.replace(/^\?/, "&") + l.hash;
-        l.replace(redirect);
+        (function () {
+            var l = window.location;
+
+            // path without leading "/"
+            var path = l.pathname.replace(/^\//, "");
+
+            // IMPORTANT:
+            // put "?" back between path and query,
+            // and encode "&" as "~and~" so index.html can decode it.
+            var query = l.search ? ("?" + l.search.slice(1)).replace(/&/g, "~and~") : "";
+
+            // redirect to "/?/<path>?<query>"
+            l.replace("/?/" + path + query + l.hash);
+        })();
     </script>
 </head>
 

@@ -5,8 +5,9 @@ import { collection, getDocs, onSnapshot, orderBy, query, where, limit } from 'f
 import { db } from '../services/firebase'
 
 import { ethers } from 'ethers'
-import { useAuth, sendTransactions } from 'amvault-connect'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { useAuth } from 'amvault-connect'
+import { useSignerSession } from '../hooks/useSignerSession'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   ALK_CHAIN_ID,
   ALK_RPC,
@@ -28,7 +29,7 @@ import {
   quote,
 } from '../lib/jollofAmm'
 import { routerIface } from '../lib/jollofAmm'
-import { ArrowDownUp } from 'lucide-react'
+import { ArrowDownUp, CircleDollarSign } from 'lucide-react'
 import ModernPriceChart from '../components/ModernPriceChart'
 import WalletSummaryCard from '../components/WalletSummaryCard'
 import { readHideBalances, readSlippageBps, writeSlippageBps, PREF } from '../lib/prefs'
@@ -290,6 +291,7 @@ export default function Liquidity() {
   const address = session?.address ?? null
 
   const { ain, ainLoading } = useWalletMetaStore()
+  const { sessionSendTransactions } = useSignerSession()
 
 
   const provider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
@@ -798,7 +800,7 @@ export default function Liquidity() {
       })()
 
     return () => { if (unsub) unsub() }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, tokenA, tokenB])
 
   // ---------------- Fees / P&L (from Firestore logs) ----------------
@@ -1050,14 +1052,15 @@ export default function Liquidity() {
       // Snapshot balances before sending
       setPreAddBals({ a: balA, b: balB })
 
-      const results = await sendTransactions(
+      const results = await sessionSendTransactions(
         {
           chainId: ALK_CHAIN_ID,
           txs: safeTxs,
           failFast: true,
           preflight: LIQ_PREFLIGHT,
         } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL }
+        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
+        'add_liquidity',
       )
 
       const firstFail = results?.find((r: any) => r?.ok === false)
@@ -1232,14 +1235,15 @@ export default function Liquidity() {
 
       const safeTxs = txs.map(normalizeTxForAmVault)
 
-      const results = await sendTransactions(
+      const results = await sessionSendTransactions(
         {
           chainId: ALK_CHAIN_ID,
           txs: safeTxs,
           failFast: true,
           preflight: REMOVE_PREFLIGHT,
         } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL }
+        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
+        'remove_liquidity',
       )
 
       const firstFail = results?.find((r: any) => r?.ok === false)
@@ -1349,9 +1353,10 @@ export default function Liquidity() {
 
       setInfo('Repair queued. Confirm in amVault…')
 
-      const results = await sendTransactions(
+      const results = await sessionSendTransactions(
         { chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: { flow: 'repair_pool_v1' } } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL }
+        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
+        'repair_pool',
       )
 
       const firstFail = results?.find((r: any) => r?.ok === false)
@@ -1461,30 +1466,7 @@ export default function Liquidity() {
   return (
     <div className="page">
       <div className="mx-auto w-full max-w-3xl">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Liquidity</h1>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              Provide liquidity and verify it on-chain.
-            </p>
-          </div>
-          <button
-            onClick={async () => {
-              setErr(null)
-              setInfo('Refreshing…')
-              try {
-                await refreshBalances()
-                await refreshPositionAndReserves()
-                setInfo(null)
-              } catch {
-                setInfo(null)
-              }
-            }}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-          >
-            Refresh
-          </button>
-        </div>
+
 
         <WalletSummaryCard
           walletConnected={walletConnected}
@@ -1496,6 +1478,40 @@ export default function Liquidity() {
           ]}
           notConnectedHint="Connect amVault using the top bar to add liquidity."
         />
+
+        {/* Low MAH balance widget */}
+        {walletConnected && (() => {
+          const mahIsA = tokenA === STABLE_SYM
+          const mahIsB = tokenB === STABLE_SYM
+          if (!mahIsA && !mahIsB) return null
+          const mahAmt = Number(clampAmountStr(mahIsA ? amtA : amtB))
+          const mahBal = mahIsA ? balANum : balBNum
+          if (!mahAmt || mahAmt <= mahBal + 0.01) return null
+          return (
+            <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="h-1 w-full bg-gradient-to-r from-jlfTomato/80 via-orange-400 to-amber-400" />
+              <div className="flex items-center gap-4 px-5 py-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-jlfTomato/10 dark:bg-jlfTomato/15">
+                  <CircleDollarSign className="h-5 w-5 text-jlfTomato" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-slate-900 dark:text-slate-100">
+                    Your MAH balance is low
+                  </div>
+                  <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                    You need {mahAmt.toLocaleString('en-US', { maximumFractionDigits: 2 })} MAH but only have {mahBal.toLocaleString('en-US', { maximumFractionDigits: 2 })}. Get more MAH to continue.
+                  </div>
+                </div>
+                <Link
+                  to="/get-alk"
+                  className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-jlfTomato px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:opacity-80 transition"
+                >
+                  Get MAH
+                </Link>
+              </div>
+            </div>
+          )
+        })()}
 
         <div className="grid gap-4 lg:grid-cols-[1fr_380px] lg:items-start">
           {/* Add liquidity */}
@@ -1658,10 +1674,10 @@ export default function Liquidity() {
                   {busy
                     ? 'Confirming on-chain…'
                     : insuffA
-                    ? `Insufficient ${tokenA} balance`
-                    : insuffB
-                    ? `Insufficient ${tokenB} balance`
-                    : 'Preview & Add'}
+                      ? `Insufficient ${tokenA} balance`
+                      : insuffB
+                        ? `Insufficient ${tokenB} balance`
+                        : 'Preview & Add'}
                 </button>
               )
             })()}
@@ -1691,18 +1707,18 @@ export default function Liquidity() {
 
             {/* Your position — personalized, shown first */}
             <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-500/20 dark:bg-orange-500/5">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
                 <div className="text-xs font-semibold text-orange-700 dark:text-orange-400">
                   {ain ? `AIN-${ain}'s position` : 'Your position'}
                 </div>
                 <div className="text-xs font-bold text-orange-700 dark:text-orange-400">{lpShareUi}</div>
               </div>
-              <div className="mt-1 text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
+              <div className="mt-1 flex flex-wrap items-baseline gap-x-1 gap-y-0.5 text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
                 {underAUi !== '—' ? (
                   <>
-                    {underAUi}&nbsp;<span className="text-sm font-semibold text-slate-500">{tokenA}</span>
-                    <span className="mx-2 text-slate-300 dark:text-slate-600">/</span>
-                    {underBUi}&nbsp;<span className="text-sm font-semibold text-slate-500">{tokenB}</span>
+                    <span>{underAUi}&nbsp;<span className="text-sm font-semibold text-slate-500">{tokenA}</span></span>
+                    <span className="text-slate-300 dark:text-slate-600">/</span>
+                    <span>{underBUi}&nbsp;<span className="text-sm font-semibold text-slate-500">{tokenB}</span></span>
                   </>
                 ) : (
                   <span className="text-sm font-normal text-slate-400 dark:text-slate-500">No position yet</span>
@@ -1715,8 +1731,10 @@ export default function Liquidity() {
               {/* Reserves */}
               <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
                 <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Pool reserves</div>
-                <div className="mt-0.5 text-sm font-semibold text-slate-900 tabular-nums dark:text-slate-100">
-                  {reserveAUi} {tokenA} / {reserveBUi} {tokenB}
+                <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1 gap-y-0.5 text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
+                  <span>{reserveAUi} {tokenA}</span>
+                  <span className="text-slate-400">/</span>
+                  <span>{reserveBUi} {tokenB}</span>
                 </div>
               </div>
             </div>
@@ -1901,8 +1919,8 @@ function AddLiqProgressModal({
             isDone
               ? 'bg-green-50 dark:bg-green-950/30'
               : isError
-              ? 'bg-red-50 dark:bg-red-950/30'
-              : 'bg-orange-50 dark:bg-orange-950/20',
+                ? 'bg-red-50 dark:bg-red-950/30'
+                : 'bg-orange-50 dark:bg-orange-950/20',
           ].join(' ')}
         >
           <div className="flex items-start justify-between gap-3">
@@ -1911,15 +1929,15 @@ function AddLiqProgressModal({
                 {isDone
                   ? 'Liquidity added'
                   : isError
-                  ? 'Transaction failed'
-                  : 'Adding liquidity…'}
+                    ? 'Transaction failed'
+                    : 'Adding liquidity…'}
               </div>
               <div className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
                 {isDone
                   ? `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} deposited.`
                   : isError
-                  ? 'See details below.'
-                  : `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} · Alkebuleum`}
+                    ? 'See details below.'
+                    : `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} · Alkebuleum`}
               </div>
             </div>
             {(isDone || isError) && (
@@ -1947,8 +1965,8 @@ function AddLiqProgressModal({
                         step.done
                           ? 'bg-green-500 text-white'
                           : step.active
-                          ? 'bg-orange-500 text-white'
-                          : 'bg-slate-100 text-slate-400 dark:bg-slate-800',
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-slate-100 text-slate-400 dark:bg-slate-800',
                       ].join(' ')}
                     >
                       {step.active && (
@@ -1985,8 +2003,8 @@ function AddLiqProgressModal({
                         step.done
                           ? 'text-green-700 dark:text-green-400'
                           : step.active
-                          ? 'text-orange-700 dark:text-orange-400'
-                          : 'text-slate-400 dark:text-slate-600',
+                            ? 'text-orange-700 dark:text-orange-400'
+                            : 'text-slate-400 dark:text-slate-600',
                       ].join(' ')}
                     >
                       {step.label}

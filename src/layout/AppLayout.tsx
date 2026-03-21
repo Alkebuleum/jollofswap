@@ -1,10 +1,13 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import { useAuth } from 'amvault-connect'
 import TopBar from './TopBar'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { PRELAUNCH, isAllowedTester } from '../lib/prelaunch'
 import Waitlist from '../pages/Waitlist'
+import SessionWarningModal from '../components/SessionWarningModal'
+import { useSignerSessionStore } from '../store/signerSessionStore'
+import { useSignerSession } from '../hooks/useSignerSession'
 
 const LEGAL_PATHS = ['/privacy', '/terms']
 
@@ -12,6 +15,37 @@ export default function AppLayout() {
   const { session } = useAuth()
   const { ain, ainLoading } = useWalletMetaStore()
   const { pathname } = useLocation()
+
+  // Kick off the 1-minute warning poll (no-op if already mounted)
+  useSignerSession()
+
+  // If the wallet is already connected on mount (page refresh / returning user),
+  // start a session immediately so subsequent AmVault calls have a sessionId.
+  // Normal connect flow is handled in TopBar (session created on button click).
+  const mountHandled = useRef(false)
+  const { getOrCreateSignerSession, clearSignerSession } = useSignerSessionStore()
+  useEffect(() => {
+    if (!mountHandled.current) {
+      mountHandled.current = true
+      if (session) {
+        // Page refresh — wallet already connected, restore a session so any
+        // immediate AmVault action has a stable sessionId ready.
+        const s = getOrCreateSignerSession()
+        console.log('[Jollof] already connected on mount — flowSession ready', { sessionId: s.sessionId })
+      }
+    }
+  }, [])
+
+  // Clear session when wallet disconnects
+  const prevConnected = useRef(!!session)
+  useEffect(() => {
+    const nowConnected = !!session
+    if (!nowConnected && prevConnected.current) {
+      console.log('[Jollof] wallet disconnected — clearing signer session')
+      clearSignerSession()
+    }
+    prevConnected.current = nowConnected
+  }, [!!session])
   const isLegalPage = LEGAL_PATHS.includes(pathname)
 
   // --- Prelaunch gate ---
@@ -22,6 +56,7 @@ export default function AppLayout() {
 
   return (
     <div className="min-h-screen flex flex-col bg-jlfIvory text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <SessionWarningModal />
       <TopBar />
 
       <main className="flex-1">
@@ -51,7 +86,7 @@ export default function AppLayout() {
 
               <nav className="sm:hidden flex flex-wrap gap-x-4 gap-y-2 text-sm">
                 <Link to="/" className="hover:underline">Home</Link>
-                <Link to="/get-alk" className="hover:underline">Get ALKE</Link>
+                <Link to="/swap?from=USDC&to=ALKE" className="hover:underline">Get ALKE</Link>
                 <Link to="/swap" className="hover:underline">Swap</Link>
                 <Link to="/liquidity" className="hover:underline">Liquidity</Link>
                 <Link to="/tokens" className="hover:underline">Tokens</Link>

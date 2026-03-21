@@ -2,7 +2,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ethers, Interface } from 'ethers'
-import { useAuth, sendTransactions, signMessage } from 'amvault-connect'
+import { useAuth } from 'amvault-connect'
+import { useSignerSession } from '../hooks/useSignerSession'
 import WalletSummaryCard from '../components/WalletSummaryCard'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 
@@ -42,9 +43,9 @@ const UI_FEE_MAX_USD = Number(import.meta.env.VITE_BRIDGE_FEE_MAX_USD ?? 2.0)
 // must match backend MAH_PER_USDC
 const UI_MAH_PER_USDC = Number(import.meta.env.VITE_MAH_PER_USDC ?? 100)
 
-const ALKE = {
-  symbol: 'ALKE',
-  networkName: 'Alkebuleum',
+const MAH = {
+  symbol: 'MAH',
+  description: "JollofSwap's dollar-backed coin",
 }
 
 const REQUIRED_CONFIRMATIONS = 10
@@ -75,8 +76,10 @@ export default function GetALKE() {
   const walletConnected = !!session
   const address = session?.address
   const { ain, ainLoading } = useWalletMetaStore()
+  const { sessionSendTransactions, sessionSignMessage } = useSignerSession()
 
   const [step, setStep] = useState<Step>('buy')
+  const [mahInfoOpen, setMahInfoOpen] = useState(false)
 
   const [usdcBal, setUsdcBal] = useState<string>('—')
   const [usdcBalNum, setUsdcBalNum] = useState<number>(0)
@@ -316,7 +319,7 @@ export default function GetALKE() {
       }
 
       // Step 2: Sign the challenge message via amvault
-      const signature = await signMessage(
+      const signature = await sessionSignMessage(
         { chainId: ALK_CHAIN_ID, message: challengeData.message },
         { app: APP_NAME, amvaultUrl: AMVAULT_URL },
       )
@@ -399,8 +402,8 @@ export default function GetALKE() {
       // over the next few blocks. Without it, txs get stuck when baseFee rises.
       // Users need ~0.2 POL (faucet amount) to cover reservation at normal–elevated prices.
       const feeData = await polyProvider.getFeeData()
-      const maxFeeGwei      = Math.ceil(Number(ethers.formatUnits(feeData.maxFeePerGas      ?? 500_000_000_000n, 'gwei')))
-      const maxPriorityGwei = Math.ceil(Number(ethers.formatUnits(feeData.maxPriorityFeePerGas ?? 30_000_000_000n,  'gwei')))
+      const maxFeeGwei = Math.ceil(Number(ethers.formatUnits(feeData.maxFeePerGas ?? 500_000_000_000n, 'gwei')))
+      const maxPriorityGwei = Math.ceil(Number(ethers.formatUnits(feeData.maxPriorityFeePerGas ?? 30_000_000_000n, 'gwei')))
 
       const txs: Array<{
         to?: string
@@ -448,14 +451,15 @@ export default function GetALKE() {
       estMahRef.current = feeQuote.ok ? feeQuote.mahNet.toFixed(6) : null
 
 
-      const results = await sendTransactions(
+      const results = await sessionSendTransactions(
         {
           chainId: POLY_CHAIN_ID,
           txs,
           failFast: true,
           preflight: BRIDGE_PREFLIGHT,
         } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL }
+        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
+        'bridge',
       )
 
       const firstFail = results?.find((r) => r?.ok === false)
@@ -562,14 +566,7 @@ export default function GetALKE() {
   return (
     <div className="page">
       <div className="mx-auto w-full max-w-3xl">
-        <div className="mb-4">
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">
-            Get {ALKE.symbol}
-          </h1>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            USDC (Polygon) → MAH (Alkebuleum) → {ALKE.symbol}.
-          </p>
-        </div>
+
 
         <WalletSummaryCard
           walletConnected={walletConnected}
@@ -579,12 +576,57 @@ export default function GetALKE() {
             { label: 'USDC', value: loadingBalances ? '…' : usdcBal },
             { label: 'MAH', value: loadingBalances ? '…' : mahBal },
           ]}
-          notConnectedHint="Connect amVault to bridge USDC → MAH."
+          notConnectedHint="Connect your amVault wallet (top bar) to get started."
         />
+        {/* What is MAH? info strip */}
+        <button
+          type="button"
+          onClick={() => setMahInfoOpen(v => !v)}
+          className="mb-3 w-full flex items-center justify-between gap-3 rounded-xl border border-dashed border-orange-300 bg-orange-50/60 px-4 py-2.5 text-left transition hover:bg-orange-50 dark:border-orange-500/30 dark:bg-orange-500/5 dark:hover:bg-orange-500/10"
+        >
+          <div className="flex items-center gap-2">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-orange-100 text-orange-600 dark:bg-orange-500/20 dark:text-orange-400">
+              <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="currentColor">
+                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm.75 10.5h-1.5v-5h1.5v5Zm0-6.5h-1.5V3.5h1.5V5Z"/>
+              </svg>
+            </span>
+            <span className="text-sm font-semibold text-orange-800 dark:text-orange-300">What is MAH?</span>
+          </div>
+          <svg
+            viewBox="0 0 16 16"
+            className={['h-4 w-4 shrink-0 text-orange-400 transition-transform dark:text-orange-500', mahInfoOpen ? 'rotate-180' : ''].join(' ')}
+            fill="none" stroke="currentColor" strokeWidth="2"
+          >
+            <path d="M3 6l5 5 5-5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
 
+        {mahInfoOpen && (
+          <div className="mb-3 overflow-hidden rounded-xl border border-orange-200 dark:border-orange-500/20">
+            <div className="bg-gradient-to-r from-orange-500 to-amber-400 px-4 py-2.5">
+              <p className="text-sm font-semibold text-white">
+                MAH is JollofSwap's dollar-referenced trading asset
+              </p>
+            </div>
+            <div className="grid grid-cols-3 divide-x divide-orange-100 bg-white dark:divide-orange-500/10 dark:bg-slate-900">
+              <div className="px-3 py-3 text-center">
+                <div className="text-base font-extrabold text-orange-600 dark:text-orange-400">100</div>
+                <div className="mt-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">Approx. $1 reference value</div>
+              </div>
+              <div className="px-3 py-3 text-center">
+                <div className="text-base font-extrabold text-orange-600 dark:text-orange-400">Utility</div>
+                <div className="mt-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">Swap, LP &amp; trade</div>
+              </div>
+              <div className="px-3 py-3 text-center">
+                <div className="text-base font-extrabold text-orange-600 dark:text-orange-400">Market</div>
+                <div className="mt-0.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">Value may vary</div>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="mb-4 flex flex-col gap-2 sm:flex-row">
-          <StepTab active={step === 'buy'} n="1" title="Get USDC" subtitle="Polygon" onClick={() => setStep('buy')} />
-          <StepTab active={step === 'bridge'} n="2" title="Bridge to MAH" subtitle="Alkebuleum" onClick={() => setStep('bridge')} />
+          <StepTab active={step === 'buy'} n="1" title="Add Dollars" subtitle="Buy or transfer USDC" onClick={() => setStep('buy')} />
+          <StepTab active={step === 'bridge'} n="2" title="Convert to MAH" subtitle="Usually takes 1–3 min" onClick={() => setStep('bridge')} />
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -593,14 +635,14 @@ export default function GetALKE() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <div className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                    Step 1 — Get USDC on Polygon
+                    Step 1 — Add dollars to your wallet
                   </div>
                   <div className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                    Buy USDC directly or transfer from an existing wallet, then bridge to MAH.
+                    Buy USDC with a card or bank account, or send it from an exchange you already use (Binance, Coinbase, Kraken, etc.).
                   </div>
                 </div>
                 <div className="shrink-0">
-                  <Badge>Network: Polygon</Badge>
+                  <Badge>USDC required</Badge>
                 </div>
               </div>
 
@@ -617,7 +659,7 @@ export default function GetALKE() {
                       </span>
                     </div>
                     <p className="mt-1.5 text-xs text-slate-600 dark:text-slate-400">
-                      Buy USDC with a card or bank transfer via Coinbase Pay. USDC is sent directly to your connected wallet on Polygon.
+                      Buy USDC with a debit card, credit card, or bank transfer. Your USDC arrives automatically — no copying addresses.
                     </p>
                   </div>
                   {coinbaseErr && (
@@ -638,10 +680,10 @@ export default function GetALKE() {
                 <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
                   <div>
                     <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      Transfer from external wallet
+                      Send from an exchange
                     </div>
                     <p className="mt-1.5 text-xs text-slate-600 dark:text-slate-400">
-                      Already have USDC on Binance, Coinbase, or another wallet? Send it directly to your JollofSwap address on Polygon.
+                      Already have USDC on Binance, Coinbase, Kraken, or another wallet? Send it to your JollofSwap address and we'll walk you through it.
                     </p>
                   </div>
                   <button
@@ -658,7 +700,7 @@ export default function GetALKE() {
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-700"
                   onClick={() => setStep('bridge')}
                 >
-                  I have USDC on Polygon → Continue to Bridge
+                  I already have USDC → Continue to Step 2
                 </button>
               </div>
             </div>
@@ -669,21 +711,21 @@ export default function GetALKE() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 sm:flex-1">
                   <div className="text-base sm:text-lg font-bold leading-tight text-slate-900 dark:text-slate-100">
-                    Step 2 — Bridge USDC → MAH
+                    Step 2 — Convert USDC to MAH
                   </div>
                   <div className="mt-1 text-xs sm:text-sm text-slate-600 leading-snug dark:text-slate-400">
-                    Deposit USDC to the BridgeVault on Polygon. MAH mints to your address on Alkebuleum.
+                    Enter how much USDC you want to convert. We'll send it through the bridge and MAH will arrive in your wallet — usually within 1–3 minutes.
                   </div>
                 </div>
                 <div className="shrink-0">
-                  <Badge>Polygon → Alkebuleum</Badge>
+                  <Badge>1 USDC = 100 MAH</Badge>
                 </div>
               </div>
 
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
                   <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                    USDC amount to deposit
+                    How much USDC to convert?
                   </div>
 
                   <div className="mt-2 flex items-center gap-2">
@@ -711,19 +753,13 @@ export default function GetALKE() {
                     </div> */}
                   </div>
 
-                  <details className="mt-2">
-                    <summary className="cursor-pointer select-none text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
-                      Fee details
-                    </summary>
-                    <div className="mt-1 space-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-                      <div>
-                        Policy: max(${UI_FEE_MIN_USD.toFixed(2)}, {(UI_FEE_BPS / 100).toFixed(2)}%) • cap ${UI_FEE_MAX_USD.toFixed(2)}
-                      </div>
-                      <div className="tabular-nums">
-                        Net: {feeQuote.net.toFixed(6)} USDC ≈ {feeQuote.mahNet.toFixed(6)} MAH
-                      </div>
+                  {feeQuote.ok && (
+                    <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                      You will receive approximately{' '}
+                      <span className="font-semibold text-slate-800 dark:text-slate-100">{feeQuote.mahNet.toFixed(0)} MAH</span>
+                      {' '}(after a ${feeQuote.fee.toFixed(2)} conversion fee).
                     </div>
-                  </details>
+                  )}
 
                   <button
                     onClick={onDeposit}
@@ -738,19 +774,18 @@ export default function GetALKE() {
                     className="mt-3 w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {depositing
-                      ? 'Preparing…'
+                      ? 'Converting…'
                       : !loadingBalances && walletConnected && usdcBalNum <= 0
-                      ? 'No USDC balance'
-                      : !loadingBalances && walletConnected && feeQuote.amt > usdcBalNum
-                      ? 'Amount exceeds balance'
-                      : 'Approve & Deposit'}
+                        ? 'No USDC balance — complete Step 1 first'
+                        : !loadingBalances && walletConnected && feeQuote.amt > usdcBalNum
+                          ? 'Amount exceeds your USDC balance'
+                          : 'Convert to MAH'}
                   </button>
 
                   <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-                    <div className="mt-1">
-                      <span className="font-semibold">POL balance:</span>{' '}
-                      <span className="font-mono tabular-nums">{loadingBalances ? '…' : polBal}</span>
-                    </div>
+                    <span className="font-semibold">Gas balance (Polygon):</span>{' '}
+                    <span className="font-mono tabular-nums">{loadingBalances ? '…' : polBal} POL</span>
+                    {' '}— a small amount is needed to pay Polygon network fees.
                   </div>
 
                   {bridgeErr && (
@@ -763,44 +798,60 @@ export default function GetALKE() {
                       onClick={() => setBridgeDialogOpen(true)}
                       className="mt-3 w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/20"
                     >
-                      View bridge status →
+                      View conversion status →
                     </button>
                   )}
                 </div>
 
                 <div className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">Bridge status</div>
+                  <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">Conversion status</div>
 
                   <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-                    <div className="flex items-center justify-between gap-2">
-                      <span>BridgeVault</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs">{shortAddr(BRIDGEVAULT_POLY)}</span>
-                        <CopyAddr value={BRIDGEVAULT_POLY} />
+                    {txHash ? (
+                      <div className="text-sm text-slate-600 dark:text-slate-400">
+                        Transaction submitted. MAH will appear in your wallet once the bridge confirms it (usually 1–3 minutes).
                       </div>
-                    </div>
-
-                    <div className="mt-1 flex items-center justify-between gap-2">
-                      <span>MAH token</span>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs">{shortAddr(MAH_ALK)}</span>
-                        <CopyAddr value={MAH_ALK} />
+                    ) : (
+                      <div className="text-sm text-slate-500 dark:text-slate-400">
+                        No conversion in progress. Enter an amount and click "Convert to MAH" to begin.
                       </div>
-                    </div>
+                    )}
                   </div>
 
                   {txHash && (
                     <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-950/40">
-                      <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">Deposit Tx</div>
+                      <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">Transaction ID</div>
                       <div className="mt-1 break-all font-mono text-xs text-slate-700 dark:text-slate-200">{txHash}</div>
                     </div>
                   )}
 
+                  <details className="mt-3">
+                    <summary className="cursor-pointer select-none text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+                      Technical details
+                    </summary>
+                    <div className="mt-2 space-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                      <div className="flex items-center justify-between gap-2">
+                        <span>BridgeVault (Polygon)</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{shortAddr(BRIDGEVAULT_POLY)}</span>
+                          <CopyAddr value={BRIDGEVAULT_POLY} />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span>MAH token</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono">{shortAddr(MAH_ALK)}</span>
+                          <CopyAddr value={MAH_ALK} />
+                        </div>
+                      </div>
+                    </div>
+                  </details>
+
                   <Link
                     to={{ pathname: '/swap', search: '?from=MAH&to=ALKE' }}
-                    className="mt-3 block w-full rounded-xl border border-slate-300 bg-slate-50 px-4 py-3 text-center font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 dark:hover:bg-slate-700"
+                    className="mt-3 block w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-center font-semibold text-orange-800 transition hover:bg-orange-100 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200 dark:hover:bg-orange-500/20"
                   >
-                    I already have MAH → Get ALKE
+                    I already have MAH — swap for ALKE →
                   </Link>
 
                 </div>
@@ -815,8 +866,8 @@ export default function GetALKE() {
       {/* Transfer from external wallet modal */}
       {transferModalOpen && (
         <ModalShell
-          title="Transfer USDC from external wallet"
-          subtitle="Send USDC on Polygon to your JollofSwap address."
+          title="Send USDC from your exchange"
+          subtitle="Follow these steps to send USDC to your JollofSwap wallet."
           onClose={() => setTransferModalOpen(false)}
         >
           <div className="grid gap-4">
@@ -824,7 +875,7 @@ export default function GetALKE() {
             {/* Critical warning */}
             <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-500/40 dark:bg-amber-500/10">
               <div className="text-sm font-bold text-amber-900 dark:text-amber-200">
-                Read before you send
+                Important — read before you send
               </div>
               <ul className="mt-2 list-disc space-y-1.5 pl-4 text-sm text-amber-800 dark:text-amber-300">
                 <li>
@@ -842,7 +893,7 @@ export default function GetALKE() {
             {/* Wallet address */}
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800/40">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Your wallet address — send USDC here on Polygon
+                Your wallet address — send USDC here (Polygon network only)
               </div>
               {address ? (
                 <div className="mt-2 flex items-start gap-3">
@@ -880,7 +931,7 @@ export default function GetALKE() {
               className="w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700"
               onClick={() => { setTransferModalOpen(false); setStep('bridge') }}
             >
-              I've sent USDC → Continue to Bridge
+              I've sent USDC → Continue to Step 2
             </button>
           </div>
         </ModalShell>
@@ -1018,7 +1069,7 @@ function BridgeProgressModal({
 
   const steps: Array<{ label: string; sublabel?: string; done: boolean; active: boolean }> = [
     {
-      label: 'Deposit submitted',
+      label: 'Conversion submitted',
       sublabel: txHash ? `${txHash.slice(0, 10)}…${txHash.slice(-6)}` : undefined,
       done: true,
       active: false,
@@ -1033,8 +1084,8 @@ function BridgeProgressModal({
       active: phase === 'confirming',
     },
     {
-      label: 'Bridge processing',
-      sublabel: phase === 'minting' ? 'Minting MAH on Alkebuleum…' : undefined,
+      label: 'Converting to MAH',
+      sublabel: phase === 'minting' ? 'MAH is being created in your wallet…' : undefined,
       done: isDone,
       active: phase === 'minting',
     },
@@ -1057,21 +1108,21 @@ function BridgeProgressModal({
             isDone
               ? 'bg-green-50 dark:bg-green-950/30'
               : isError
-              ? 'bg-red-50 dark:bg-red-950/30'
-              : 'bg-orange-50 dark:bg-orange-950/20',
+                ? 'bg-red-50 dark:bg-red-950/30'
+                : 'bg-orange-50 dark:bg-orange-950/20',
           ].join(' ')}
         >
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                {isDone ? 'Bridge complete' : isError ? 'Bridge failed' : 'Bridging in progress'}
+                {isDone ? 'MAH ready!' : isError ? 'Conversion failed' : 'Converting to MAH…'}
               </div>
               <div className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
                 {isDone
-                  ? 'MAH has been minted to your wallet.'
+                  ? 'MAH has arrived in your wallet. You can now swap!'
                   : isError
-                  ? 'Something went wrong — see details below.'
-                  : 'USDC (Polygon) → MAH (Alkebuleum)'}
+                    ? 'Something went wrong — see details below.'
+                    : 'Hang tight, this usually takes 1–3 minutes.'}
               </div>
             </div>
             {(isDone || isError) && (
@@ -1100,8 +1151,8 @@ function BridgeProgressModal({
                         step.done
                           ? 'bg-green-500 text-white'
                           : step.active
-                          ? 'bg-orange-500 text-white'
-                          : 'bg-slate-100 text-slate-400 dark:bg-slate-800',
+                            ? 'bg-orange-500 text-white'
+                            : 'bg-slate-100 text-slate-400 dark:bg-slate-800',
                       ].join(' ')}
                     >
                       {step.active && (
@@ -1134,8 +1185,8 @@ function BridgeProgressModal({
                         step.done
                           ? 'text-green-700 dark:text-green-400'
                           : step.active
-                          ? 'text-orange-700 dark:text-orange-400'
-                          : 'text-slate-400 dark:text-slate-600',
+                            ? 'text-orange-700 dark:text-orange-400'
+                            : 'text-slate-400 dark:text-slate-600',
                       ].join(' ')}
                     >
                       {step.label}
@@ -1237,7 +1288,7 @@ function BridgeProgressModal({
             <div className="space-y-3">
               <div className="rounded-xl border border-green-200 bg-green-50 p-3 dark:border-green-900/40 dark:bg-green-950/20">
                 <div className="text-sm font-semibold text-green-800 dark:text-green-300">
-                  MAH minted to your wallet
+                  MAH has arrived in your wallet!
                 </div>
                 {address && (
                   <div className="mt-1 break-all font-mono text-xs text-green-700 dark:text-green-400">
@@ -1251,18 +1302,21 @@ function BridgeProgressModal({
                   </div>
                 )}
               </div>
-              <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400">
-                <div>
-                  Deposit Tx:{' '}
-                  <span className="font-mono">{shortAddr(mintDetails.depositTx)}</span>
-                </div>
-                {mintDetails.mintTx && (
+              <details className="text-xs text-slate-500 dark:text-slate-400">
+                <summary className="cursor-pointer select-none hover:text-slate-700 dark:hover:text-slate-200">Transaction details</summary>
+                <div className="mt-1 space-y-1">
                   <div>
-                    Mint Tx:{' '}
-                    <span className="font-mono">{shortAddr(mintDetails.mintTx)}</span>
+                    Deposit Tx:{' '}
+                    <span className="font-mono">{shortAddr(mintDetails.depositTx)}</span>
                   </div>
-                )}
-              </div>
+                  {mintDetails.mintTx && (
+                    <div>
+                      Mint Tx:{' '}
+                      <span className="font-mono">{shortAddr(mintDetails.mintTx)}</span>
+                    </div>
+                  )}
+                </div>
+              </details>
             </div>
           )}
 
@@ -1274,7 +1328,7 @@ function BridgeProgressModal({
                 className="rounded-xl bg-orange-600 px-4 py-3 text-center font-semibold text-white shadow-sm transition hover:bg-orange-700"
                 onClick={onClose}
               >
-                Swap MAH to ALKE
+                Swap MAH for ALKE →
               </Link>
               <button
                 className="rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"

@@ -6,6 +6,7 @@ import { useThemeStore } from '../store/themeStore'
 import { FLAGS } from '../lib/flags'
 import { PRELAUNCH, isAllowedTester } from '../lib/prelaunch'
 import { useAuth } from 'amvault-connect'
+import { useSignerSessionStore } from '../store/signerSessionStore'
 import LogoJollof from '../assets/logo-jollof.svg'
 import { ethers } from 'ethers'
 import { useWalletMetaStore } from '../store/walletMetaStore'
@@ -42,6 +43,7 @@ export default function TopBar() {
   }, [init])
 
   const { session, signin, signout, status } = useAuth()
+  const { getOrCreateSignerSession, touchSignerSession, clearSignerSession } = useSignerSessionStore()
   const walletConnected = !!session
   const addr = session?.address
   const { ain, ainLoading, setAin, setAinLoading } = useWalletMetaStore()
@@ -168,7 +170,7 @@ export default function TopBar() {
         { to: '/p2p/sell', label: 'P2P Sell' },
       ]
       : []),
-    { to: '/get-alk', label: 'Get ALKE' },
+    { to: '/get-alk', label: 'Get MAH' },
     { to: '/swap', label: 'Swap' },
     { to: '/liquidity', label: 'Liquidity' },
     { to: '/tokens', label: 'Tokens' },
@@ -176,10 +178,10 @@ export default function TopBar() {
 
   const linkClass = (isActive: boolean) =>
     [
-      'relative px-3 py-2 rounded-xl text-sm font-medium transition',
+      'relative px-3 py-2 rounded-xl font-medium transition-all',
       isActive
-        ? 'text-jlfTomato bg-jlfIvory/60 dark:bg-slate-900/60'
-        : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-slate-100',
+        ? 'text-base font-semibold text-jlfTomato bg-jlfIvory/60 dark:bg-slate-900/60 shadow-sm'
+        : 'text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-slate-100',
     ].join(' ')
 
   return (
@@ -223,7 +225,19 @@ export default function TopBar() {
 
             {!walletConnected ? (
               <button
-                onClick={signin}
+                onClick={() => {
+                    const s = getOrCreateSignerSession()
+                    console.log('[Jollof] connect clicked — flowSession ready before signin()', { sessionId: s.sessionId, startedAt: s.startedAt })
+                    Promise.resolve(signin({ sessionId: s.sessionId, startedAt: s.startedAt, lastActivityAt: s.lastActivityAt, ...(s.flowId ? { flowId: s.flowId } : {}) }))
+                      .then(() => {
+                        touchSignerSession()
+                        console.log('[Jollof] signin() success — session kept', useSignerSessionStore.getState().session)
+                      })
+                      .catch(e => {
+                        clearSignerSession()
+                        console.log('[Jollof] signin() failed/cancelled — session cleared', e)
+                      })
+                  }}
                 className={btnPrimary}
                 disabled={status === 'checking'}
                 title="Connect via AmVault"
@@ -338,7 +352,21 @@ export default function TopBar() {
 
             <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">
               {!walletConnected ? (
-                <button onClick={signin} className={btnPrimary + ' w-full'} disabled={status === 'checking'}>
+                <button
+                onClick={() => {
+                  const s = getOrCreateSignerSession()
+                  console.log('[Jollof] connect clicked (mobile) — flowSession ready before signin()', { sessionId: s.sessionId, startedAt: s.startedAt })
+                  Promise.resolve(signin({ sessionId: s.sessionId, startedAt: s.startedAt, lastActivityAt: s.lastActivityAt, ...(s.flowId ? { flowId: s.flowId } : {}) }))
+                    .then(() => {
+                      touchSignerSession()
+                      console.log('[Jollof] signin() success (mobile) — session kept', useSignerSessionStore.getState().session)
+                    })
+                    .catch(e => {
+                      clearSignerSession()
+                      console.log('[Jollof] signin() failed/cancelled (mobile) — session cleared', e)
+                    })
+                }}
+                className={btnPrimary + ' w-full'} disabled={status === 'checking'}>
                   <Wallet2 className="w-4 h-4" />
                   {status === 'checking' ? 'Connecting…' : 'Connect amVault'}
                 </button>

@@ -133,7 +133,7 @@ export default function Home() {
             </p>
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <Link to="/get-alk" className={btnPrimary}>
+              <Link to="/swap?from=USDC&to=ALKE" className={btnPrimary}>
                 Get ALKE
               </Link>
               <Link to="/swap" className={btnOutline}>
@@ -150,8 +150,8 @@ export default function Home() {
           <ActionCard
             icon={<BadgeDollarSign className="w-5 h-5" />}
             title="Get ALKE"
-            desc="Onboard and fund gas so you can use the DEX."
-            to="/get-alk"
+            desc="Buy ALKE instantly with USD — no crypto experience needed."
+            to="/swap?from=USDC&to=ALKE"
           />
           <ActionCard
             icon={<ArrowLeftRight className="w-5 h-5" />}

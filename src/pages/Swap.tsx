@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
 import { useAuth } from 'amvault-connect'
 import { useSignerSession } from '../hooks/useSignerSession'
+import { useWalletConnection } from '../hooks/useWalletConnection'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { ArrowDownUp, Info, X, CircleDollarSign } from 'lucide-react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
@@ -332,9 +333,8 @@ async function getRevertReasonFromChain(
 }
 
 export default function Swap() {
-  const { session } = useAuth()
-  const walletConnected = !!session
-  const address = session?.address ?? null
+  const { session } = useAuth()  // still needed for AIN resolution in walletMetaStore
+  const { isConnected: walletConnected, address } = useWalletConnection()
 
   const { ain, ainLoading } = useWalletMetaStore()
   const { startFlow, endFlow, sessionSendTransactions, sessionSignMessage } = useSignerSession()

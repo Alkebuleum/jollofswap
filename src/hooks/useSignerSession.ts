@@ -1,14 +1,19 @@
 // src/hooks/useSignerSession.ts
 //
-// Session-aware wrappers for amvault-connect's sendTransactions and signMessage.
+// Session-aware wrappers for sendTransactions and signMessage.
 //
 // Rules:
+//   - If WalletConnect (Nuru) is active → route via wcProvider (ethers BrowserProvider)
+//   - Otherwise → use amvault-connect with signer-session metadata
+//
+// AmVault session rules:
 //   - ONE stable sessionId per 10-minute idle window (managed by signerSessionStore)
 //   - Before every AmVault call: getOrCreateSignerSession() → build session meta → inject
 //   - After every successful AmVault response: touchSignerSession()
 //   - Multi-step flows (bridge → swap): startFlow() before step 1, endFlow() in finally
 
 import { useEffect, useCallback } from 'react'
+import { BrowserProvider } from 'ethers'
 import { sendTransactions as amvSendTransactions, signMessage as amvSignMessage } from 'amvault-connect'
 import {
   useSignerSessionStore,
@@ -16,8 +21,53 @@ import {
   getRemainingMs,
   WARN_MS,
 } from '../store/signerSessionStore'
+import { useWcStore } from '../store/wcStore'
+import { getWcProvider } from '../lib/wcProvider'
 
 const WARN_POLL_MS = 15_000
+
+// ── WC transaction helpers ────────────────────────────────────────────────────
+
+function toHexValue(v: any): bigint {
+  if (v == null || v === '' || v === '0x' || v === '0x0') return 0n
+  if (typeof v === 'bigint') return v
+  if (typeof v === 'number') return BigInt(v)
+  if (typeof v === 'string') {
+    return v.startsWith('0x') ? BigInt(v) : BigInt(v)
+  }
+  return 0n
+}
+
+/** Send a list of transactions via WalletConnect (→ Nuru approval sheets). */
+async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
+  const provider = getWcProvider()
+  if (!provider) throw new Error('WalletConnect not connected')
+
+  const ethersProvider = new BrowserProvider(provider as any)
+  const signer = await ethersProvider.getSigner()
+
+  const txs: any[] = txPayload.txs ?? []
+  const results: { ok: boolean; txHash: string }[] = []
+
+  for (const tx of txs) {
+    const sent = await signer.sendTransaction({
+      to: tx.to,
+      data: tx.data ?? '0x',
+      value: toHexValue(tx.value),
+      // Include gas limit if specified so Nuru shows accurate fee estimate
+      ...(tx.gasLimit != null ? { gasLimit: BigInt(tx.gasLimit) } : {}),
+      ...(tx.gas != null && tx.gasLimit == null ? { gasLimit: BigInt(tx.gas) } : {}),
+    })
+
+    // Wait for confirmation before sending the next tx (e.g. approve → swap)
+    await sent.wait()
+    results.push({ ok: true, txHash: sent.hash })
+  }
+
+  return results
+}
+
+// ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useSignerSession() {
 
@@ -37,14 +87,10 @@ export function useSignerSession() {
 
   // ── Flow helpers ──────────────────────────────────────────────────────────
 
-  /** Start a multi-step flow — creates a new flowId, extends window if needed.
-   *  Always reuses the current sessionId. */
   const startFlow = useCallback((flowLabel?: string) => {
-    // Logging happens inside store.startFlow
     return useSignerSessionStore.getState().startFlow(flowLabel)
   }, [])
 
-  /** End the current multi-step flow — clears flowId, keeps session alive. */
   const endFlow = useCallback(() => {
     useSignerSessionStore.getState().endFlow()
     console.log('[Jollof] endFlow — flowId cleared')
@@ -52,20 +98,21 @@ export function useSignerSession() {
 
   // ── Session-aware sendTransactions ────────────────────────────────────────
 
-  /**
-   * Drop-in for amvault-connect sendTransactions.
-   * Injects session metadata at payload.session and touches session after success.
-   *
-   * @param txPayload  First arg (chainId, txs, preflight, …)
-   * @param opts       Second arg (app, amvaultUrl, keepPopupOpen)
-   * @param flowStep   Step label — 'bridge' | 'swap' | 'add_liquidity' | etc.
-   */
   const sessionSendTransactions = useCallback(async (
     txPayload: any,
     opts: { app: string; amvaultUrl: string; keepPopupOpen?: boolean },
     flowStep?: string,
   ) => {
-    // getOrCreateSignerSession logs "REUSED" or "NEW" — confirms same sessionId is in use
+    // WalletConnect path — bypass AmVault entirely
+    const { wcConnected } = useWcStore.getState()
+    if (wcConnected) {
+      console.log('[Jollof] sendTransactions via WalletConnect →', { flowStep: flowStep ?? null, txCount: txPayload?.txs?.length ?? 0 })
+      const results = await wcSendTransactions(txPayload)
+      console.log('[Jollof] sendTransactions via WalletConnect ← ok', results.map(r => r.txHash))
+      return results
+    }
+
+    // AmVault path
     const s = useSignerSessionStore.getState().getOrCreateSignerSession()
     const sessionMeta = buildSessionMeta(s, flowStep)
     const payload = { ...txPayload, session: sessionMeta }
@@ -88,14 +135,20 @@ export function useSignerSession() {
 
   // ── Session-aware signMessage ─────────────────────────────────────────────
 
-  /**
-   * Drop-in for amvault-connect signMessage.
-   * Injects session metadata at payload.session (flowStep = 'login').
-   */
   const sessionSignMessage = useCallback(async (
     msgPayload: any,
     opts: { app: string; amvaultUrl: string },
   ) => {
+    const { wcConnected } = useWcStore.getState()
+    if (wcConnected) {
+      const provider = getWcProvider()
+      if (!provider) throw new Error('WalletConnect not connected')
+      const ethersProvider = new BrowserProvider(provider as any)
+      const signer = await ethersProvider.getSigner()
+      const msg = msgPayload.message ?? msgPayload.msg ?? ''
+      return signer.signMessage(msg)
+    }
+
     const s = useSignerSessionStore.getState().getOrCreateSignerSession()
     const sessionMeta = buildSessionMeta(s, 'login')
     const payload = { ...msgPayload, session: sessionMeta }

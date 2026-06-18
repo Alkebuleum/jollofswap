@@ -62,8 +62,10 @@ async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash
 
   // Validate the wallet is on the right chain — reject Polygon txs for Nuru/WC wallets
   if (reqChainId && reqChainId !== ALK_CHAIN_ID) {
-    const hexChain: string = await eip1193.request({ method: 'eth_chainId' })
-    const currentChainId = parseInt(hexChain.replace('0x', ''), 16)
+    const rawChain = await eip1193.request({ method: 'eth_chainId' })
+    const currentChainId = typeof rawChain === 'number'
+      ? rawChain
+      : parseInt(String(rawChain).replace('0x', ''), 16)
     if (currentChainId !== reqChainId) {
       const chainName = reqChainId === POLY_CHAIN_ID ? 'Polygon' : `chain ${reqChainId}`
       // Try a chain switch first (works if the wallet supports it)

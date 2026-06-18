@@ -5,7 +5,7 @@ import { collection, getDocs, onSnapshot, orderBy, query, where, limit } from 'f
 import { db } from '../services/firebase'
 
 import { ethers } from 'ethers'
-import { useAuth } from 'amvault-connect'
+import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useSignerSession } from '../hooks/useSignerSession'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
@@ -286,9 +286,7 @@ async function getRevertReasonFromChain(provider: ethers.JsonRpcProvider, txHash
 }
 
 export default function Liquidity() {
-  const { session } = useAuth()
-  const walletConnected = !!session
-  const address = session?.address ?? null
+  const { isConnected: walletConnected, address } = useWalletConnection()
 
   const { ain, ainLoading } = useWalletMetaStore()
   const { sessionSendTransactions } = useSignerSession()
@@ -973,7 +971,7 @@ export default function Liquidity() {
     let dialogOpened = false
 
     try {
-      if (!walletConnected || !address) throw new Error('Connect amVault using the top bar to continue.')
+      if (!walletConnected || !address) throw new Error('Connect your wallet using the top bar to continue.')
       if (!ROUTER) throw new Error('Missing VITE_JOLLOF_ROUTER_ALK')
       if (tokenA === tokenB) throw new Error('Select different tokens.')
 
@@ -1158,7 +1156,7 @@ export default function Liquidity() {
     setBusy(true)
 
     try {
-      if (!walletConnected || !address) throw new Error('Connect amVault using the top bar to continue.')
+      if (!walletConnected || !address) throw new Error('Connect your wallet using the top bar to continue.')
       if (!ROUTER) throw new Error('Missing VITE_JOLLOF_ROUTER_ALK')
       if (tokenA === tokenB) throw new Error('Select different tokens.')
       if (!pairAddr || pairAddr === '—') throw new Error('No pair found for this token selection.')
@@ -1210,7 +1208,7 @@ export default function Liquidity() {
       setInfo(
         `Removing ${removePct}%: ~${fmtNum(ethers.formatUnits(outA, decA))} ${tokenA} + ~${fmtNum(
           ethers.formatUnits(outB, decB)
-        )} ${tokenB}. Confirm in amVault…`
+        )} ${tokenB}. Confirm in your wallet…`
       )
 
       const txs: any[] = []
@@ -1323,7 +1321,7 @@ export default function Liquidity() {
     setBusy(true)
 
     try {
-      if (!walletConnected || !address) throw new Error('Connect amVault to continue.')
+      if (!walletConnected || !address) throw new Error('Connect your wallet to continue.')
       if (!isAdmin) throw new Error('Admin only.')
       if (!pairAddr || pairAddr === '—') throw new Error('No pair found.')
 
@@ -1351,7 +1349,7 @@ export default function Liquidity() {
 
       const safeTxs = txs.map(normalizeTxForAmVault)
 
-      setInfo('Repair queued. Confirm in amVault…')
+      setInfo('Repair queued. Confirm in your wallet…')
 
       const results = await sessionSendTransactions(
         { chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: { flow: 'repair_pool_v1' } } as any,
@@ -1476,7 +1474,7 @@ export default function Liquidity() {
             { label: tokenA, value: balADisplay },
             { label: tokenB, value: balBDisplay },
           ]}
-          notConnectedHint="Connect amVault using the top bar to add liquidity."
+          notConnectedHint="Connect your wallet to add liquidity."
         />
 
         {/* Low MAH balance widget */}

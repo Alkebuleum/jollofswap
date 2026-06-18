@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ethers, Interface } from 'ethers'
-import { useAuth } from 'amvault-connect'
+import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useSignerSession } from '../hooks/useSignerSession'
 import WalletSummaryCard from '../components/WalletSummaryCard'
 import { useWalletMetaStore } from '../store/walletMetaStore'
@@ -72,9 +72,7 @@ function clampAmountStr(v: string) {
 }
 
 export default function GetALKE() {
-  const { session } = useAuth()
-  const walletConnected = !!session
-  const address = session?.address
+  const { isConnected: walletConnected, address } = useWalletConnection()
   const { ain, ainLoading } = useWalletMetaStore()
   const { sessionSendTransactions, sessionSignMessage } = useSignerSession()
 
@@ -301,7 +299,7 @@ export default function GetALKE() {
 
   async function onBuyWithCoinbase() {
     if (!address) {
-      setCoinbaseErr('Connect amVault first so Coinbase can send USDC to your wallet.')
+      setCoinbaseErr('Connect your wallet first so Coinbase can send USDC to your address.')
       return
     }
     setCoinbaseLoading(true)
@@ -373,7 +371,7 @@ export default function GetALKE() {
     setMintDetails(null)
 
     if (!walletConnected || !address) {
-      setBridgeErr('Connect amVault using the top bar to continue.')
+      setBridgeErr('Connect your wallet using the top bar to continue.')
       return
     }
 
@@ -576,7 +574,7 @@ export default function GetALKE() {
             { label: 'USDC', value: loadingBalances ? '…' : usdcBal },
             { label: 'MAH', value: loadingBalances ? '…' : mahBal },
           ]}
-          notConnectedHint="Connect your amVault wallet (top bar) to get started."
+          notConnectedHint="Connect your wallet to get started."
         />
         {/* What is MAH? info strip */}
         <button
@@ -906,7 +904,7 @@ export default function GetALKE() {
                 </div>
               ) : (
                 <div className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                  Connect amVault (top bar) to see your address.
+                  Connect your wallet to see your address.
                 </div>
               )}
               <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
@@ -945,7 +943,7 @@ export default function GetALKE() {
           txHash={txHash}
           mintDetails={mintDetails}
           error={bridgeDialogErr}
-          address={address}
+          address={address ?? undefined}
           usdcBal={usdcBal}
           mahBal={mahBal}
           preBridgeBals={preBridgeBals}

@@ -1,7 +1,7 @@
 // src/pages/Tokens.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers, Interface } from 'ethers'
-import { useAuth } from 'amvault-connect'
+import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useSignerSession } from '../hooks/useSignerSession'
 import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore'
 import { db } from '../services/firebase'
@@ -130,9 +130,7 @@ const FACTORY_IFACE = new Interface([
 ])
 
 export default function Tokens() {
-  const { session } = useAuth()
-  const walletConnected = !!session
-  const address = session?.address
+  const { isConnected: walletConnected, address } = useWalletConnection()
   const { sessionSendTransactions } = useSignerSession()
 
   const alkProvider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
@@ -255,7 +253,7 @@ export default function Tokens() {
   }
 
   function validateCreate(): string | null {
-    if (!walletConnected || !address) return 'Connect amVault to create a token.'
+    if (!walletConnected || !address) return 'Connect your wallet to create a token.'
     if (!factoryReady) return 'Token Factory is not configured yet.'
     const n = safeTrim(tName)
     const s = upperSym(safeTrim(tSymbol))
@@ -291,7 +289,7 @@ export default function Tokens() {
 
       const data = FACTORY_IFACE.encodeFunctionData('createToken', [name, symbol, initialSupply, owner])
 
-      setDeployInfo('Deploy queued. Confirm in amVault…')
+      setDeployInfo('Deploy queued. Confirm in your wallet…')
 
       const rawTxs = [{ to: TOKEN_FACTORY_ALK, data, value: 0n, gasLimit: 2_200_000 }]
       const txs = rawTxs.map(normalizeTxForAmVault)
@@ -369,7 +367,7 @@ export default function Tokens() {
   }
 
   function validateRegister(): string | null {
-    if (!walletConnected || !address) return 'Connect amVault first.'
+    if (!walletConnected || !address) return 'Connect your wallet first.'
     const a = safeTrim(rAddress)
     if (!ethers.isAddress(a)) return 'Token address is invalid.'
     const nm = safeTrim(rName)
@@ -580,7 +578,7 @@ export default function Tokens() {
 
           {!walletConnected && (
             <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-              Connect amVault using the top bar to create/register tokens.
+              Connect your wallet to create or register tokens.
             </div>
           )}
 

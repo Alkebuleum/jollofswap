@@ -25,6 +25,10 @@ import { ALK_CHAIN_ID, ALK_RPC, GAS_PRICE_WEI } from '../lib/jollofAmm'
 
 const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137)
 const POLY_RPC = (import.meta.env.VITE_POLY_RPC as string) ?? 'https://polygon-bor-rpc.publicnode.com'
+const FAUCET_API = (import.meta.env.VITE_FAUCET_API as string) ?? 'https://faucet.alkebuleum.com/api'
+
+// Minimum POL balance required before Polygon bridge transactions
+const MIN_POL_WEI = ethers.parseEther('0.1')
 
 const WARN_POLL_MS = 15_000
 const RECEIPT_POLL_MS = 1_500
@@ -46,6 +50,66 @@ function toHex(v: bigint | number | string): string {
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
 
+// ── Polygon POL gas top-up ────────────────────────────────────────────────────
+//
+// Mirrors the Nuru native faucet flow: if the wallet has < 0.1 POL, request a
+// signed challenge from the faucet, sign it with personal_sign, and submit.
+// This is called automatically before any Polygon bridge transaction.
+
+async function runPolyTopupIfNeeded(
+  eip1193: any,
+  address: string,
+  rpcProvider: ethers.JsonRpcProvider,
+): Promise<void> {
+  const balance = await rpcProvider.getBalance(address).catch(() => 0n)
+  if (BigInt(balance) >= MIN_POL_WEI) return
+
+  console.log('[Jollof] POL balance low — requesting faucet topup')
+
+  const challengeRes = await fetch(
+    `${FAUCET_API}/poly/topup/challenge?address=${encodeURIComponent(address)}&purpose=jswap-bridge`
+  )
+  const challenge = await challengeRes.json().catch(() => null)
+  if (!challenge?.nonce || !challenge?.deadline) {
+    throw new Error('Could not get POL gas top-up challenge. Please add POL to your wallet on Polygon.')
+  }
+
+  const msg: string = challenge.message ?? [
+    'Alkebuleum Faucet POL Topup',
+    `address:${address}`,
+    `nonce:${challenge.nonce}`,
+    `deadline:${challenge.deadline}`,
+    'purpose:jswap-bridge',
+  ].join('\n')
+
+  const msgHex = ethers.hexlify(ethers.toUtf8Bytes(msg))
+  const signature: string = await eip1193.request({ method: 'personal_sign', params: [msgHex, address] })
+
+  const submitRes = await fetch(`${FAUCET_API}/poly/topup/submit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address, nonce: challenge.nonce, deadline: challenge.deadline, signature, purpose: 'jswap-bridge' }),
+  })
+  if (!submitRes.ok) {
+    const err = await submitRes.json().catch(() => null)
+    if (submitRes.status === 429) {
+      throw new Error(`POL gas top-up rate limit reached. ${err?.message ?? 'Please add POL to your wallet on Polygon and retry.'}`)
+    }
+    throw new Error(err?.error ?? 'POL gas top-up failed. Please add POL to your wallet on Polygon.')
+  }
+
+  // Wait for balance to reflect (up to 10 seconds)
+  for (let i = 0; i < 10; i++) {
+    await sleep(1000)
+    const newBal = await rpcProvider.getBalance(address).catch(() => 0n)
+    if (BigInt(newBal) >= MIN_POL_WEI) {
+      console.log('[Jollof] POL topup confirmed')
+      return
+    }
+  }
+  throw new Error('POL top-up submitted but balance not updated yet. Please retry in a moment.')
+}
+
 // ── EIP-1193 transaction sender ───────────────────────────────────────────────
 //
 // Sends transactions via the connected wallet's EIP-1193 provider with explicit
@@ -56,66 +120,75 @@ async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash
   const eip1193 = getWcProvider() ?? (window as any).ethereum
   if (!eip1193) throw new Error('No wallet connected. Please connect your wallet first.')
 
-  // Determine which chain the transactions are for
   const reqChainId: number | undefined =
     typeof txPayload.chainId === 'number' ? txPayload.chainId : undefined
 
-  // Validate the wallet is on the right chain — reject Polygon txs for Nuru/WC wallets
-  if (reqChainId && reqChainId !== ALK_CHAIN_ID) {
+  // Switch to the required chain if needed (Alkebuleum or Polygon both supported)
+  if (reqChainId) {
     const rawChain = await eip1193.request({ method: 'eth_chainId' })
     const currentChainId = typeof rawChain === 'number'
       ? rawChain
       : parseInt(String(rawChain).replace('0x', ''), 16)
     if (currentChainId !== reqChainId) {
-      const chainName = reqChainId === POLY_CHAIN_ID ? 'Polygon' : `chain ${reqChainId}`
-      // Try a chain switch first (works if the wallet supports it)
-      try {
-        await eip1193.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: toHex(reqChainId) }],
-        })
-      } catch {
-        throw new Error(
-          reqChainId === POLY_CHAIN_ID
-            ? `Bridging USDC requires a Polygon wallet (e.g. MetaMask). Your Nuru wallet only supports Alkebuleum. Open JollofSwap in a browser with MetaMask to bridge USDC, or ensure you already have MAH on Alkebuleum to swap directly.`
-            : `This transaction requires ${chainName} but your wallet is on chain ${currentChainId}.`
-        )
-      }
+      await eip1193.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: toHex(reqChainId) }],
+      })
+      await sleep(300) // let chain switch settle in the wallet
     }
   }
 
-  // Poll receipts via public RPC — not the wallet provider (more reliable for all wallet types)
   const isPolygon = reqChainId === POLY_CHAIN_ID
   const rpcUrl = isPolygon ? POLY_RPC : ALK_RPC
   const rpcChainId = isPolygon ? POLY_CHAIN_ID : ALK_CHAIN_ID
+  // Poll receipts via public RPC — more reliable than using the wallet provider
   const rpcProvider = new ethers.JsonRpcProvider(rpcUrl, rpcChainId, { staticNetwork: true })
 
-  // Get the sender address
   const accounts: string[] = await eip1193.request({ method: 'eth_accounts' })
   const from = accounts?.[0]
   if (!from) throw new Error('No account available — connect your wallet first.')
+
+  // Ensure the wallet has enough POL for Polygon gas before submitting bridge txs
+  if (isPolygon) {
+    await runPolyTopupIfNeeded(eip1193, from, rpcProvider)
+  }
+
+  // Fetch chain gas price once for this tx batch (type-0 legacy txs on both chains)
+  let cachedGasPrice: bigint | null = null
+  async function getChainGasPrice(): Promise<bigint> {
+    if (cachedGasPrice == null) {
+      const feeData = await rpcProvider.getFeeData().catch(() => null)
+      cachedGasPrice = feeData?.gasPrice ?? (isPolygon ? 30_000_000_000n : GAS_PRICE_WEI)
+    }
+    return cachedGasPrice!
+  }
 
   const txList: any[] = txPayload.txs ?? []
   const results: { ok: boolean; txHash: string; error?: string }[] = []
 
   for (const tx of txList) {
-    // Build legacy (type-0) tx params — explicit gasPrice, no EIP-1559 fields.
-    // Alkebuleum's Besu node requires type-0 transactions.
     const gasLimit = tx.gas ?? tx.gasLimit
-    const gasPrice = tx.gasPrice != null
-      ? (typeof tx.gasPrice === 'string' && tx.gasPrice.startsWith('0x') ? tx.gasPrice : toHex(tx.gasPrice))
-      : toHex(GAS_PRICE_WEI)   // 5 gwei default
+
+    // Use explicitly provided gasPrice, otherwise fetch dynamically from the chain
+    let gasPriceHex: string
+    if (tx.gasPrice != null) {
+      gasPriceHex = typeof tx.gasPrice === 'string' && tx.gasPrice.startsWith('0x')
+        ? tx.gasPrice
+        : toHex(tx.gasPrice)
+    } else {
+      gasPriceHex = toHex(await getChainGasPrice())
+    }
 
     const txParams: Record<string, string> = {
       from,
       to: tx.to,
       data: tx.data ?? '0x',
       value: toHex(toHexValue(tx.value)),
-      gasPrice,
+      gasPrice: gasPriceHex,
     }
     if (gasLimit != null) txParams.gas = toHex(BigInt(gasLimit))
 
-    console.log('[Jollof] eth_sendTransaction →', { to: tx.to, gas: txParams.gas, chainId: reqChainId })
+    console.log('[Jollof] eth_sendTransaction →', { to: tx.to, gas: txParams.gas, gasPrice: txParams.gasPrice, chainId: reqChainId })
 
     const txHash: string = await eip1193.request({
       method: 'eth_sendTransaction',
@@ -124,7 +197,6 @@ async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash
 
     console.log('[Jollof] eth_sendTransaction ← hash', txHash)
 
-    // Poll for receipt via public RPC
     let receipt: ethers.TransactionReceipt | null = null
     for (let i = 0; i < RECEIPT_MAX_POLLS; i++) {
       receipt = await rpcProvider.getTransactionReceipt(txHash).catch(() => null)
@@ -143,6 +215,14 @@ async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash
     if (!ok && txPayload.failFast) {
       throw new Error(error ?? 'Transaction failed')
     }
+  }
+
+  // Switch back to Alkebuleum after Polygon transactions so the wallet is ready for next action
+  if (isPolygon) {
+    await eip1193.request({
+      method: 'wallet_switchEthereumChain',
+      params: [{ chainId: toHex(ALK_CHAIN_ID) }],
+    }).catch(() => {}) // non-fatal
   }
 
   return results

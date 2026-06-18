@@ -335,7 +335,7 @@ async function getRevertReasonFromChain(
 export default function Swap() {
   const { isConnected: walletConnected, address } = useWalletConnection()
 
-  const { ain, ainLoading } = useWalletMetaStore()
+  const { ain, ainLoading, aaWallet } = useWalletMetaStore()
   const { startFlow, endFlow, sessionSendTransactions, sessionSignMessage } = useSignerSession()
   const { openModal } = useConnectModalStore()
 
@@ -402,6 +402,7 @@ export default function Swap() {
   const [fromBal, setFromBal] = useState('—')
   const [fromBalNum, setFromBalNum] = useState<number>(0)
   const [toBal, setToBal] = useState('—')
+  const [polBal, setPolBal] = useState('—')
   const [loadingBalances, setLoadingBalances] = useState(false)
 
   const [slippageBps, setSlippageBps] = useState<number>(() => readSlippageBps(50))
@@ -661,11 +662,14 @@ export default function Swap() {
           setToBal('—')
           return
         }
+        // Alkebuleum balances read from AA wallet when available
+        const alkAddress = aaWallet ?? address
+
         // In USDC mode "from" is virtual — only load the "to" token balance here
         if (from === 'USDC') {
           const B = getToken(to)
           if (!B) { setToBal('—'); return }
-          const b2 = await getBalance(address, B, provider)
+          const b2 = await getBalance(alkAddress, B, provider)
           const d2 = await readDecimals(B, provider)
           if (!alive) return
           setToBal(fmtNum(ethers.formatUnits(b2, d2)))
@@ -682,8 +686,8 @@ export default function Swap() {
         }
 
         const [b1, b2] = await Promise.all([
-          getBalance(address, A, provider),
-          getBalance(address, B, provider),
+          getBalance(alkAddress, A, provider),
+          getBalance(alkAddress, B, provider),
         ])
 
         const d1 = await readDecimals(A, provider)
@@ -721,6 +725,7 @@ export default function Swap() {
         setUsdcBalNum(0)
         setMahForUsdNum(0)
         setTotalUsdNum(0)
+        setPolBal('—')
         return
       }
       // Only show spinner on the first fetch — background polls update silently
@@ -741,7 +746,8 @@ export default function Swap() {
           } catch { return 0 }
         })()
 
-        // MAH on Alkebuleum — read directly via RPC (no registry dependency)
+        // MAH on Alkebuleum — read from AA wallet if available, else EOA
+        const alkAddress = aaWallet ?? address
         const mahNum = await (async () => {
           try {
             const dec: number = Number(await provider.call({
@@ -750,16 +756,20 @@ export default function Swap() {
             }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
             const raw: bigint = BigInt(await provider.call({
               to: MAH_TOKEN_ALK,
-              data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [address]),
+              data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [alkAddress]),
             }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0]))
             return Number(ethers.formatUnits(raw, dec))
           } catch { return 0 }
         })()
 
+        const polRaw = await polyProvider.getBalance(address).catch(() => 0n)
+        const polFmt = Number(ethers.formatEther(polRaw))
+
         if (!alive) return
         setUsdcBalNum(usdcNum)
         setMahForUsdNum(mahNum)
         setTotalUsdNum(usdcNum + mahNum / MAH_PER_USDC)
+        setPolBal(polFmt.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 }))
       } catch (e) {
         console.warn('[USD bal]', e)
       } finally {
@@ -795,6 +805,23 @@ export default function Swap() {
 
         // USDC mode: route quote via MAH (USD → MAH bridge → to token swap)
         if (from === 'USDC') {
+          const usdAmt = Number(amtStr)
+          const usdcToBridge = Math.max(0, usdAmt - mahForUsdNum / MAH_PER_USDC)
+          const bridgeFee = usdcToBridge > 0
+            ? Math.min(BRIDGE_FEE_MAX_USD, Math.max(BRIDGE_FEE_MIN_USD, usdcToBridge * BRIDGE_FEE_BPS / 10000))
+            : 0
+          const netMah = mahForUsdNum + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
+          if (netMah <= 0) { setQuoteOut('—'); setMinOut('—'); return }
+
+          // USD → MAH: bridge output IS the result, no AMM step
+          if (to === 'MAH') {
+            setQuoteOut(fmtNum(netMah.toFixed(6)))
+            setMinOut(fmtNum(netMah.toFixed(6)))
+            setQuoteNoLiquidity(false)
+            setQuoteNotice(null)
+            return
+          }
+
           const mahToken = getToken('MAH')
           const B = getToken(to)
           if (!mahToken || !B) { setQuoteOut('—'); setMinOut('—'); return }
@@ -807,15 +834,6 @@ export default function Swap() {
             setMinOut('—')
             return
           }
-
-          const usdAmt = Number(amtStr)
-          // Only the USDC portion being bridged incurs a fee — existing MAH is free
-          const usdcToBridge = Math.max(0, usdAmt - mahForUsdNum / MAH_PER_USDC)
-          const bridgeFee = usdcToBridge > 0
-            ? Math.min(BRIDGE_FEE_MAX_USD, Math.max(BRIDGE_FEE_MIN_USD, usdcToBridge * BRIDGE_FEE_BPS / 10000))
-            : 0
-          const netMah = mahForUsdNum + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
-          if (netMah <= 0) { setQuoteOut('—'); setMinOut('—'); return }
 
           const mahDec = await readDecimals(mahToken, provider)
           const toDec = await readDecimals(B, provider)
@@ -952,24 +970,25 @@ export default function Swap() {
         if (amtUsd > totalUsdNum + 0.01) {
           throw new Error(`Insufficient balance. You have $${totalUsdNum.toFixed(2)}.`)
         }
-        if (quoteNoLiquidity) throw new Error('No liquidity for this pair. Add liquidity or pick another.')
 
-        const toToken = getToken(to)
-        if (!toToken) throw new Error('Token registry still loading.')
+        // USD→MAH is a pure bridge — no AMM liquidity needed
+        const isBridgeOnly = to === 'MAH'
+        if (!isBridgeOnly && quoteNoLiquidity) throw new Error('No liquidity for this pair. Add liquidity or pick another.')
 
-        // ── Correct fee math ─────────────────────────────────────────────
-        // Fee only applies to the USDC portion being bridged, not to MAH already on-chain.
-        // mahForUsdNum is in MAH units. usdcToBridge is the USDC we need to send.
-        const mahAvail = mahForUsdNum // MAH units already on Alkebuleum
+        const toToken = isBridgeOnly ? null : getToken(to)
+        if (!isBridgeOnly && !toToken) throw new Error('Token registry still loading.')
+
+        // Alkebuleum recipient: AA wallet if available, else EOA
+        const alkRecipient = aaWallet ?? address
+
+        const mahAvail = mahForUsdNum
         const usdcToBridge = Math.max(0, amtUsd - mahAvail / MAH_PER_USDC)
         const bridgeFee = usdcToBridge > 0
           ? Math.min(BRIDGE_FEE_MAX_USD, Math.max(BRIDGE_FEE_MIN_USD, usdcToBridge * BRIDGE_FEE_BPS / 10000))
           : 0
-        // netMah = existing MAH + MAH minted by bridge (after fee deducted by bridge contract)
         const netMah = mahAvail + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
         if (netMah <= 0) throw new Error('Amount too small after fees.')
 
-        // Open progress dialog — waiting state shows the two-step overview
         setSwapDialogDetails({ fromSym: 'USD', toSym: to, amountIn: amtStr, estimatedOut: quoteOut !== '—' ? quoteOut : '—', txHash: '' })
         setSwapDialogPhase('waiting')
         setSwapDialogOpen(true)
@@ -984,26 +1003,23 @@ export default function Swap() {
           }
 
           setSwapDialogPhase('bridging')
-          startFlow('bridge+swap')  // creates flowId shared across bridge + swap steps
-          const polyFeeData = await polyProvider.getFeeData()
-          const maxFeeGwei = Math.ceil(Number(ethers.formatUnits(polyFeeData.maxFeePerGas ?? 500_000_000_000n, 'gwei')))
-          const maxPrioGwei = Math.ceil(Number(ethers.formatUnits(polyFeeData.maxPriorityFeePerGas ?? 30_000_000_000n, 'gwei')))
+          startFlow(isBridgeOnly ? 'bridge' : 'bridge+swap')
 
           const usdcDec: number = Number(await polyProvider.call({
             to: USDC_POLY, data: ERC20_WRITE_IFACE.encodeFunctionData('decimals', []),
           }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
-          // Send exactly usdcToBridge — bridge contract deducts its fee internally
           const usdcAmt = ethers.parseUnits(usdcToBridge.toFixed(usdcDec), usdcDec)
 
           const bridgeResults = await sessionSendTransactions({
             chainId: POLY_CHAIN_ID,
             txs: [
-              { to: USDC_POLY, data: ERC20_WRITE_IFACE.encodeFunctionData('approve', [BRIDGEVAULT_POLY, usdcAmt]), value: 0, gas: 65_000, maxFeePerGasGwei: maxFeeGwei, maxPriorityFeePerGasGwei: maxPrioGwei },
-              { to: BRIDGEVAULT_POLY, data: BRIDGEVAULT_IFACE.encodeFunctionData('deposit', [usdcAmt, address]), value: 0, gas: 180_000, maxFeePerGasGwei: maxFeeGwei, maxPriorityFeePerGasGwei: maxPrioGwei },
+              // Gas limits: 150k approve (USDC proxy uses ~64k+), 250k deposit (vault overhead)
+              { to: USDC_POLY, data: ERC20_WRITE_IFACE.encodeFunctionData('approve', [BRIDGEVAULT_POLY, usdcAmt]), value: 0, gas: 150_000 },
+              { to: BRIDGEVAULT_POLY, data: BRIDGEVAULT_IFACE.encodeFunctionData('deposit', [usdcAmt, alkRecipient]), value: 0, gas: 250_000 },
             ],
             failFast: true,
             preflight: BRIDGE_PREFLIGHT,
-          } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL, keepPopupOpen: true }, 'bridge')
+          } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL, keepPopupOpen: !isBridgeOnly }, 'bridge')
 
           const bridgeFail = bridgeResults?.find((r: any) => r?.ok === false)
           if (bridgeFail) throw new Error(bridgeFail.error || 'Bridge transaction failed')
@@ -1026,11 +1042,10 @@ export default function Swap() {
                   if (mintHash || data?.mintedAt) return
                 }
               } catch { /* keep polling */ }
-              // Also detect via MAH balance increase
               try {
                 const raw: bigint = BigInt(await provider.call({
                   to: MAH_TOKEN_ALK,
-                  data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [address]),
+                  data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [alkRecipient]),
                 }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0]))
                 const dec: number = Number(await provider.call({
                   to: MAH_TOKEN_ALK,
@@ -1042,11 +1057,10 @@ export default function Swap() {
             }
           })()
 
-          // Read final MAH balance to know what we actually received
           try {
             const raw: bigint = BigInt(await provider.call({
               to: MAH_TOKEN_ALK,
-              data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [address]),
+              data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [alkRecipient]),
             }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0]))
             const dec: number = Number(await provider.call({
               to: MAH_TOKEN_ALK,
@@ -1055,29 +1069,33 @@ export default function Swap() {
             mahAfterBridge = Number(ethers.formatUnits(raw, dec))
             setMahForUsdNum(mahAfterBridge)
             setUsdcBalNum(prev => Math.max(0, prev - usdcToBridge))
-          } catch { /* non-fatal, swap with what we know */ }
+          } catch { /* non-fatal */ }
+        }
+
+        // ── Pure bridge: USD → MAH (no AMM swap) ────────────────────────
+        if (isBridgeOnly) {
+          setSwapDialogPhase('success')
+          return
         }
 
         // ── Swap step: MAH → to token ────────────────────────────────────
-        // Use token from registry for AMM calls; need full token object for quoting/routing
         const mahToken = getToken('MAH')
         if (!mahToken) throw new Error('MAH token not in registry.')
 
         setSwapDialogPhase('confirming')
         const mahDec = await readDecimals(mahToken, provider)
-        const toDec = await readDecimals(toToken, provider)
-        // Use actual MAH on hand (capped to netMah so we don't overspend)
+        const toDec = await readDecimals(toToken!, provider)
         const mahIn = ethers.parseUnits(Math.min(netMah, mahAfterBridge).toFixed(6), mahDec)
-        const { path, amountOut } = await getQuoteOut({ from: mahToken, to: toToken, amountIn: mahIn })
+        const { path, amountOut } = await getQuoteOut({ from: mahToken, to: toToken!, amountIn: mahIn })
         const amountOutMin = applySlippage(amountOut, slippageBps)
 
         const swapTxs: any[] = []
-        const allowance = await getAllowance(address, mahToken, ROUTER, provider)
+        const allowance = await getAllowance(alkRecipient, mahToken, ROUTER, provider)
         if (allowance < mahIn) {
           const approveTx = buildApproveTx(mahToken, ROUTER, mahIn)
           if (approveTx) swapTxs.push(approveTx)
         }
-        swapTxs.push(buildSwapTx({ from: mahToken, to: toToken, amountIn: mahIn, amountOutMin, path, recipient: address, deadlineSec: 10 * 60 }))
+        swapTxs.push(buildSwapTx({ from: mahToken, to: toToken!, amountIn: mahIn, amountOutMin, path, recipient: alkRecipient, deadlineSec: 10 * 60 }))
 
         setPreSwapBals({ from: `$${totalUsdNum.toFixed(2)}`, to: toBal })
 
@@ -1102,13 +1120,12 @@ export default function Swap() {
 
         if (lastReason) { setSwapDialogPhase('error'); setSwapDialogErr(`Swap reverted: ${lastReason}`) }
         else {
-          if (swapReceipt) await logAmmEventsFromReceipt({ provider, chainId: ALK_CHAIN_ID, receipt: swapReceipt, action: 'swap', user: address, ain: ainLoading ? null : (ain ?? null), tokenA: 'MAH', tokenB: to, pairHint: null })
+          if (swapReceipt) await logAmmEventsFromReceipt({ provider, chainId: ALK_CHAIN_ID, receipt: swapReceipt, action: 'swap', user: alkRecipient, ain: ainLoading ? null : (ain ?? null), tokenA: 'MAH', tokenB: to, pairHint: null })
           setSwapDialogPhase('success')
         }
         window.setTimeout(async () => {
-          if (!address) return
           try {
-            const b2 = await getBalance(address, toToken, provider)
+            const b2 = await getBalance(alkRecipient, toToken!, provider)
             setToBal(fmtNum(ethers.formatUnits(b2, toDec)))
           } catch { }
         }, 2500)
@@ -1133,15 +1150,18 @@ export default function Swap() {
       const { path, amountOut } = await getQuoteOut({ from: fromToken, to: toToken, amountIn })
       const amountOutMin = applySlippage(amountOut, slippageBps)
 
+      // Use AA wallet for Alkebuleum allowance checks and swap recipient
+      const alkAddress = aaWallet ?? address
+
       const txs: any[] = []
       if (!fromToken.isNative) {
-        const allowance = await getAllowance(address, fromToken, ROUTER, provider)
+        const allowance = await getAllowance(alkAddress, fromToken, ROUTER, provider)
         if (allowance < amountIn) {
           const approveTx = buildApproveTx(fromToken, ROUTER, amountIn)
           if (approveTx) txs.push(approveTx)
         }
       }
-      txs.push(buildSwapTx({ from: fromToken, to: toToken, amountIn, amountOutMin, path, recipient: address, deadlineSec: 10 * 60 }))
+      txs.push(buildSwapTx({ from: fromToken, to: toToken, amountIn, amountOutMin, path, recipient: alkAddress, deadlineSec: 10 * 60 }))
 
       setPreSwapBals({ from: fromBal, to: toBal })
       const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: txs.map(normalizeTx), failFast: true, preflight: SWAP_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'swap')
@@ -1168,13 +1188,13 @@ export default function Swap() {
 
       if (lastReason) { setSwapDialogPhase('error'); setSwapDialogErr(`Swap reverted: ${lastReason}`) }
       else {
-        if (swapReceipt) await logAmmEventsFromReceipt({ provider, chainId: ALK_CHAIN_ID, receipt: swapReceipt, action: 'swap', user: address, ain: ainLoading ? null : (ain ?? null), tokenA: from, tokenB: to, pairHint: null })
+        if (swapReceipt) await logAmmEventsFromReceipt({ provider, chainId: ALK_CHAIN_ID, receipt: swapReceipt, action: 'swap', user: alkAddress, ain: ainLoading ? null : (ain ?? null), tokenA: from, tokenB: to, pairHint: null })
         setSwapDialogPhase('success')
       }
       window.setTimeout(async () => {
         if (!address) return
         try {
-          const [b1, b2] = await Promise.all([getBalance(address, fromToken, provider), getBalance(address, toToken, provider)])
+          const [b1, b2] = await Promise.all([getBalance(alkAddress, fromToken, provider), getBalance(alkAddress, toToken, provider)])
           const fromRaw = ethers.formatUnits(b1, fromDec)
           setFromBal(fmtNum(fromRaw)); setFromBalNum(Number(fromRaw)); setToBal(fmtNum(ethers.formatUnits(b2, toDec)))
         } catch { }
@@ -1243,6 +1263,7 @@ export default function Swap() {
               ? [
                 { label: 'USD balance', value: hideBalances ? '•••' : (loadingUsdBal ? '…' : `$${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) },
                 { label: to, value: toBalDisplay },
+                { label: 'POL (gas)', value: hideBalances ? '•••' : polBal },
               ]
               : [
                 { label: from, value: fromBalDisplay },

@@ -1,15 +1,14 @@
 // src/components/MobileTabbar.tsx
 import React from 'react'
-import { Home, HandCoins, ArrowLeftRight, Droplets, Coins } from 'lucide-react'
+import { Home, ArrowLeftRight, Droplets, Coins } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
 export default function MobileTabbar() {
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200/70 bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70 dark:border-slate-800/70 dark:bg-slate-950/80 dark:supports-[backdrop-filter]:bg-slate-950/70">
       <div className="mx-auto max-w-7xl px-2">
-        <div className="grid grid-cols-5 h-16">
+        <div className="grid grid-cols-4 h-16">
           <Tab to="/" icon={<Home className="w-5 h-5" />} label="Home" />
-          <Tab to="/get-alk" icon={<HandCoins className="w-5 h-5" />} label="Get MAH" />
           <Tab to="/swap" icon={<ArrowLeftRight className="w-5 h-5" />} label="Swap" />
           <Tab to="/liquidity" icon={<Droplets className="w-5 h-5" />} label="LP" />
           <Tab to="/tokens" icon={<Coins className="w-5 h-5" />} label="Tokens" />

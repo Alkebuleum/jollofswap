@@ -1501,7 +1501,7 @@ export default function Liquidity() {
                   </div>
                 </div>
                 <Link
-                  to="/get-alk"
+                  to="/swap?from=USDC&to=MAH"
                   className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-jlfTomato px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:opacity-80 transition"
                 >
                   Get MAH

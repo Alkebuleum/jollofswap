@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import { AuthProvider } from 'amvault-connect'
 import './index.css'
 import AppLayout from './layout/AppLayout'
@@ -15,7 +15,6 @@ import Wallet from './pages/Wallet'
 import Profile from './pages/Profile'
 import Settings from './pages/Settings'
 import Support from './pages/Support'
-import GetALKE from './pages/GetALKE'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import TermsOfService from './pages/TermsOfService'
 import { TokenRegistryProvider } from './lib/tokenRegistry'
@@ -30,7 +29,7 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <Home /> },
-      { path: 'get-alk', element: <AuthGate><GetALKE /></AuthGate> },
+      { path: 'get-alk', element: <Navigate to="/swap?from=USDC&to=MAH" replace /> },
       { path: 'p2p/buy', element: <AuthGate><P2PBuy /></AuthGate> },
       { path: 'p2p/sell', element: <AuthGate><P2PSell /></AuthGate> },
       { path: 'swap', element: <Swap /> },

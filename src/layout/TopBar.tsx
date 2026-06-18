@@ -184,7 +184,6 @@ export default function TopBar() {
         { to: '/p2p/sell', label: 'P2P Sell' },
       ]
       : []),
-    { to: '/get-alk', label: 'Get MAH' },
     { to: '/swap', label: 'Swap' },
     { to: '/liquidity', label: 'Liquidity' },
     { to: '/tokens', label: 'Tokens' },

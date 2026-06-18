@@ -16,7 +16,7 @@ const LEGAL_PATHS = ['/privacy', '/terms']
 
 export default function AppLayout() {
   const { session } = useAuth()
-  const { ain, ainLoading, setAin } = useWalletMetaStore()
+  const { ain, ainLoading, setAin, setAaWallet } = useWalletMetaStore()
   const { pathname } = useLocation()
 
   // Kick off the 1-minute warning poll (no-op if already mounted)
@@ -46,6 +46,7 @@ export default function AppLayout() {
     if (!nowConnected && prevConnected.current) {
       console.log('[Jollof] wallet disconnected — clearing signer session')
       clearSignerSession()
+      setAaWallet(null)
     }
     prevConnected.current = nowConnected
   }, [!!session])
@@ -72,6 +73,7 @@ export default function AppLayout() {
           try {
             const identity = await injEth.request({ method: 'nuru_getIdentity' })
             if (identity?.ain) setAin(String(identity.ain).toUpperCase())
+            if (identity?.aaWallet) setAaWallet(String(identity.aaWallet))
           } catch { /* identity is a bonus, not required */ }
         }
       } catch { /* ignore — user will tap Connect Wallet manually */ }

@@ -3,6 +3,7 @@ import React, { useEffect, useRef } from 'react'
 import { useAuth } from 'amvault-connect'
 import TopBar from './TopBar'
 import { useWalletMetaStore } from '../store/walletMetaStore'
+import { useWcStore } from '../store/wcStore'
 import { PRELAUNCH, isAllowedTester } from '../lib/prelaunch'
 import Waitlist from '../pages/Waitlist'
 import SessionWarningModal from '../components/SessionWarningModal'
@@ -14,7 +15,7 @@ const LEGAL_PATHS = ['/privacy', '/terms']
 
 export default function AppLayout() {
   const { session } = useAuth()
-  const { ain, ainLoading } = useWalletMetaStore()
+  const { ain, ainLoading, setAin } = useWalletMetaStore()
   const { pathname } = useLocation()
 
   // Kick off the 1-minute warning poll (no-op if already mounted)
@@ -47,6 +48,42 @@ export default function AppLayout() {
     }
     prevConnected.current = nowConnected
   }, [!!session])
+  // Nuru dApp browser: silently check eth_accounts on mount.
+  // If jollofswap.com is already in Nuru's approved origins (persisted),
+  // this returns the signer address and we auto-connect with no UI.
+  useEffect(() => {
+    const injEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+    if (!injEth?._isNuruWallet) return
+    if (useWcStore.getState().wcConnected) return
+
+    ;(async () => {
+      try {
+        const accounts: string[] = await injEth.request({ method: 'eth_accounts' })
+        if (accounts?.[0]) {
+          useWcStore.getState().setWcState(true, accounts[0])
+          try {
+            const identity = await injEth.request({ method: 'nuru_getIdentity' })
+            if (identity?.ain) setAin(String(identity.ain).toUpperCase())
+          } catch { /* identity is a bonus, not required */ }
+        }
+      } catch { /* ignore — user will tap Connect Wallet manually */ }
+    })()
+  }, [])
+
+  // Keep AIN in sync if user's identity changes while JollofSwap is open.
+  useEffect(() => {
+    const injEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+    if (!injEth?._isNuruWallet) return
+
+    function onIdentityChanged(identity: any) {
+      if (identity?.ain) setAin(String(identity.ain).toUpperCase())
+      else if (identity?.ain === null) setAin(null)
+    }
+
+    injEth.on('nuruIdentityChanged', onIdentityChanged)
+    return () => injEth.off('nuruIdentityChanged', onIdentityChanged)
+  }, [setAin])
+
   const isLegalPage = LEGAL_PATHS.includes(pathname)
 
   // --- Prelaunch gate ---

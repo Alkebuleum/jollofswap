@@ -4,7 +4,8 @@
 // Open it from anywhere via: useConnectModalStore.getState().openModal()
 
 import React, { useEffect, useState } from 'react'
-import { Wallet2, Globe, X, Copy, Check, Link2 } from 'lucide-react'
+import { Wallet2, Globe, X, Copy, Check, Link2, QrCode, AlignLeft } from 'lucide-react'
+import { QRCodeSVG } from 'qrcode.react'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useWcStore } from '../store/wcStore'
 import { wcConnect, onWcUri } from '../lib/wcProvider'
@@ -20,6 +21,7 @@ export default function ConnectWalletModal() {
   const [injLoading, setInjLoading] = useState(false)
   const [injError, setInjError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [showQr, setShowQr] = useState(true)
 
   const injectedEth = typeof window !== 'undefined' ? (window as any).ethereum : null
   const isNuroBrowser = injectedEth?._isNuruWallet === true
@@ -38,6 +40,7 @@ export default function ConnectWalletModal() {
       setInjError(null)
       setInjLoading(false)
       setCopied(false)
+      setShowQr(true)
     }
   }, [open])
 
@@ -175,29 +178,76 @@ export default function ConnectWalletModal() {
               </button>
             )}
 
-            {/* Step 2: show URI inline */}
+            {/* Step 2: QR + text URI inline */}
             {wcUri && (
               <div className="mt-1">
-                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
-                  Copy this code into Nuru → More → Connect dApp:
-                </p>
-                <div className="rounded-lg bg-white ring-1 ring-slate-200 p-3 dark:bg-slate-950 dark:ring-slate-700">
-                  <p className="text-[11px] font-mono text-slate-600 dark:text-slate-400 break-all leading-relaxed select-all">
-                    {wcUri}
-                  </p>
+                {/* Toggle tabs */}
+                <div className="flex rounded-lg overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700 mb-3">
+                  <button
+                    onClick={() => setShowQr(true)}
+                    className={[
+                      'flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold transition-colors',
+                      showQr
+                        ? 'bg-violet-600 text-white'
+                        : 'bg-white text-slate-500 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800',
+                    ].join(' ')}
+                  >
+                    <QrCode className="w-3.5 h-3.5" /> QR Code
+                  </button>
+                  <button
+                    onClick={() => setShowQr(false)}
+                    className={[
+                      'flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold transition-colors',
+                      !showQr
+                        ? 'bg-violet-600 text-white'
+                        : 'bg-white text-slate-500 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800',
+                    ].join(' ')}
+                  >
+                    <AlignLeft className="w-3.5 h-3.5" /> Copy Code
+                  </button>
                 </div>
-                <button
-                  onClick={copyUri}
-                  className={[
-                    'mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all',
-                    copied
-                      ? 'bg-green-600 text-white'
-                      : 'bg-jlfTomato text-jlfIvory hover:opacity-95',
-                  ].join(' ')}
-                >
-                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  {copied ? 'Copied!' : 'Copy Code'}
-                </button>
+
+                {/* QR view */}
+                {showQr && (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200 dark:ring-slate-700">
+                      <QRCodeSVG
+                        value={wcUri}
+                        size={200}
+                        bgColor="#ffffff"
+                        fgColor="#0f172a"
+                        level="M"
+                      />
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
+                      Scan with your phone camera or Nuru dApp browser
+                    </p>
+                  </div>
+                )}
+
+                {/* Text / copy view */}
+                {!showQr && (
+                  <div>
+                    <div className="rounded-lg bg-white ring-1 ring-slate-200 p-3 dark:bg-slate-950 dark:ring-slate-700">
+                      <p className="text-[11px] font-mono text-slate-600 dark:text-slate-400 break-all leading-relaxed select-all">
+                        {wcUri}
+                      </p>
+                    </div>
+                    <button
+                      onClick={copyUri}
+                      className={[
+                        'mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all',
+                        copied
+                          ? 'bg-green-600 text-white'
+                          : 'bg-jlfTomato text-jlfIvory hover:opacity-95',
+                      ].join(' ')}
+                    >
+                      {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                      {copied ? 'Copied!' : 'Copy Code'}
+                    </button>
+                  </div>
+                )}
+
                 <p className="mt-2 text-xs text-slate-400 dark:text-slate-500 text-center">
                   Waiting for Nuru to connect…
                 </p>

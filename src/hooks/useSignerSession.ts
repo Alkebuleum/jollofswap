@@ -38,10 +38,10 @@ function toHexValue(v: any): bigint {
   return 0n
 }
 
-/** Send a list of transactions via WalletConnect (→ Nuru approval sheets). */
+/** Send a list of transactions via WalletConnect or injected window.ethereum. */
 async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
-  const provider = getWcProvider()
-  if (!provider) throw new Error('WalletConnect not connected')
+  const provider = getWcProvider() ?? (window as any).ethereum
+  if (!provider) throw new Error('No wallet provider available')
 
   const ethersProvider = new BrowserProvider(provider as any)
   const signer = await ethersProvider.getSigner()
@@ -141,8 +141,8 @@ export function useSignerSession() {
   ) => {
     const { wcConnected } = useWcStore.getState()
     if (wcConnected) {
-      const provider = getWcProvider()
-      if (!provider) throw new Error('WalletConnect not connected')
+      const provider = getWcProvider() ?? (window as any).ethereum
+      if (!provider) throw new Error('No wallet provider available')
       const ethersProvider = new BrowserProvider(provider as any)
       const signer = await ethersProvider.getSigner()
       const msg = msgPayload.message ?? msgPayload.msg ?? ''

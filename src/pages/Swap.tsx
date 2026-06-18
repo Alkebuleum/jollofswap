@@ -32,6 +32,7 @@ import { PREF, readHideBalances, readSlippageBps, writeSlippageBps } from '../li
 
 import WalletSummaryCard from '../components/WalletSummaryCard'
 import { useWalletMetaStore } from '../store/walletMetaStore'
+import { useConnectModalStore } from '../store/connectModalStore'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
@@ -338,6 +339,7 @@ export default function Swap() {
 
   const { ain, ainLoading } = useWalletMetaStore()
   const { startFlow, endFlow, sessionSendTransactions, sessionSignMessage } = useSignerSession()
+  const { openModal } = useConnectModalStore()
 
   const provider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
   const polyProvider = useMemo(() => new ethers.JsonRpcProvider(POLY_RPC, POLY_CHAIN_ID), [])
@@ -892,7 +894,7 @@ export default function Swap() {
 
 
   async function onDeposit() {
-    if (!address) { setDepositErr('Connect amVault first so Coinbase can send USDC to your wallet.'); return }
+    if (!address) { setDepositErr('Connect your wallet first so Coinbase can send USDC to your address.'); return }
     setDepositLoading(true)
     setDepositErr(null)
     try {
@@ -940,7 +942,7 @@ export default function Swap() {
     let dialogOpened = false
 
     try {
-      if (!walletConnected || !address) throw new Error('Connect amVault using the top bar to continue.')
+      if (!walletConnected || !address) throw new Error('Connect your wallet to continue.')
       if (!ROUTER) throw new Error('Missing VITE_JOLLOF_ROUTER_ALK')
       const amtStr = clampAmountStr(amount.trim())
       if (!amtStr || Number(amtStr) <= 0) throw new Error('Enter a valid amount.')
@@ -1249,7 +1251,7 @@ export default function Swap() {
                 { label: to, value: toBalDisplay },
               ]
           }
-          notConnectedHint="Connect amVault using the top bar to enable swapping."
+          notConnectedHint="Connect your wallet to see balances and swap."
         />
 
         {/* Low USD balance widget */}
@@ -1435,14 +1437,24 @@ export default function Swap() {
               )}
 
               {(() => {
+                if (!walletConnected || !address) {
+                  return (
+                    <button
+                      onClick={openModal}
+                      className="w-full rounded-xl bg-violet-600 px-4 py-3.5 font-semibold text-white shadow-sm transition hover:bg-violet-700"
+                    >
+                      Connect Wallet
+                    </button>
+                  )
+                }
                 const amtNum = Number(clampAmountStr(amount.trim()))
                 const insufficientBal = isUsdcMode
-                  ? !loadingUsdBal && walletConnected && !!address && amtNum > 0 && amtNum > totalUsdNum + 0.01
-                  : !loadingBalances && walletConnected && !!address && amtNum > 0 && amtNum > fromBalNum
+                  ? !loadingUsdBal && amtNum > 0 && amtNum > totalUsdNum + 0.01
+                  : !loadingBalances && amtNum > 0 && amtNum > fromBalNum
                 return (
                   <button
                     onClick={onSwap}
-                    disabled={!walletConnected || !address || busy || quoteNoLiquidity || insufficientBal}
+                    disabled={busy || quoteNoLiquidity || insufficientBal}
                     className="w-full rounded-xl bg-orange-600 px-4 py-3.5 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {busy

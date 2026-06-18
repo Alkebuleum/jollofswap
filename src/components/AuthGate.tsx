@@ -1,141 +1,46 @@
-import React, { useState } from 'react'
-import { Wallet2, ExternalLink, Smartphone } from 'lucide-react'
-import { useAuth } from 'amvault-connect'
-import { useWalletConnection } from '../hooks/useWalletConnection'
-import { wcConnect, onWcUri } from '../lib/wcProvider'
-import WcConnectModal from './WcConnectModal'
+// src/components/AuthGate.tsx
+//
+// Full-page wallet gate for pages that are inherently wallet-specific
+// (Wallet, Profile, P2P, GetALKE). Browse-only pages (Swap, Tokens,
+// Liquidity, Farms) no longer use this — they show content freely and
+// prompt connect only when the user tries to execute an action.
 
-const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
+import React from 'react'
+import { Wallet2 } from 'lucide-react'
+import { useWalletConnection } from '../hooks/useWalletConnection'
+import { useConnectModalStore } from '../store/connectModalStore'
 
 const btnPrimary =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-jlfTomato px-6 py-3 text-sm font-semibold text-jlfIvory shadow-sm hover:opacity-95 active:opacity-90 disabled:opacity-60'
-
-const btnOutline =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-semibold text-slate-900 ring-1 ring-slate-200 hover:bg-slate-50 active:bg-slate-100 dark:bg-slate-900 dark:text-slate-100 dark:ring-slate-700 dark:hover:bg-slate-800'
-
-const btnWc =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 active:bg-violet-800 disabled:opacity-60'
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 active:bg-violet-800'
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
-  const { session, signin, status } = useAuth()
   const { isConnected } = useWalletConnection()
+  const { openModal } = useConnectModalStore()
 
-  const [wcLoading, setWcLoading] = useState(false)
-  const [wcUri, setWcUri] = useState<string | null>(null)
-  const [wcError, setWcError] = useState<string | null>(null)
-
-  // If connected (either AmVault or WalletConnect), show protected content
   if (isConnected) return <>{children}</>
 
-  async function handleWcConnect() {
-    setWcError(null)
-    setWcLoading(true)
-    setWcUri(null)
-
-    const unsub = onWcUri((uri) => setWcUri(uri))
-
-    try {
-      await wcConnect()
-      setWcUri(null)  // connected — close the URI dialog
-    } catch (e: any) {
-      setWcError(e?.message ?? 'Connection cancelled')
-      setWcUri(null)
-    } finally {
-      unsub()
-      setWcLoading(false)
-    }
-  }
-
-  function handleCancelWc() {
-    setWcUri(null)
-    setWcLoading(false)
-    setWcError(null)
-  }
-
   return (
-    <>
-      {wcUri && <WcConnectModal uri={wcUri} onCancel={handleCancelWc} />}
-
-      <div
-        className="flex items-center justify-center px-4"
-        style={{ minHeight: 'calc(100vh - 4rem)' }}
-      >
-        <div className="w-full max-w-sm">
-          <div className="rounded-2xl bg-white ring-1 ring-slate-200 p-8 shadow-sm dark:bg-slate-950 dark:ring-slate-800">
-            <div className="mx-auto w-14 h-14 rounded-2xl bg-jlfIvory ring-1 ring-slate-200 grid place-content-center text-jlfTomato mb-5 dark:bg-slate-900 dark:ring-slate-700">
-              <Wallet2 className="w-7 h-7" />
-            </div>
-
-            <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 text-center">
-              Connect a wallet to continue
-            </h2>
-
-            <p className="mt-2 text-sm text-slate-600 leading-relaxed dark:text-slate-400 text-center">
-              JollofSwap runs on Alkebuleum. Every user gets an{' '}
-              <span className="font-semibold text-slate-800 dark:text-slate-200">AIN</span>
-              {' '}(African Identity Number) — your permanent on-chain identity.
-            </p>
-
-            {/* Nuru wallet via WalletConnect */}
-            <div className="mt-6 rounded-xl bg-violet-50 ring-1 ring-violet-100 p-4 dark:bg-violet-950/30 dark:ring-violet-800/50">
-              <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide dark:text-violet-400">
-                Use Nuru Wallet
-              </p>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                Connect via WalletConnect — open Nuru, go to <strong>More → Connect dApp</strong>.
-              </p>
-              <button
-                onClick={handleWcConnect}
-                disabled={wcLoading}
-                className={btnWc + ' mt-3 w-full'}
-              >
-                <Smartphone className="w-4 h-4" />
-                {wcLoading ? 'Connecting…' : 'Connect Nuru Wallet'}
-              </button>
-              {wcError && (
-                <p className="mt-2 text-xs text-red-600 dark:text-red-400">{wcError}</p>
-              )}
-            </div>
-
-            {/* AmVault option */}
-            <div className="mt-3 rounded-xl bg-slate-50 ring-1 ring-slate-100 p-4 dark:bg-slate-900/60 dark:ring-slate-800">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide dark:text-slate-400">
-                Already have an AIN?
-              </p>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                Open your amVault and connect to this app.
-              </p>
-              <button
-                onClick={() => signin()}
-                disabled={status === 'checking'}
-                className={btnPrimary + ' mt-3 w-full'}
-              >
-                <Wallet2 className="w-4 h-4" />
-                {status === 'checking' ? 'Connecting…' : 'Connect amVault'}
-              </button>
-            </div>
-
-            {/* New user */}
-            <div className="mt-3 rounded-xl bg-slate-50 ring-1 ring-slate-100 p-4 dark:bg-slate-900/60 dark:ring-slate-800">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide dark:text-slate-400">
-                New to Alkebuleum?
-              </p>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                Sign up on amVault to get your AIN — it's free.
-              </p>
-              <a
-                href={AMVAULT_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={btnOutline + ' mt-3 w-full'}
-              >
-                <ExternalLink className="w-4 h-4" />
-                Sign up on amVault
-              </a>
-            </div>
+    <div
+      className="flex items-center justify-center px-4"
+      style={{ minHeight: 'calc(100vh - 4rem)' }}
+    >
+      <div className="w-full max-w-sm">
+        <div className="rounded-2xl bg-white ring-1 ring-slate-200 p-8 shadow-sm dark:bg-slate-950 dark:ring-slate-800 text-center">
+          <div className="mx-auto w-14 h-14 rounded-2xl bg-orange-50 ring-1 ring-orange-100 grid place-content-center text-jlfTomato mb-5 dark:bg-slate-900 dark:ring-slate-700">
+            <Wallet2 className="w-7 h-7" />
           </div>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">
+            Connect a wallet to continue
+          </h2>
+          <p className="mt-2 text-sm text-slate-600 leading-relaxed dark:text-slate-400">
+            This page requires a connected wallet.
+          </p>
+          <button onClick={openModal} className={btnPrimary + ' mt-6 w-full'}>
+            <Wallet2 className="w-4 h-4" />
+            Connect Wallet
+          </button>
         </div>
       </div>
-    </>
+    </div>
   )
 }

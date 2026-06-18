@@ -6,6 +6,7 @@ import { useWalletMetaStore } from '../store/walletMetaStore'
 import { PRELAUNCH, isAllowedTester } from '../lib/prelaunch'
 import Waitlist from '../pages/Waitlist'
 import SessionWarningModal from '../components/SessionWarningModal'
+import ConnectWalletModal from '../components/ConnectWalletModal'
 import { useSignerSessionStore } from '../store/signerSessionStore'
 import { useSignerSession } from '../hooks/useSignerSession'
 
@@ -57,6 +58,7 @@ export default function AppLayout() {
   return (
     <div className="min-h-screen flex flex-col bg-jlfIvory text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <SessionWarningModal />
+      <ConnectWalletModal />
       <TopBar />
 
       <main className="flex-1">

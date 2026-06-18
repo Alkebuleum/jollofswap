@@ -12,6 +12,7 @@ import { ethers } from 'ethers'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { wcDisconnect } from '../lib/wcProvider'
+import { useConnectModalStore } from '../store/connectModalStore'
 
 
 function shortAddr(a?: string) {
@@ -44,9 +45,10 @@ export default function TopBar() {
     init()
   }, [init])
 
-  const { session, signin, signout, status } = useAuth()
-  const { getOrCreateSignerSession, touchSignerSession, clearSignerSession } = useSignerSessionStore()
+  const { session, signout } = useAuth()
+  const { clearSignerSession } = useSignerSessionStore()
   const { isConnected: walletConnected, address: wcAddr, connectionType } = useWalletConnection()
+  const { openModal } = useConnectModalStore()
   // addr: prefer session.address for AmVault; wcAddr for WalletConnect
   const addr = (session as any)?.address ?? wcAddr ?? undefined
   const { ain, ainLoading, setAin, setAinLoading } = useWalletMetaStore()
@@ -236,29 +238,10 @@ export default function TopBar() {
             )}
 
             {!walletConnected ? (
-              <button
-                onClick={() => {
-                    const s = getOrCreateSignerSession()
-                    console.log('[Jollof] connect clicked — flowSession ready before signin()', { sessionId: s.sessionId, startedAt: s.startedAt })
-                    Promise.resolve(signin({ sessionId: s.sessionId, startedAt: s.startedAt, lastActivityAt: s.lastActivityAt, ...(s.flowId ? { flowId: s.flowId } : {}) }))
-                      .then(() => {
-                        touchSignerSession()
-                        console.log('[Jollof] signin() success — session kept', useSignerSessionStore.getState().session)
-                      })
-                      .catch(e => {
-                        clearSignerSession()
-                        console.log('[Jollof] signin() failed/cancelled — session cleared', e)
-                      })
-                  }}
-                className={btnPrimary}
-                disabled={status === 'checking'}
-                title="Connect via AmVault"
-              >
+              <button onClick={openModal} className={btnPrimary}>
                 <Wallet2 className="w-4 h-4" />
-                <span className="hidden sm:inline">
-                  {status === 'checking' ? 'Connecting…' : 'Connect amVault'}
-                </span>
-                <span className="sm:hidden">{status === 'checking' ? '…' : 'Connect'}</span>
+                <span className="hidden sm:inline">Connect Wallet</span>
+                <span className="sm:hidden">Connect</span>
               </button>
             ) : (
               <>
@@ -368,23 +351,9 @@ export default function TopBar() {
 
             <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">
               {!walletConnected ? (
-                <button
-                onClick={() => {
-                  const s = getOrCreateSignerSession()
-                  console.log('[Jollof] connect clicked (mobile) — flowSession ready before signin()', { sessionId: s.sessionId, startedAt: s.startedAt })
-                  Promise.resolve(signin({ sessionId: s.sessionId, startedAt: s.startedAt, lastActivityAt: s.lastActivityAt, ...(s.flowId ? { flowId: s.flowId } : {}) }))
-                    .then(() => {
-                      touchSignerSession()
-                      console.log('[Jollof] signin() success (mobile) — session kept', useSignerSessionStore.getState().session)
-                    })
-                    .catch(e => {
-                      clearSignerSession()
-                      console.log('[Jollof] signin() failed/cancelled (mobile) — session cleared', e)
-                    })
-                }}
-                className={btnPrimary + ' w-full'} disabled={status === 'checking'}>
+                <button onClick={openModal} className={btnPrimary + ' w-full'}>
                   <Wallet2 className="w-4 h-4" />
-                  {status === 'checking' ? 'Connecting…' : 'Connect amVault'}
+                  Connect Wallet
                 </button>
               ) : (
                 <div className="rounded-2xl ring-1 ring-slate-200 bg-white p-3 dark:ring-slate-700 dark:bg-slate-950">

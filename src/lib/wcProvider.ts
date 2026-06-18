@@ -42,8 +42,8 @@ async function createProvider() {
     metadata: {
       name: 'JollofSwap',
       description: 'Decentralised exchange on Alkebuleum',
-      url: 'https://app.jollofswap.com',
-      icons: ['https://app.jollofswap.com/favicon.svg'],
+      url: 'https://jollofswap.com',
+      icons: ['https://jollofswap.com/favicon.svg'],
     },
   })
 

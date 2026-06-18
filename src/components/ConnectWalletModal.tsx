@@ -4,15 +4,11 @@
 // Open it from anywhere via: useConnectModalStore.getState().openModal()
 
 import React, { useEffect, useState } from 'react'
-import { Wallet2, Smartphone, Globe, X } from 'lucide-react'
+import { Wallet2, Globe, X, Copy, Check, Link2 } from 'lucide-react'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useWcStore } from '../store/wcStore'
 import { wcConnect, onWcUri } from '../lib/wcProvider'
 import { useConnectModalStore } from '../store/connectModalStore'
-import WcConnectModal from './WcConnectModal'
-
-const btnWc =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 active:bg-violet-800 disabled:opacity-60'
 
 export default function ConnectWalletModal() {
   const { open, closeModal } = useConnectModalStore()
@@ -23,6 +19,7 @@ export default function ConnectWalletModal() {
   const [wcError, setWcError] = useState<string | null>(null)
   const [injLoading, setInjLoading] = useState(false)
   const [injError, setInjError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const injectedEth = typeof window !== 'undefined' ? (window as any).ethereum : null
   const isNuroBrowser = injectedEth?._isNuruWallet === true
@@ -32,18 +29,30 @@ export default function ConnectWalletModal() {
     if (isConnected && open) closeModal()
   }, [isConnected, open, closeModal])
 
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!open) {
+      setWcUri(null)
+      setWcError(null)
+      setWcLoading(false)
+      setInjError(null)
+      setInjLoading(false)
+      setCopied(false)
+    }
+  }, [open])
+
   if (!open) return null
 
   async function handleWcConnect() {
     setWcError(null)
-    setWcLoading(true)
     setWcUri(null)
+    setWcLoading(true)
     const unsub = onWcUri((uri) => setWcUri(uri))
     try {
       await wcConnect()
       setWcUri(null)
     } catch (e: any) {
-      setWcError(e?.message ?? 'Connection cancelled')
+      setWcError(e?.message ?? 'Connection cancelled or timed out.')
       setWcUri(null)
     } finally {
       unsub()
@@ -66,84 +75,149 @@ export default function ConnectWalletModal() {
     }
   }
 
+  async function copyUri() {
+    if (!wcUri) return
+    try {
+      await navigator.clipboard.writeText(wcUri)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = wcUri
+      ta.style.cssText = 'position:fixed;left:-9999px;top:0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   return (
-    <>
-      {wcUri && <WcConnectModal uri={wcUri} onCancel={() => { setWcUri(null); setWcLoading(false) }} />}
-
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      onClick={closeModal}
+    >
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-        onClick={closeModal}
+        className="relative w-full max-w-sm rounded-2xl bg-white ring-1 ring-slate-200 shadow-2xl p-8 dark:bg-slate-950 dark:ring-slate-800"
+        onClick={(e) => e.stopPropagation()}
       >
-        <div
-          className="relative w-full max-w-sm rounded-2xl bg-white ring-1 ring-slate-200 shadow-2xl p-8 dark:bg-slate-950 dark:ring-slate-800"
-          onClick={(e) => e.stopPropagation()}
+        <button
+          onClick={closeModal}
+          className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500"
+          aria-label="Close"
         >
-          <button
-            onClick={closeModal}
-            className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500"
-            aria-label="Close"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <X className="w-4 h-4" />
+        </button>
 
-          <div className="mx-auto w-14 h-14 rounded-2xl bg-orange-50 ring-1 ring-orange-100 grid place-content-center text-jlfTomato mb-5 dark:bg-slate-900 dark:ring-slate-700">
-            <Wallet2 className="w-7 h-7" />
-          </div>
+        <div className="mx-auto w-14 h-14 rounded-2xl bg-orange-50 ring-1 ring-orange-100 grid place-content-center text-jlfTomato mb-5 dark:bg-slate-900 dark:ring-slate-700">
+          <Wallet2 className="w-7 h-7" />
+        </div>
 
-          <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 text-center">
-            Connect Wallet
-          </h2>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 text-center">
-            Connect your Nuru wallet to start swapping on Alkebuleum.
-          </p>
+        <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 text-center">
+          Connect Wallet
+        </h2>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 text-center">
+          {isNuroBrowser
+            ? 'You\'re inside the Nuru wallet — connect directly.'
+            : 'Connect your Nuru wallet to start swapping.'}
+        </p>
 
-          {/* Nuru browser — injected window.ethereum */}
-          {isNuroBrowser && (
-            <div className="mt-6 rounded-xl bg-violet-50 ring-1 ring-violet-100 p-4 dark:bg-violet-950/30 dark:ring-violet-800/50">
+        {/* ── Nuru browser: direct injected connect ── */}
+        {isNuroBrowser && (
+          <div className="mt-6 rounded-xl bg-violet-50 ring-1 ring-violet-100 p-4 dark:bg-violet-950/30 dark:ring-violet-800/50">
+            <div className="flex items-center gap-2 mb-2">
+              <Globe className="w-4 h-4 text-violet-600 dark:text-violet-400" />
               <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide dark:text-violet-400">
                 Nuru Browser
               </p>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                You're inside the Nuru wallet — connect directly.
-              </p>
-              <button
-                onClick={handleInjectedConnect}
-                disabled={injLoading}
-                className={btnWc + ' mt-3 w-full'}
-              >
-                <Globe className="w-4 h-4" />
-                {injLoading ? 'Connecting…' : 'Connect Nuru Wallet'}
-              </button>
-              {injError && (
-                <p className="mt-2 text-xs text-red-600 dark:text-red-400">{injError}</p>
-              )}
             </div>
-          )}
+            <button
+              onClick={handleInjectedConnect}
+              disabled={injLoading}
+              className="w-full rounded-xl bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 active:bg-violet-800 disabled:opacity-60"
+            >
+              {injLoading ? 'Connecting…' : 'Connect Directly'}
+            </button>
+            {injError && (
+              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{injError}</p>
+            )}
+          </div>
+        )}
 
-          {/* WalletConnect — shown when NOT in the Nuru browser */}
-          {!isNuroBrowser && (
-            <div className="mt-6 rounded-xl bg-violet-50 ring-1 ring-violet-100 p-4 dark:bg-violet-950/30 dark:ring-violet-800/50">
-              <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide dark:text-violet-400">
-                Nuru Wallet
+        {/* ── External browser: WalletConnect ── */}
+        {!isNuroBrowser && (
+          <div className="mt-6 rounded-xl bg-slate-50 ring-1 ring-slate-200 p-4 dark:bg-slate-900 dark:ring-slate-700">
+            <div className="flex items-center gap-2 mb-1">
+              <Link2 className="w-4 h-4 text-slate-500 dark:text-slate-400" />
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide dark:text-slate-400">
+                WalletConnect
               </p>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                Connect via WalletConnect — open Nuru, go to <strong>More → Connect dApp</strong>.
-              </p>
+            </div>
+            <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">
+              Open Nuru → <strong className="text-slate-800 dark:text-slate-200">More → Connect dApp</strong>, then paste the code.
+            </p>
+
+            {/* Step 1: generate button */}
+            {!wcUri && (
               <button
                 onClick={handleWcConnect}
                 disabled={wcLoading}
-                className={btnWc + ' mt-3 w-full'}
+                className="w-full rounded-xl bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 active:bg-violet-800 disabled:opacity-60 flex items-center justify-center gap-2"
               >
-                <Smartphone className="w-4 h-4" />
-                {wcLoading ? 'Connecting…' : 'Connect Nuru Wallet'}
+                {wcLoading ? (
+                  <>
+                    <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                    Generating code…
+                  </>
+                ) : (
+                  'Get Connection Code'
+                )}
               </button>
-              {wcError && (
-                <p className="mt-2 text-xs text-red-600 dark:text-red-400">{wcError}</p>
-              )}
-            </div>
-          )}
-        </div>
+            )}
+
+            {/* Step 2: show URI inline */}
+            {wcUri && (
+              <div className="mt-1">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                  Copy this code into Nuru → More → Connect dApp:
+                </p>
+                <div className="rounded-lg bg-white ring-1 ring-slate-200 p-3 dark:bg-slate-950 dark:ring-slate-700">
+                  <p className="text-[11px] font-mono text-slate-600 dark:text-slate-400 break-all leading-relaxed select-all">
+                    {wcUri}
+                  </p>
+                </div>
+                <button
+                  onClick={copyUri}
+                  className={[
+                    'mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all',
+                    copied
+                      ? 'bg-green-600 text-white'
+                      : 'bg-jlfTomato text-jlfIvory hover:opacity-95',
+                  ].join(' ')}
+                >
+                  {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  {copied ? 'Copied!' : 'Copy Code'}
+                </button>
+                <p className="mt-2 text-xs text-slate-400 dark:text-slate-500 text-center">
+                  Waiting for Nuru to connect…
+                </p>
+              </div>
+            )}
+
+            {wcError && (
+              <div className="mt-3 rounded-lg bg-red-50 ring-1 ring-red-200 p-3 dark:bg-red-950/30 dark:ring-red-800/50">
+                <p className="text-xs text-red-600 dark:text-red-400">{wcError}</p>
+                <button
+                  onClick={handleWcConnect}
+                  className="mt-2 text-xs font-semibold text-violet-600 hover:underline dark:text-violet-400"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-    </>
+    </div>
   )
 }

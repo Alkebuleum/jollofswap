@@ -28,5 +28,5 @@ npm run dev
 ## Push to Git
 git status
 git add -A
-git commit -m "gated signup, improve UX"
+git commit -m "adoption friendly UX"
 git push

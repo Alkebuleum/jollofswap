@@ -10,6 +10,7 @@ import SessionWarningModal from '../components/SessionWarningModal'
 import ConnectWalletModal from '../components/ConnectWalletModal'
 import { useSignerSessionStore } from '../store/signerSessionStore'
 import { useSignerSession } from '../hooks/useSignerSession'
+import { tryRestoreWcSession } from '../lib/wcProvider'
 
 const LEGAL_PATHS = ['/privacy', '/terms']
 
@@ -48,6 +49,13 @@ export default function AppLayout() {
     }
     prevConnected.current = nowConnected
   }, [!!session])
+  // External browser WalletConnect: restore persisted WC session after page refresh.
+  useEffect(() => {
+    const injEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+    if (injEth?._isNuruWallet) return  // handled by Nuru auto-connect below
+    tryRestoreWcSession()
+  }, [])
+
   // Nuru dApp browser: silently check eth_accounts on mount.
   // If jollofswap.com is already in Nuru's approved origins (persisted),
   // this returns the signer address and we auto-connect with no UI.

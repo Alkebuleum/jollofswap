@@ -316,7 +316,7 @@ export default function GetALKE() {
         throw new Error(challengeData?.error || 'Failed to get auth challenge.')
       }
 
-      // Step 2: Sign the challenge message via amvault
+      // Step 2: Sign the challenge message via wallet
       const signature = await sessionSignMessage(
         { chainId: ALK_CHAIN_ID, message: challengeData.message },
         { app: APP_NAME, amvaultUrl: AMVAULT_URL },

@@ -112,3 +112,22 @@ export async function wcDisconnect(): Promise<void> {
   }
   clearProvider()
 }
+
+/**
+ * Called once on app load. If a WalletConnect session was established in a
+ * previous page load, restore it silently so wcStore reflects the connection
+ * without requiring the user to re-pair.
+ */
+export async function tryRestoreWcSession(): Promise<void> {
+  if (useWcStore.getState().wcConnected) return   // already connected
+  try {
+    const p = await getOrInitWcProvider()
+    // accounts is populated by WC if a persisted session exists
+    if (p.accounts && p.accounts.length > 0) {
+      useWcStore.getState().setWcState(true, p.accounts[0])
+      console.log('[WC] session restored from storage →', p.accounts[0])
+    }
+  } catch {
+    // No persisted session — user will need to connect manually
+  }
+}

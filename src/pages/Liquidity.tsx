@@ -100,7 +100,7 @@ function hexValue(v: any): string {
   return '0x0'
 }
 
-function normalizeTxForAmVault(tx: any) {
+function normalizeTx(tx: any) {
   const out: any = { ...tx }
   out.value = hexValue(out?.value ?? 0)
 
@@ -1045,7 +1045,7 @@ export default function Liquidity() {
       })
       txs.push(addTx)
 
-      const safeTxs = txs.map(normalizeTxForAmVault)
+      const safeTxs = txs.map(normalizeTx)
 
       // Snapshot balances before sending
       setPreAddBals({ a: balA, b: balB })
@@ -1231,7 +1231,7 @@ export default function Liquidity() {
         })
       )
 
-      const safeTxs = txs.map(normalizeTxForAmVault)
+      const safeTxs = txs.map(normalizeTx)
 
       const results = await sessionSendTransactions(
         {
@@ -1347,7 +1347,7 @@ export default function Liquidity() {
       // sync() to update reserves
       txs.push({ to: pairAddr, data: PAIR_SYNC_IFACE.encodeFunctionData('sync', []), value: 0n })
 
-      const safeTxs = txs.map(normalizeTxForAmVault)
+      const safeTxs = txs.map(normalizeTx)
 
       setInfo('Repair queued. Confirm in your wallet…')
 

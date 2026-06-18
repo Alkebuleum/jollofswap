@@ -98,7 +98,7 @@ function hexValue(v: any): string {
   return '0x0'
 }
 
-function normalizeTxForAmVault(tx: any) {
+function normalizeTx(tx: any) {
   const out: any = { ...tx }
 
   // value -> hex string (never BigInt)
@@ -292,7 +292,7 @@ export default function Tokens() {
       setDeployInfo('Deploy queued. Confirm in your wallet…')
 
       const rawTxs = [{ to: TOKEN_FACTORY_ALK, data, value: 0n, gasLimit: 2_200_000 }]
-      const txs = rawTxs.map(normalizeTxForAmVault)
+      const txs = rawTxs.map(normalizeTx)
 
       const results = await sessionSendTransactions(
         {
@@ -477,7 +477,7 @@ export default function Tokens() {
       const feeWei = ethers.parseEther(String(REGISTRY_FEE_AKE)) // AKE has 18 decimals
 
       const rawTxs = [{ to: REGISTRY_TREASURY_ALK, value: feeWei, gasLimit: 80_000 }]
-      const txs = rawTxs.map(normalizeTxForAmVault)
+      const txs = rawTxs.map(normalizeTx)
 
       const payRes = await sessionSendTransactions(
         {

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
-import { useAuth } from 'amvault-connect'
 import { useSignerSession } from '../hooks/useSignerSession'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
@@ -236,7 +235,7 @@ function hexValue(v: any): string {
   return '0x0'
 }
 
-function normalizeTxForAmVault(tx: any) {
+function normalizeTx(tx: any) {
   const out: any = { ...tx }
   out.value = hexValue(out?.value ?? 0)
 
@@ -334,7 +333,6 @@ async function getRevertReasonFromChain(
 }
 
 export default function Swap() {
-  const { session } = useAuth()  // still needed for AIN resolution in walletMetaStore
   const { isConnected: walletConnected, address } = useWalletConnection()
 
   const { ain, ainLoading } = useWalletMetaStore()
@@ -1084,7 +1082,7 @@ export default function Swap() {
         setPreSwapBals({ from: `$${totalUsdNum.toFixed(2)}`, to: toBal })
 
         const swapResults = await sessionSendTransactions({
-          chainId: ALK_CHAIN_ID, txs: swapTxs.map(normalizeTxForAmVault), failFast: true, preflight: SWAP_PREFLIGHT,
+          chainId: ALK_CHAIN_ID, txs: swapTxs.map(normalizeTx), failFast: true, preflight: SWAP_PREFLIGHT,
         } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'swap')
 
         const swapFail = swapResults?.find((r: any) => r?.ok === false)
@@ -1146,7 +1144,7 @@ export default function Swap() {
       txs.push(buildSwapTx({ from: fromToken, to: toToken, amountIn, amountOutMin, path, recipient: address, deadlineSec: 10 * 60 }))
 
       setPreSwapBals({ from: fromBal, to: toBal })
-      const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: txs.map(normalizeTxForAmVault), failFast: true, preflight: SWAP_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'swap')
+      const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: txs.map(normalizeTx), failFast: true, preflight: SWAP_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'swap')
 
       const firstFail = results?.find((r: any) => r?.ok === false)
       if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
@@ -1586,7 +1584,7 @@ function SwapProgressModal({
   const usdSteps: Array<{ label: string; sublabel?: string; done: boolean; active: boolean }> = [
     {
       label: 'Signature 1 — Bridge',
-      sublabel: phase === 'bridging' ? 'Sign in amvault to send USDC to the bridge' : (phase === 'minting' || phase === 'confirming' || isDone) && details.txHash ? `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}` : undefined,
+      sublabel: phase === 'bridging' ? 'Confirm in your wallet to send USDC to the bridge' : (phase === 'minting' || phase === 'confirming' || isDone) && details.txHash ? `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}` : undefined,
       done: phase === 'minting' || phase === 'confirming' || isDone,
       active: phase === 'waiting' || phase === 'bridging',
     },
@@ -1598,7 +1596,7 @@ function SwapProgressModal({
     },
     {
       label: 'Signature 2 — Swap',
-      sublabel: phase === 'confirming' ? 'amvault will open again — sign to complete the swap' : isDone && details.txHash ? `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}` : undefined,
+      sublabel: phase === 'confirming' ? 'Confirm in your wallet to complete the swap' : isDone && details.txHash ? `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}` : undefined,
       done: isDone,
       active: phase === 'confirming',
     },

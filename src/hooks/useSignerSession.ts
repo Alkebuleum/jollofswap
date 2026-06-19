@@ -35,6 +35,7 @@ const MIN_POL_WEI = ethers.parseEther('0.1')
 const WARN_POLL_MS = 15_000
 const RECEIPT_POLL_MS = 1_500
 const RECEIPT_MAX_POLLS = 80
+const TX_SIGN_TIMEOUT_MS = 180_000  // 3 min — if Nuru doesn't respond, tell the user
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -85,7 +86,12 @@ async function runPolyTopupIfNeeded(
   ].join('\n')
 
   const msgHex = ethers.hexlify(ethers.toUtf8Bytes(msg))
-  const signature: string = await eip1193.request({ method: 'personal_sign', params: [msgHex, address] })
+  const signature: string = await Promise.race([
+    eip1193.request({ method: 'personal_sign', params: [msgHex, address] }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Nuru did not respond. Open Nuru to approve the signature request.')), TX_SIGN_TIMEOUT_MS)
+    ),
+  ])
 
   const submitRes = await fetch(`${FAUCET_API}/poly/topup/submit`, {
     method: 'POST',
@@ -209,10 +215,15 @@ async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash
 
     console.log('[Jollof] eth_sendTransaction →', { to: tx.to, gas: txParams.gas, gasPrice: txParams.gasPrice, chainId: reqChainId })
 
-    const txHash: string = await eip1193.request({
-      method: 'eth_sendTransaction',
-      params: [txParams],
-    })
+    const txHash: string = await Promise.race([
+      eip1193.request({ method: 'eth_sendTransaction', params: [txParams] }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() =>
+          reject(new Error('Nuru did not respond in time. Open Nuru and check for a pending approval, then try again.')),
+          TX_SIGN_TIMEOUT_MS
+        )
+      ),
+    ])
 
     console.log('[Jollof] eth_sendTransaction ← hash', txHash)
 
@@ -327,7 +338,12 @@ export function useSignerSession() {
       const msg: string = msgPayload.message ?? msgPayload.msg ?? ''
       // Encode as UTF-8 hex for personal_sign (wallet adds EIP-191 prefix internally)
       const msgHex = ethers.hexlify(ethers.toUtf8Bytes(msg))
-      const sig = await eip1193.request({ method: 'personal_sign', params: [msgHex, from] })
+      const sig = await Promise.race([
+        eip1193.request({ method: 'personal_sign', params: [msgHex, from] }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Nuru did not respond. Open Nuru to approve the signature request.')), TX_SIGN_TIMEOUT_MS)
+        ),
+      ])
       return sig
     }
 

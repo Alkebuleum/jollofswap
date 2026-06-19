@@ -15,7 +15,7 @@
 import { EthereumProvider } from '@walletconnect/ethereum-provider'
 import { useWcStore } from '../store/wcStore'
 
-const WC_PROJECT_ID = '168f9f4e2a2a6b550ff1466c8beecfd4'
+const WC_PROJECT_ID = (import.meta.env.VITE_WC_PROJECT_ID as string) ?? '168f9f4e2a2a6b550ff1466c8beecfd4'
 const ALK_CHAIN_ID = Number(import.meta.env.VITE_ALK_CHAIN_ID ?? 237422)
 
 let _provider: InstanceType<typeof EthereumProvider> | null = null
@@ -27,6 +27,19 @@ const _uriListeners = new Set<UriListener>()
 export function onWcUri(cb: UriListener): () => void {
   _uriListeners.add(cb)
   return () => _uriListeners.delete(cb)
+}
+
+// Session-expired listeners — fires when WC session drops unexpectedly
+type SessionDropListener = () => void
+const _sessionDropListeners = new Set<SessionDropListener>()
+
+export function onWcSessionDrop(cb: SessionDropListener): () => void {
+  _sessionDropListeners.add(cb)
+  return () => _sessionDropListeners.delete(cb)
+}
+
+function notifySessionDrop() {
+  _sessionDropListeners.forEach((cb) => cb())
 }
 
 function clearProvider() {
@@ -55,8 +68,9 @@ async function createProvider() {
     }
   })
 
-  p.on('disconnect', () => clearProvider())
-  p.on('session_delete', () => clearProvider())
+  p.on('disconnect', () => { clearProvider(); notifySessionDrop() })
+  p.on('session_delete', () => { clearProvider(); notifySessionDrop() })
+  ;(p as any).on('session_expire', () => { clearProvider(); notifySessionDrop() })
 
   return p
 }

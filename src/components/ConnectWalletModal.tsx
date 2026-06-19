@@ -1,71 +1,83 @@
 // src/components/ConnectWalletModal.tsx
-//
-// Global connect-wallet modal. Mounted once in AppLayout.
-// Open it from anywhere via: useConnectModalStore.getState().openModal()
-
 import React, { useEffect, useState } from 'react'
-import { Wallet2, Globe, X, Copy, Check, Link2, QrCode, AlignLeft } from 'lucide-react'
+import { X, Copy, Check, QrCode, AlignLeft } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useWcStore } from '../store/wcStore'
-import { wcConnect, onWcUri } from '../lib/wcProvider'
+import { wcConnect, onWcUri, onWcSessionDrop } from '../lib/wcProvider'
 import { useConnectModalStore } from '../store/connectModalStore'
 
+const MarkIcon = () => (
+  <svg width="28" height="28" viewBox="0 0 30 30" fill="none">
+    <circle cx="11" cy="15" r="6.5" stroke="#CB5A33" strokeWidth="2.4"/>
+    <circle cx="19" cy="15" r="6.5" stroke="#CB5A33" strokeWidth="2.4"/>
+  </svg>
+)
+
 export default function ConnectWalletModal() {
-  const { open, closeModal } = useConnectModalStore()
+  const { open, closeModal, openModal } = useConnectModalStore()
   const { isConnected } = useWalletConnection()
 
   const [wcLoading, setWcLoading] = useState(false)
-  const [wcUri, setWcUri] = useState<string | null>(null)
-  const [wcError, setWcError] = useState<string | null>(null)
+  const [wcUri, setWcUri]         = useState<string | null>(null)
+  const [wcError, setWcError]     = useState<string | null>(null)
   const [injLoading, setInjLoading] = useState(false)
-  const [injError, setInjError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [showQr, setShowQr] = useState(true)
+  const [injError, setInjError]   = useState<string | null>(null)
+  const [copied, setCopied]       = useState(false)
+  const [showQr, setShowQr]       = useState(true)
+  const [sessionDropped, setSessionDropped] = useState(false)
 
-  const injectedEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+  const injectedEth  = typeof window !== 'undefined' ? (window as any).ethereum : null
   const isNuroBrowser = injectedEth?._isNuruWallet === true
 
-  // Auto-close once wallet is connected
+  // Auto-close once connected
   useEffect(() => {
-    if (isConnected && open) closeModal()
-  }, [isConnected, open, closeModal])
+    if (isConnected && open) { closeModal(); setSessionDropped(false) }
+  }, [isConnected, open])
 
   // Reset state when modal closes
   useEffect(() => {
     if (!open) {
-      setWcUri(null)
-      setWcError(null)
-      setWcLoading(false)
-      setInjError(null)
-      setInjLoading(false)
-      setCopied(false)
-      setShowQr(true)
+      setWcUri(null); setWcError(null); setWcLoading(false)
+      setInjError(null); setInjLoading(false)
+      setCopied(false); setShowQr(true)
     }
   }, [open])
+
+  // Listen for unexpected WC session drop — re-open modal with a message
+  useEffect(() => {
+    const unsub = onWcSessionDrop(() => {
+      setSessionDropped(true)
+      openModal()
+    })
+    return unsub
+  }, [])
 
   if (!open) return null
 
   async function handleWcConnect() {
-    setWcError(null)
-    setWcUri(null)
-    setWcLoading(true)
+    setWcError(null); setWcUri(null); setWcLoading(true)
     const unsub = onWcUri((uri) => setWcUri(uri))
     try {
       await wcConnect()
       setWcUri(null)
     } catch (e: any) {
-      setWcError(e?.message ?? 'Connection cancelled or timed out.')
+      const msg = e?.message ?? ''
+      setWcError(
+        msg.includes('cancelled') || msg.includes('rejected')
+          ? 'Connection rejected in Nuru. Try again.'
+          : msg.includes('timed out') || msg.includes('timeout')
+          ? 'Connection timed out. Make sure Nuru is open and try again.'
+          : 'Connection failed. Try again.'
+      )
       setWcUri(null)
     } finally {
-      unsub()
-      setWcLoading(false)
+      unsub(); setWcLoading(false)
     }
   }
 
   async function handleInjectedConnect() {
-    setInjError(null)
-    setInjLoading(true)
+    setInjError(null); setInjLoading(true)
     try {
       const accounts: string[] = await injectedEth.request({ method: 'eth_requestAccounts' })
       const address = accounts?.[0]
@@ -80,193 +92,174 @@ export default function ConnectWalletModal() {
 
   async function copyUri() {
     if (!wcUri) return
-    try {
-      await navigator.clipboard.writeText(wcUri)
-    } catch {
+    try { await navigator.clipboard.writeText(wcUri) }
+    catch {
       const ta = document.createElement('textarea')
-      ta.value = wcUri
-      ta.style.cssText = 'position:fixed;left:-9999px;top:0'
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
+      ta.value = wcUri; ta.style.cssText = 'position:fixed;left:-9999px;top:0'
+      document.body.appendChild(ta); ta.select()
+      document.execCommand('copy'); document.body.removeChild(ta)
     }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    setCopied(true); setTimeout(() => setCopied(false), 2000)
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
-      onClick={closeModal}
-    >
+    <div className="jlf-overlay open" onClick={closeModal}>
       <div
-        className="relative w-full max-w-sm rounded-2xl bg-white ring-1 ring-slate-200 shadow-2xl p-8 dark:bg-slate-950 dark:ring-slate-800"
+        className="jlf-modal"
+        style={{ maxWidth: 420, width: '100%', padding: 0, overflow: 'hidden' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <button
-          onClick={closeModal}
-          className="absolute top-4 right-4 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500"
-          aria-label="Close"
-        >
-          <X className="w-4 h-4" />
-        </button>
-
-        <div className="mx-auto w-14 h-14 rounded-2xl bg-orange-50 ring-1 ring-orange-100 grid place-content-center text-jlfTomato mb-5 dark:bg-slate-900 dark:ring-slate-700">
-          <Wallet2 className="w-7 h-7" />
+        {/* Header */}
+        <div style={{ padding: '22px 22px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--line)', display: 'grid', placeItems: 'center' }}>
+              <MarkIcon />
+            </div>
+            <div>
+              <div style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 700, fontSize: 17, color: 'var(--white)' }}>Connect Nuru</div>
+              <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 1 }}>
+                {isNuroBrowser ? 'Direct browser connection' : 'Via WalletConnect'}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={closeModal}
+            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid var(--line)', background: 'none', color: 'var(--muted)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
+          >
+            <X size={15} />
+          </button>
         </div>
 
-        <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 text-center">
-          Connect Wallet
-        </h2>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 text-center">
-          {isNuroBrowser
-            ? 'You\'re inside the Nuru wallet — connect directly.'
-            : 'Connect your Nuru wallet to start swapping.'}
-        </p>
+        <div style={{ padding: '18px 22px 24px' }}>
 
-        {/* ── Nuru browser: direct injected connect ── */}
-        {isNuroBrowser && (
-          <div className="mt-6 rounded-xl bg-violet-50 ring-1 ring-violet-100 p-4 dark:bg-violet-950/30 dark:ring-violet-800/50">
-            <div className="flex items-center gap-2 mb-2">
-              <Globe className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-              <p className="text-xs font-semibold text-violet-700 uppercase tracking-wide dark:text-violet-400">
-                Nuru Browser
-              </p>
+          {/* Session dropped banner */}
+          {sessionDropped && (
+            <div style={{ marginBottom: 16, padding: '11px 14px', borderRadius: 12, background: 'rgba(255,90,60,.1)', border: '1px solid rgba(255,90,60,.25)', fontSize: 13, color: 'var(--red)' }}>
+              Your Nuru session disconnected. Reconnect below.
             </div>
-            <button
-              onClick={handleInjectedConnect}
-              disabled={injLoading}
-              className="w-full rounded-xl bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 active:bg-violet-800 disabled:opacity-60"
-            >
-              {injLoading ? 'Connecting…' : 'Connect Directly'}
-            </button>
-            {injError && (
-              <p className="mt-2 text-xs text-red-600 dark:text-red-400">{injError}</p>
-            )}
-          </div>
-        )}
+          )}
 
-        {/* ── External browser: WalletConnect ── */}
-        {!isNuroBrowser && (
-          <div className="mt-6 rounded-xl bg-slate-50 ring-1 ring-slate-200 p-4 dark:bg-slate-900 dark:ring-slate-700">
-            <div className="flex items-center gap-2 mb-1">
-              <Link2 className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide dark:text-slate-400">
-                WalletConnect
+          {/* ── Nuru browser: direct injected connect ── */}
+          {isNuroBrowser && (
+            <div style={{ padding: '16px', borderRadius: 16, background: 'var(--surface)', border: '1px solid var(--line)' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted-2)', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 10 }}>Nuru Browser</div>
+              <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.5 }}>
+                You're inside the Nuru app — connect directly with one tap.
               </p>
-            </div>
-            <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">
-              Open Nuru → <strong className="text-slate-800 dark:text-slate-200">More → Connect dApp</strong>, then paste the code.
-            </p>
-
-            {/* Step 1: generate button */}
-            {!wcUri && (
               <button
-                onClick={handleWcConnect}
-                disabled={wcLoading}
-                className="w-full rounded-xl bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 active:bg-violet-800 disabled:opacity-60 flex items-center justify-center gap-2"
+                onClick={handleInjectedConnect}
+                disabled={injLoading}
+                className="jlf-action"
+                style={{ width: '100%', opacity: injLoading ? .6 : 1 }}
               >
-                {wcLoading ? (
-                  <>
-                    <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                    Generating code…
-                  </>
-                ) : (
-                  'Get Connection Code'
-                )}
+                {injLoading ? 'Connecting…' : 'Connect Directly'}
               </button>
-            )}
+              {injError && (
+                <p style={{ marginTop: 10, fontSize: 12.5, color: 'var(--red)' }}>{injError}</p>
+              )}
+            </div>
+          )}
 
-            {/* Step 2: QR + text URI inline */}
-            {wcUri && (
-              <div className="mt-1">
-                {/* Toggle tabs */}
-                <div className="flex rounded-lg overflow-hidden ring-1 ring-slate-200 dark:ring-slate-700 mb-3">
-                  <button
-                    onClick={() => setShowQr(true)}
-                    className={[
-                      'flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold transition-colors',
-                      showQr
-                        ? 'bg-violet-600 text-white'
-                        : 'bg-white text-slate-500 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800',
-                    ].join(' ')}
-                  >
-                    <QrCode className="w-3.5 h-3.5" /> QR Code
+          {/* ── External browser: WalletConnect ── */}
+          {!isNuroBrowser && (
+            <div style={{ padding: '16px', borderRadius: 16, background: 'var(--surface)', border: '1px solid var(--line)' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted-2)', textTransform: 'uppercase', letterSpacing: '.07em', marginBottom: 10 }}>WalletConnect</div>
+
+              {/* Step 1 — generate code */}
+              {!wcUri && !wcLoading && (
+                <>
+                  <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.55 }}>
+                    Open <strong style={{ color: 'var(--white)' }}>Nuru</strong> on your phone →{' '}
+                    <strong style={{ color: 'var(--white)' }}>More → Connect dApp</strong>, then scan the QR or paste the code.
+                  </p>
+                  <button onClick={handleWcConnect} className="jlf-action" style={{ width: '100%' }}>
+                    Get Connection Code
                   </button>
-                  <button
-                    onClick={() => setShowQr(false)}
-                    className={[
-                      'flex-1 inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold transition-colors',
-                      !showQr
-                        ? 'bg-violet-600 text-white'
-                        : 'bg-white text-slate-500 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800',
-                    ].join(' ')}
-                  >
-                    <AlignLeft className="w-3.5 h-3.5" /> Copy Code
-                  </button>
+                </>
+              )}
+
+              {/* Generating… spinner */}
+              {wcLoading && !wcUri && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '20px 0', color: 'var(--muted)' }}>
+                  <div className="jlf-spin" style={{ width: 18, height: 18 }} />
+                  <span style={{ fontSize: 13.5 }}>Generating code…</span>
                 </div>
+              )}
 
-                {/* QR view */}
-                {showQr && (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="rounded-xl bg-white p-3 ring-1 ring-slate-200 dark:ring-slate-700">
-                      <QRCodeSVG
-                        value={wcUri}
-                        size={200}
-                        bgColor="#ffffff"
-                        fgColor="#0f172a"
-                        level="M"
-                      />
-                    </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
-                      Scan with your phone camera or Nuru dApp browser
-                    </p>
+              {/* Step 2 — QR + copy tabs */}
+              {wcUri && (
+                <div>
+                  {/* Tab toggle */}
+                  <div style={{ display: 'flex', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--line)', marginBottom: 14 }}>
+                    {[{ id: true, icon: <QrCode size={13} />, label: 'QR Code' }, { id: false, icon: <AlignLeft size={13} />, label: 'Copy Code' }].map(({ id, icon, label }) => (
+                      <button
+                        key={String(id)}
+                        onClick={() => setShowQr(id)}
+                        style={{
+                          flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                          padding: '8px 0', fontSize: 12.5, fontWeight: 700, border: 'none', cursor: 'pointer',
+                          background: showQr === id ? 'var(--red)' : 'transparent',
+                          color: showQr === id ? '#fff' : 'var(--muted)',
+                          transition: '.14s',
+                        }}
+                      >
+                        {icon} {label}
+                      </button>
+                    ))}
                   </div>
-                )}
 
-                {/* Text / copy view */}
-                {!showQr && (
-                  <div>
-                    <div className="rounded-lg bg-white ring-1 ring-slate-200 p-3 dark:bg-slate-950 dark:ring-slate-700">
-                      <p className="text-[11px] font-mono text-slate-600 dark:text-slate-400 break-all leading-relaxed select-all">
-                        {wcUri}
+                  {/* QR view */}
+                  {showQr && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                      <div style={{ borderRadius: 14, background: '#fff', padding: 12, border: '1px solid var(--line)' }}>
+                        <QRCodeSVG value={wcUri} size={190} bgColor="#ffffff" fgColor="#0A0A0B" level="M" />
+                      </div>
+                      <p style={{ fontSize: 12, color: 'var(--muted-2)', textAlign: 'center' }}>
+                        Scan with your Nuru app camera
                       </p>
                     </div>
-                    <button
-                      onClick={copyUri}
-                      className={[
-                        'mt-2 w-full inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all',
-                        copied
-                          ? 'bg-green-600 text-white'
-                          : 'bg-jlfTomato text-jlfIvory hover:opacity-95',
-                      ].join(' ')}
-                    >
-                      {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                      {copied ? 'Copied!' : 'Copy Code'}
-                    </button>
-                  </div>
-                )}
+                  )}
 
-                <p className="mt-2 text-xs text-slate-400 dark:text-slate-500 text-center">
-                  Waiting for Nuru to connect…
-                </p>
-              </div>
-            )}
+                  {/* Copy view */}
+                  {!showQr && (
+                    <div>
+                      <div style={{ borderRadius: 10, background: 'var(--leg)', border: '1px solid var(--line)', padding: '10px 12px', marginBottom: 10 }}>
+                        <p style={{ fontFamily: '"DM Mono"', fontSize: 11, color: 'var(--muted)', wordBreak: 'break-all', lineHeight: 1.6, userSelect: 'all' }}>
+                          {wcUri}
+                        </p>
+                      </div>
+                      <button
+                        onClick={copyUri}
+                        className="jlf-action"
+                        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: copied ? 'var(--green)' : undefined }}
+                      >
+                        {copied ? <Check size={15} /> : <Copy size={15} />}
+                        {copied ? 'Copied!' : 'Copy Code'}
+                      </button>
+                    </div>
+                  )}
 
-            {wcError && (
-              <div className="mt-3 rounded-lg bg-red-50 ring-1 ring-red-200 p-3 dark:bg-red-950/30 dark:ring-red-800/50">
-                <p className="text-xs text-red-600 dark:text-red-400">{wcError}</p>
-                <button
-                  onClick={handleWcConnect}
-                  className="mt-2 text-xs font-semibold text-violet-600 hover:underline dark:text-violet-400"
-                >
-                  Try again
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+                  <p style={{ marginTop: 12, fontSize: 12, color: 'var(--muted-2)', textAlign: 'center' }}>
+                    Waiting for Nuru to connect… your phone will prompt you.
+                  </p>
+                </div>
+              )}
+
+              {/* Error */}
+              {wcError && (
+                <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 12, background: 'rgba(255,90,60,.08)', border: '1px solid rgba(255,90,60,.2)' }}>
+                  <p style={{ fontSize: 13, color: 'var(--red)', marginBottom: 8 }}>{wcError}</p>
+                  <button
+                    onClick={handleWcConnect}
+                    style={{ fontSize: 13, fontWeight: 700, color: 'var(--white)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

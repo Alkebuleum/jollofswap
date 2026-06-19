@@ -22,6 +22,8 @@ import {
 import { useWcStore } from '../store/wcStore'
 import { getWcProvider } from '../lib/wcProvider'
 import { ALK_CHAIN_ID, ALK_RPC, GAS_PRICE_WEI } from '../lib/jollofAmm'
+import { aaExecuteTransactions } from '../lib/aaOrchestrator'
+import { useWalletMetaStore } from '../store/walletMetaStore'
 
 const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137)
 const POLY_RPC = (import.meta.env.VITE_POLY_RPC as string) ?? 'https://polygon-bor-rpc.publicnode.com'
@@ -139,6 +141,7 @@ async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash
   }
 
   const isPolygon = reqChainId === POLY_CHAIN_ID
+  const isAlkebuleum = reqChainId === ALK_CHAIN_ID
   const rpcUrl = isPolygon ? POLY_RPC : ALK_RPC
   const rpcChainId = isPolygon ? POLY_CHAIN_ID : ALK_CHAIN_ID
   // Poll receipts via public RPC — more reliable than using the wallet provider
@@ -153,7 +156,25 @@ async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash
     await runPolyTopupIfNeeded(eip1193, from, rpcProvider)
   }
 
-  // Fetch chain gas price once for this tx batch (type-0 legacy txs on both chains)
+  const txList: any[] = txPayload.txs ?? []
+
+  // ── AA wallet path (Alkebuleum only) ─────────────────────────────────────
+  // When the user has an AA wallet registered, all Alkebuleum transactions are
+  // routed through aaWallet.execute() (primary key) or the relay (linked signer).
+  // Polygon bridge transactions always go direct-EOA regardless.
+  const { aaWallet } = useWalletMetaStore.getState()
+  if (isAlkebuleum && aaWallet) {
+    console.log('[Jollof] AA path → aaWallet', aaWallet, 'signer', from)
+    const aaResults = await aaExecuteTransactions({
+      aaWallet,
+      signerAddress: from,
+      eip1193,
+      innerTxs: txList,
+    })
+    return aaResults
+  }
+
+  // ── Direct EOA path (Polygon bridge + fallback when no AA wallet) ─────────
   let cachedGasPrice: bigint | null = null
   async function getChainGasPrice(): Promise<bigint> {
     if (cachedGasPrice == null) {
@@ -163,13 +184,11 @@ async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash
     return cachedGasPrice!
   }
 
-  const txList: any[] = txPayload.txs ?? []
   const results: { ok: boolean; txHash: string; error?: string }[] = []
 
   for (const tx of txList) {
     const gasLimit = tx.gas ?? tx.gasLimit
 
-    // Use explicitly provided gasPrice, otherwise fetch dynamically from the chain
     let gasPriceHex: string
     if (tx.gasPrice != null) {
       gasPriceHex = typeof tx.gasPrice === 'string' && tx.gasPrice.startsWith('0x')

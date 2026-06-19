@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
 import { collection, getDocs, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
 import { db } from '../services/firebase'
+import { ensureFirebaseGuest } from '../services/firebaseGuest'
 
 import { ethers } from 'ethers'
 import { useWalletConnection } from '../hooks/useWalletConnection'
@@ -29,18 +30,17 @@ import {
   quote,
 } from '../lib/jollofAmm'
 import { routerIface } from '../lib/jollofAmm'
-import { ArrowDownUp, CircleDollarSign } from 'lucide-react'
-import ModernPriceChart from '../components/ModernPriceChart'
-import WalletSummaryCard from '../components/WalletSummaryCard'
+import { ArrowDownUp } from 'lucide-react'
 import { readHideBalances, readSlippageBps, writeSlippageBps, PREF } from '../lib/prefs'
 import { useWalletMetaStore } from '../store/walletMetaStore'
+import { useConnectModalStore } from '../store/connectModalStore'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 
 const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
 const WAKE = (import.meta.env.VITE_WAKE_ALK as string) ?? ''
-const MIN_POOL_RESERVE_HUMAN = '0.01' // per side, tune
+const MIN_POOL_RESERVE_HUMAN = '0.01'
 
 const STABLE_SYM = ((import.meta.env.VITE_USD_STABLE as string) ?? 'MAH').toUpperCase()
 const STABLE_USD_PRICE = Number(import.meta.env.VITE_USD_STABLE_PRICE ?? 0.01)
@@ -69,59 +69,51 @@ const PAIR_META_IFACE_LIQ = new ethers.Interface([
   'function token0() view returns (address)',
   'function token1() view returns (address)',
 ])
-const PAIR_RES_IFACE_LIQ = new ethers.Interface([
-  'function getReserves() view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)',
-])
 
 const FACTORY_ABI = ['function protocolTreasury() view returns (address)']
 const ERC20_XFER_IFACE = new ethers.Interface(['function transfer(address to,uint256 value) returns (bool)'])
 const PAIR_SYNC_IFACE = new ethers.Interface(['function sync()'])
 
 function buildErc20TransferTx(tokenAddr: string, to: string, amount: bigint) {
-  return {
-    to: tokenAddr,
-    data: ERC20_XFER_IFACE.encodeFunctionData('transfer', [to, amount]),
-    value: 0n,
-  }
+  return { to: tokenAddr, data: ERC20_XFER_IFACE.encodeFunctionData('transfer', [to, amount]), value: 0n }
 }
 
-
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms))
+const TOKEN_COLORS_LIQ: Record<string, string> = {
+  ALKE: 'linear-gradient(135deg,#8B5CF6,#a78bfa)',
+  MAH:  'linear-gradient(135deg,#F7B53B,#e09c25)',
+  JLF:  'linear-gradient(135deg,#FF5A3C,#ff7a4d)',
+  USDC: 'linear-gradient(135deg,#2775CA,#4a93e8)',
+  USDT: 'linear-gradient(135deg,#26A17B,#3fc497)',
+  WAKE: 'linear-gradient(135deg,#8B5CF6,#c4b5fd)',
 }
+const TOKEN_GLYPHS_LIQ: Record<string, string> = {
+  ALKE: 'A', MAH: 'M', JLF: 'J', USDC: '$', USDT: '₮', WAKE: 'W',
+}
+function tColor(s: string) { return TOKEN_COLORS_LIQ[s.toUpperCase()] || 'linear-gradient(135deg,var(--red),var(--gold))' }
+function tGlyph(s: string) { return TOKEN_GLYPHS_LIQ[s.toUpperCase()] || s.slice(0, 1).toUpperCase() }
 
-// ✅ Never pass BigInt to sendTransactions (it may JSON-serialize internally)
+function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)) }
+
 function hexValue(v: any): string {
   if (v == null) return '0x0'
   if (typeof v === 'bigint') return ethers.toBeHex(v)
   if (typeof v === 'number') return ethers.toBeHex(BigInt(v))
-  if (typeof v === 'string') return v // assume already hex/decimal
+  if (typeof v === 'string') return v
   return '0x0'
 }
 
 function normalizeTx(tx: any) {
   const out: any = { ...tx }
   out.value = hexValue(out?.value ?? 0)
-
   const isRouter = (out?.to || '').toLowerCase() === (ROUTER || '').toLowerCase()
-
-  // Defaults (match your console TX / TX8)
   const defaultGasLimit = isRouter ? 8_000_000 : 2_000_000
-  const defaultGasPrice = 5_000_000_000n // 5 gwei
-
-  // gasLimit / gas
+  const defaultGasPrice = 5_000_000_000n
   if (out.gasLimit == null && out.gas == null) out.gasLimit = defaultGasLimit
   if (typeof out.gasLimit === 'bigint') out.gasLimit = Number(out.gasLimit)
   if (out.gas == null) out.gas = out.gasLimit
   if (typeof out.gas === 'bigint') out.gas = Number(out.gas)
-
-  // gasPrice
   out.gasPrice = hexValue(out.gasPrice ?? defaultGasPrice)
-
-  // force legacy type 0 on Besu
   out.type = 0
-
   return out
 }
 
@@ -139,7 +131,6 @@ const PAIR_ABI = [
   'function token1() view returns (address)',
   'function getReserves() view returns (uint112,uint112,uint32)',
 ]
-
 const ERC20_ABI = [
   'function approve(address spender, uint256 value) returns (bool)',
   'function allowance(address owner, address spender) view returns (uint256)',
@@ -152,148 +143,56 @@ const routerTxIface2 = new ethers.Interface([
 
 function buildLpApproveTx(pairAddr: string, spender: string, amount: bigint) {
   const i = new ethers.Interface(ERC20_ABI)
-  return {
-    to: pairAddr,
-    data: i.encodeFunctionData('approve', [spender, amount]),
-    value: 0n,
-  }
+  return { to: pairAddr, data: i.encodeFunctionData('approve', [spender, amount]), value: 0n }
 }
 
 function buildRemoveLiquidityTx(args: {
-  tokenA: any
-  tokenB: any
-  liquidity: bigint
-  amountAMin: bigint
-  amountBMin: bigint
-  recipient: string
-  deadlineSec: number
+  tokenA: any; tokenB: any; liquidity: bigint; amountAMin: bigint; amountBMin: bigint; recipient: string; deadlineSec: number
 }) {
   const { tokenA, tokenB, liquidity, amountAMin, amountBMin, recipient, deadlineSec } = args
   const deadline = Math.floor(Date.now() / 1000) + deadlineSec
-
   const AisNative = !!tokenA.isNative
   const BisNative = !!tokenB.isNative
-
   if (AisNative && BisNative) throw new Error('Invalid pair: both tokens are native.')
-
-  // If one side is native => use removeLiquidityETH(token, liquidity, tokenMin, ethMin, to, deadline)
   if (AisNative !== BisNative) {
     const erc20Side = AisNative ? tokenB : tokenA
-    const tokenAddr = tokenAddressForPath(erc20Side) // maps AKE->WAKE, others->address
-
+    const tokenAddr = tokenAddressForPath(erc20Side)
     const amountTokenMin = AisNative ? amountBMin : amountAMin
     const amountETHMin = AisNative ? amountAMin : amountBMin
-
-    return {
-      to: ROUTER,
-      data: routerTxIface2.encodeFunctionData('removeLiquidityETH', [
-        tokenAddr,
-        liquidity,
-        amountTokenMin,
-        amountETHMin,
-        recipient,
-        BigInt(deadline),
-      ]),
-      value: 0n,
-    }
+    return { to: ROUTER, data: routerTxIface2.encodeFunctionData('removeLiquidityETH', [tokenAddr, liquidity, amountTokenMin, amountETHMin, recipient, BigInt(deadline)]), value: 0n }
   }
-
-  // Both ERC20 => removeLiquidity(tokenA, tokenB, liquidity, minA, minB, to, deadline)
-  const addrA = tokenAddressForPath(tokenA)
-  const addrB = tokenAddressForPath(tokenB)
-
-  return {
-    to: ROUTER,
-    data: routerTxIface2.encodeFunctionData('removeLiquidity', [
-      addrA,
-      addrB,
-      liquidity,
-      amountAMin,
-      amountBMin,
-      recipient,
-      BigInt(deadline),
-    ]),
-    value: 0n,
-  }
+  return { to: ROUTER, data: routerTxIface2.encodeFunctionData('removeLiquidity', [tokenAddressForPath(tokenA), tokenAddressForPath(tokenB), liquidity, amountAMin, amountBMin, recipient, BigInt(deadline)]), value: 0n }
 }
 
 function pickRevertData(err: any): string | null {
-  const candidates = [
-    err?.data,
-    err?.error?.data,
-    err?.info?.error?.data,
-    err?.info?.error?.data?.data,
-    err?.info?.error?.data?.result,
-    err?.revert?.data,
-    err?.error?.revert?.data,
-  ]
-  for (const c of candidates) {
-    if (typeof c === 'string' && c.startsWith('0x')) return c
-  }
+  const candidates = [err?.data, err?.error?.data, err?.info?.error?.data, err?.info?.error?.data?.data, err?.info?.error?.data?.result, err?.revert?.data, err?.error?.revert?.data]
+  for (const c of candidates) { if (typeof c === 'string' && c.startsWith('0x')) return c }
   return null
 }
 
 function tryDecodeRevert(err: any): string {
   const data = pickRevertData(err)
   if (!data) return err?.shortMessage || err?.message || 'Reverted (no data)'
-
-  // Custom errors
-  try {
-    const parsed = routerIface.parseError(data)
-    if (parsed) {
-      const args = Array.from(parsed.args ?? []).map(String).join(', ')
-      return `RouterError: ${parsed.name}(${args})`
-    }
-  } catch { }
-
-  // Error(string)
-  try {
-    if (data.slice(0, 10) === '0x08c379a0') {
-      const reason = ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + data.slice(10))[0]
-      return `Error: ${reason}`
-    }
-  } catch { }
-
-  // Panic(uint256)
-  try {
-    if (data.slice(0, 10) === '0x4e487b71') {
-      const code = ethers.AbiCoder.defaultAbiCoder().decode(['uint256'], '0x' + data.slice(10))[0]
-      return `Panic: ${code.toString()}`
-    }
-  } catch { }
-
+  try { const parsed = routerIface.parseError(data); if (parsed) return `RouterError: ${parsed.name}(${Array.from(parsed.args ?? []).map(String).join(', ')})` } catch { }
+  try { if (data.slice(0, 10) === '0x08c379a0') return `Error: ${ethers.AbiCoder.defaultAbiCoder().decode(['string'], '0x' + data.slice(10))[0]}` } catch { }
+  try { if (data.slice(0, 10) === '0x4e487b71') return `Panic: ${ethers.AbiCoder.defaultAbiCoder().decode(['uint256'], '0x' + data.slice(10))[0].toString()}` } catch { }
   return `Reverted (data=${data.slice(0, 18)}…)`
 }
 
 async function getRevertReasonFromChain(provider: ethers.JsonRpcProvider, txHash: string): Promise<string | null> {
   const tx = await provider.getTransaction(txHash)
   const receipt = await provider.getTransactionReceipt(txHash)
-  if (!tx || !receipt) return null
-  if (receipt.status === 1) return null
-
-  try {
-    await provider.call({
-      to: tx.to ?? undefined,
-      from: tx.from,
-      data: tx.data,
-      value: tx.value ?? 0n,
-      blockTag: receipt.blockNumber,
-    })
-    return null
-  } catch (e: any) {
-    return tryDecodeRevert(e)
-  }
+  if (!tx || !receipt || receipt.status === 1) return null
+  try { await provider.call({ to: tx.to ?? undefined, from: tx.from, data: tx.data, value: tx.value ?? 0n, blockTag: receipt.blockNumber }); return null } catch (e: any) { return tryDecodeRevert(e) }
 }
 
 export default function Liquidity() {
   const { isConnected: walletConnected, address } = useWalletConnection()
-
   const { ain, ainLoading } = useWalletMetaStore()
   const { sessionSendTransactions } = useSignerSession()
-
+  const openConnectModal = useConnectModalStore(s => s.openModal)
 
   const provider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
-
   const enabled = useMemo(() => enabledTokenKeys(), [])
   const defaultA = enabled.includes('MAH') ? ('MAH' as TokenKey) : enabled[0]
   const defaultB = enabled.includes('ALKE') ? ('ALKE' as TokenKey) : enabled[1] ?? enabled[0]
@@ -307,7 +206,6 @@ export default function Liquidity() {
   const firstAddTimeRef = useRef<number | null>(null)
 
   const [lastEdited, setLastEdited] = useState<'A' | 'B'>('A')
-
   const [rawReserveA, setRawReserveA] = useState<bigint>(0n)
   const [rawReserveB, setRawReserveB] = useState<bigint>(0n)
   const [decAState, setDecAState] = useState<number>(18)
@@ -315,14 +213,12 @@ export default function Liquidity() {
   const [poolHasReserves, setPoolHasReserves] = useState(false)
 
   const [poolDetailsOpen, setPoolDetailsOpen] = useState(false)
-  const [poolManageOpen, setPoolManageOpen] = useState(false)
   const [lpTotalSupplyUi, setLpTotalSupplyUi] = useState<string>('—')
   const [lpBalRaw, setLpBalRaw] = useState<bigint>(0n)
   const [lpSupplyRaw, setLpSupplyRaw] = useState<bigint>(0n)
 
   const [feesPnlUi, setFeesPnlUi] = useState<string>('—')
   const [feesPnlNote, setFeesPnlNote] = useState<string | null>(null)
-
 
   const [ratioAtoB, setRatioAtoB] = useState<string>('—')
   const [ratioBtoA, setRatioBtoA] = useState<string>('—')
@@ -335,19 +231,18 @@ export default function Liquidity() {
   const didInitRouteRef = useRef(false)
 
   const [isAdmin, setIsAdmin] = useState(false)
-  const [lpGate, setLpGate] = useState<{ blocked: boolean; reason: string | null }>({
-    blocked: false,
-    reason: null,
-  })
-  const [repairA, setRepairA] = useState('') // human units
+  const [lpGate, setLpGate] = useState<{ blocked: boolean; reason: string | null }>({ blocked: false, reason: null })
+  const [repairA, setRepairA] = useState('')
   const [repairB, setRepairB] = useState('')
-  const [priceData, setPriceData] = useState<PricePoint[]>([])
 
+  // UI state
+  const [activeTab, setActiveTab] = useState<'add' | 'remove'>('add')
+  const [tokenModalFor, setTokenModalFor] = useState<'A' | 'B' | null>(null)
+  const [tokenSearch, setTokenSearch] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsRef = useRef<HTMLDivElement>(null)
 
-
-
-
-
+  const tokenOptions = enabled
 
   function tokenKeyFromParam(v: string | null): TokenKey | null {
     if (!v) return null
@@ -358,22 +253,14 @@ export default function Liquidity() {
   useEffect(() => {
     if (didInitRouteRef.current) return
     didInitRouteRef.current = true
-
     const st: any = (location as any).state
-
     const stA = tokenKeyFromParam(st?.tokenA ?? st?.a ?? null)
     const stB = tokenKeyFromParam(st?.tokenB ?? st?.b ?? null)
-
     const qA = tokenKeyFromParam(sp.get('a') ?? sp.get('tokenA'))
     const qB = tokenKeyFromParam(sp.get('b') ?? sp.get('tokenB'))
-
     let nextA = stA || qA || defaultA
     let nextB = stB || qB || defaultB
-
-    if (nextA === nextB) {
-      nextB = ((enabled as string[]).find((x) => x !== nextA) as TokenKey) ?? nextB
-    }
-
+    if (nextA === nextB) nextB = ((enabled as string[]).find((x) => x !== nextA) as TokenKey) ?? nextB
     setTokenA(nextA)
     setTokenB(nextB)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -381,28 +268,19 @@ export default function Liquidity() {
 
   useEffect(() => {
     let alive = true
-      ; (async () => {
-        try {
-          if (!address || !FACTORY || !ethers.isAddress(FACTORY)) {
-            if (alive) setIsAdmin(false)
-            return
-          }
-          const f = new ethers.Contract(FACTORY, FACTORY_ABI, provider)
-          const treasury: string = await f.protocolTreasury()
-          const admin = (treasury && treasury !== ethers.ZeroAddress) ? treasury : FACTORY
-          if (alive) setIsAdmin(admin.toLowerCase() === address.toLowerCase())
-        } catch {
-          if (alive) setIsAdmin(false)
-        }
-      })()
+    ;(async () => {
+      try {
+        if (!address || !FACTORY || !ethers.isAddress(FACTORY)) { if (alive) setIsAdmin(false); return }
+        const f = new ethers.Contract(FACTORY, FACTORY_ABI, provider)
+        const treasury: string = await f.protocolTreasury()
+        const admin = (treasury && treasury !== ethers.ZeroAddress) ? treasury : FACTORY
+        if (alive) setIsAdmin(admin.toLowerCase() === address.toLowerCase())
+      } catch { if (alive) setIsAdmin(false) }
+    })()
     return () => { alive = false }
   }, [address, provider])
 
-
-
-  useEffect(() => {
-    writeSlippageBps(slippageBps)
-  }, [slippageBps])
+  useEffect(() => { writeSlippageBps(slippageBps) }, [slippageBps])
 
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
@@ -432,1422 +310,795 @@ export default function Liquidity() {
   const [info, setInfo] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Add liquidity progress dialog
   const [addLiqDialogOpen, setAddLiqDialogOpen] = useState(false)
   const [addLiqDialogPhase, setAddLiqDialogPhase] = useState<'confirming' | 'success' | 'error'>('confirming')
   const [addLiqDialogErr, setAddLiqDialogErr] = useState<string | null>(null)
-  const [addLiqDialogDetails, setAddLiqDialogDetails] = useState<{
-    symA: string
-    symB: string
-    amtA: string
-    amtB: string
-    txHash: string
-  } | null>(null)
+  const [addLiqDialogDetails, setAddLiqDialogDetails] = useState<{ symA: string; symB: string; amtA: string; amtB: string; txHash: string } | null>(null)
   const [preAddBals, setPreAddBals] = useState<{ a: string; b: string } | null>(null)
   const [removePct, setRemovePct] = useState(100)
 
-  const REMOVE_PREFLIGHT = {
-    flow: 'remove_liquidity_v1',
-    gasTopup: { enabled: true, purpose: 'jswap-remove-liquidity' },
-  } as any
-
-  const LIQ_PREFLIGHT = {
-    flow: 'liquidity_v1',
-    gasTopup: { enabled: true, purpose: 'jswap-liquidity' },
-  } as any
-
-  const tokenOptions = enabled
+  const REMOVE_PREFLIGHT = { flow: 'remove_liquidity_v1', gasTopup: { enabled: true, purpose: 'jswap-remove-liquidity' } } as any
+  const LIQ_PREFLIGHT = { flow: 'liquidity_v1', gasTopup: { enabled: true, purpose: 'jswap-liquidity' } } as any
 
   async function refreshBalances() {
-    if (!address) {
-      setBalA('—')
-      setBalANum(0)
-      setBalB('—')
-      setBalBNum(0)
-      return
-    }
-    const [b1, b2] = await Promise.all([
-      getBalance(address, TOKENS[tokenA], provider),
-      getBalance(address, TOKENS[tokenB], provider),
-    ])
+    if (!address) { setBalA('—'); setBalANum(0); setBalB('—'); setBalBNum(0); return }
+    const [b1, b2] = await Promise.all([getBalance(address, TOKENS[tokenA], provider), getBalance(address, TOKENS[tokenB], provider)])
     const [d1, d2] = await Promise.all([readDecimals(TOKENS[tokenA], provider), readDecimals(TOKENS[tokenB], provider)])
     const rawA = ethers.formatUnits(b1, d1)
     const rawB = ethers.formatUnits(b2, d2)
-    setBalA(fmtNum(rawA))
-    setBalANum(Number(rawA))
-    setBalB(fmtNum(rawB))
-    setBalBNum(Number(rawB))
+    setBalA(fmtNum(rawA)); setBalANum(Number(rawA))
+    setBalB(fmtNum(rawB)); setBalBNum(Number(rawB))
   }
 
   function fmtLp(balance: bigint) {
     const raw = balance.toString()
-    const ui = ethers.formatUnits(balance, 18) // human
+    const ui = ethers.formatUnits(balance, 18)
     const n = Number(ui)
-
-    // If it’s too small to be meaningful in human form, show raw units
-    if (!isFinite(n) || n === 0 || Math.abs(n) < 0.000001) {
-      return `${raw} (raw)`
-    }
+    if (!isFinite(n) || n === 0 || Math.abs(n) < 0.000001) return `${raw} (raw)`
     return fmtNum(ui)
   }
-
 
   async function refreshPositionAndReserves() {
     const req = ++posReqRef.current
     const isLive = () => req === posReqRef.current
-
-    // Clear immediately so we never show old pair data while loading
-    setPairAddr('—')
-    setLpBalUi('—')
-    setLpShareUi('—')
-    setLpBalRaw(0n)
-    setLpSupplyRaw(0n)
-    setReserveAUi('—')
-    setReserveBUi('—')
-    setUnderAUi('—')
-    setUnderBUi('—')
-    setRawReserveA(0n)
-    setRawReserveB(0n)
-    setPoolHasReserves(false)
-    setRatioAtoB('—')
-    setRatioBtoA('—')
-
+    setPairAddr('—'); setLpBalUi('—'); setLpShareUi('—'); setLpBalRaw(0n); setLpSupplyRaw(0n)
+    setReserveAUi('—'); setReserveBUi('—'); setUnderAUi('—'); setUnderBUi('—')
+    setRawReserveA(0n); setRawReserveB(0n); setPoolHasReserves(false); setRatioAtoB('—'); setRatioBtoA('—')
     if (!address || tokenA === tokenB) return
-
-    const A = TOKENS[tokenA]
-    const B = TOKENS[tokenB]
-
+    const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
     try {
       const pos = await getLpPosition({ owner: address, tokenA: A, tokenB: B })
       if (!isLive()) return
-
       const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
-      setPairAddr(pair || '—')
-
-      setLpBalRaw(pos.lpBalance)
-      setLpSupplyRaw(pos.totalSupply)
-
-      setLpBalUi(fmtLp(pos.lpBalance))
-      setLpTotalSupplyUi(fmtLp(pos.totalSupply))
-
+      setPairAddr(pair || '—'); setLpBalRaw(pos.lpBalance); setLpSupplyRaw(pos.totalSupply)
+      setLpBalUi(fmtLp(pos.lpBalance)); setLpTotalSupplyUi(fmtLp(pos.totalSupply))
       if (pos.totalSupply > 0n && pos.lpBalance > 0n) {
-        const sharePct = Number((pos.lpBalance * 10000n) / pos.totalSupply) / 100
-        setLpShareUi(`${sharePct.toFixed(2)}%`)
-      } else {
-        setLpShareUi('—')
-      }
-
-
-      if (!pair) {
-        // keep cleared raw reserves/ratios/poolHasReserves so UI doesn't show defaults
-        return
-      }
-
+        setLpShareUi(`${(Number((pos.lpBalance * 10000n) / pos.totalSupply) / 100).toFixed(2)}%`)
+      } else setLpShareUi('—')
+      if (!pair) return
       const pairC = new ethers.Contract(pair, PAIR_ABI, provider)
       const [t0, t1, reserves] = await Promise.all([pairC.token0(), pairC.token1(), pairC.getReserves()])
       if (!isLive()) return
-
-      const r0 = reserves[0] as bigint
-      const r1 = reserves[1] as bigint
-
-      const addrA = tokenAddressForPath(A).toLowerCase()
-      const addrB = tokenAddressForPath(B).toLowerCase()
-      const token0 = (t0 as string).toLowerCase()
-      const token1 = (t1 as string).toLowerCase()
-
-      let reserveA = 0n
-      let reserveB = 0n
-
-      if (addrA === token0 && addrB === token1) {
-        reserveA = r0
-        reserveB = r1
-      } else if (addrA === token1 && addrB === token0) {
-        reserveA = r1
-        reserveB = r0
-      } else {
-        reserveA = r0
-        reserveB = r1
-      }
-
+      const r0 = reserves[0] as bigint; const r1 = reserves[1] as bigint
+      const addrA = tokenAddressForPath(A).toLowerCase(); const addrB = tokenAddressForPath(B).toLowerCase()
+      const token0 = (t0 as string).toLowerCase(); const token1 = (t1 as string).toLowerCase()
+      let reserveA = 0n; let reserveB = 0n
+      if (addrA === token0 && addrB === token1) { reserveA = r0; reserveB = r1 }
+      else if (addrA === token1 && addrB === token0) { reserveA = r1; reserveB = r0 }
+      else { reserveA = r0; reserveB = r1 }
       const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
       if (!isLive()) return
-
       setReserveAUi(fmtNum(ethers.formatUnits(reserveA, decA)))
       setReserveBUi(fmtNum(ethers.formatUnits(reserveB, decB)))
-
-      setRawReserveA(reserveA)
-      setRawReserveB(reserveB)
-      setDecAState(decA)
-      setDecBState(decB)
-
-      // Gate if pool exists but either side is below minimum threshold
+      setRawReserveA(reserveA); setRawReserveB(reserveB); setDecAState(decA); setDecBState(decB)
       if (pair && pos.totalSupply > 0n) {
-        const minA = ethers.parseUnits(MIN_POOL_RESERVE_HUMAN, decA)
-        const minB = ethers.parseUnits(MIN_POOL_RESERVE_HUMAN, decB)
-
-        const broken = reserveA < minA || reserveB < minB
-        if (broken) {
-          setLpGate({
-            blocked: true,
-            reason: `Pool is in repair mode (very low / imbalanced reserves). Adding liquidity is disabled to protect users.`,
-          })
-        } else {
-          setLpGate({ blocked: false, reason: null })
-        }
-      } else {
-        // no pool yet (or fresh init) => allow seeding
-        setLpGate({ blocked: false, reason: null })
-      }
-
-
-      const has = reserveA > 0n && reserveB > 0n
-      setPoolHasReserves(has)
-
+        const minA = ethers.parseUnits(MIN_POOL_RESERVE_HUMAN, decA); const minB = ethers.parseUnits(MIN_POOL_RESERVE_HUMAN, decB)
+        setLpGate(reserveA < minA || reserveB < minB ? { blocked: true, reason: 'Pool is in repair mode (very low / imbalanced reserves). Adding liquidity is disabled to protect users.' } : { blocked: false, reason: null })
+      } else setLpGate({ blocked: false, reason: null })
+      const has = reserveA > 0n && reserveB > 0n; setPoolHasReserves(has)
       if (has) {
-        const oneA = ethers.parseUnits('1', decA)
-        const oneB = ethers.parseUnits('1', decB)
-        const outB = quote(oneA, reserveA, reserveB)
-        const outA = quote(oneB, reserveB, reserveA)
-        setRatioAtoB(fmtNum(ethers.formatUnits(outB, decB)))
-        setRatioBtoA(fmtNum(ethers.formatUnits(outA, decA)))
-      } else {
-        setRatioAtoB('—')
-        setRatioBtoA('—')
-      }
-
+        const oneA = ethers.parseUnits('1', decA); const oneB = ethers.parseUnits('1', decB)
+        setRatioAtoB(fmtNum(ethers.formatUnits(quote(oneA, reserveA, reserveB), decB)))
+        setRatioBtoA(fmtNum(ethers.formatUnits(quote(oneB, reserveB, reserveA), decA)))
+      } else { setRatioAtoB('—'); setRatioBtoA('—') }
       if (pos.totalSupply > 0n && pos.lpBalance > 0n && has) {
-        const underA = (reserveA * pos.lpBalance) / pos.totalSupply
-        const underB = (reserveB * pos.lpBalance) / pos.totalSupply
-        setUnderAUi(fmtNum(ethers.formatUnits(underA, decA)))
-        setUnderBUi(fmtNum(ethers.formatUnits(underB, decB)))
-      } else {
-        setUnderAUi('—')
-        setUnderBUi('—')
-      }
-    } catch {
-      // keep the cleared UI
-    }
+        setUnderAUi(fmtNum(ethers.formatUnits((reserveA * pos.lpBalance) / pos.totalSupply, decA)))
+        setUnderBUi(fmtNum(ethers.formatUnits((reserveB * pos.lpBalance) / pos.totalSupply, decB)))
+      } else { setUnderAUi('—'); setUnderBUi('—') }
+    } catch { /* keep cleared UI */ }
   }
 
-
-  useEffect(() => {
-    didUserEditRef.current = false
-    setLastEdited('A')
-  }, [tokenA, tokenB])
-
+  useEffect(() => { didUserEditRef.current = false; setLastEdited('A') }, [tokenA, tokenB])
   useEffect(() => {
     if (!poolHasReserves) return
     if (didUserEditRef.current) return
-    if (lastEdited === 'A') syncBFromA(amtA)
-    else syncAFromB(amtB)
+    if (lastEdited === 'A') syncBFromA(amtA); else syncAFromB(amtB)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poolHasReserves, rawReserveA, rawReserveB, decAState, decBState])
 
   useEffect(() => {
     let alive = true
-      ; (async () => {
-        setLoadingBalances(true)
-        try {
-          if (!alive) return
-          await refreshBalances()
-        } catch (e: any) {
-          if (!alive) return
-          console.warn('balance refresh failed', e?.message || e)
-        } finally {
-          if (!alive) return
-          setLoadingBalances(false)
-        }
-      })()
-    const id = window.setInterval(() => {
-      if (!alive) return
-      refreshBalances().catch(() => { })
-    }, 12000)
-    return () => {
-      alive = false
-      window.clearInterval(id)
-    }
+    ;(async () => {
+      setLoadingBalances(true)
+      try { if (!alive) return; await refreshBalances() } catch (e: any) { if (!alive) return } finally { if (!alive) return; setLoadingBalances(false) }
+    })()
+    const id = window.setInterval(() => { if (!alive) return; refreshBalances().catch(() => {}) }, 12000)
+    return () => { alive = false; window.clearInterval(id) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, tokenA, tokenB])
 
   useEffect(() => {
     let alive = true
-      ; (async () => {
-        try {
-          if (!alive) return
-          await refreshPositionAndReserves()
-        } catch {
-          if (!alive) return
-        }
-      })()
-    const id = window.setInterval(() => {
-      if (!alive) return
-      refreshPositionAndReserves().catch(() => { })
-    }, 12000)
-    return () => {
-      alive = false
-      window.clearInterval(id)
-    }
+    ;(async () => { try { if (!alive) return; await refreshPositionAndReserves() } catch { if (!alive) return } })()
+    const id = window.setInterval(() => { if (!alive) return; refreshPositionAndReserves().catch(() => {}) }, 12000)
+    return () => { alive = false; window.clearInterval(id) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, tokenA, tokenB])
 
 
-  // ---------------- Price chart data ----------------
+  // Fees / P&L
   useEffect(() => {
-    let unsub: (() => void) | null = null
-
-      ; (async () => {
-        try {
-          if (tokenA === tokenB) return setPriceData([])
-          if (!FACTORY || !ethers.isAddress(FACTORY)) return setPriceData([])
-          if (!WAKE || !ethers.isAddress(WAKE)) return setPriceData([])
-
-          const A = TOKENS[tokenA]
-          const B = TOKENS[tokenB]
-
-          const aAddr = A.isNative ? WAKE : A.address
-          const bAddr = B.isNative ? WAKE : B.address
-          if (!aAddr || !bAddr || !ethers.isAddress(aAddr) || !ethers.isAddress(bAddr)) return setPriceData([])
-
-          const pairData = await provider.call({
-            to: FACTORY,
-            data: FACTORY_IFACE_LIQ.encodeFunctionData('getPair', [aAddr, bAddr]),
-          })
-          const [pair] = FACTORY_IFACE_LIQ.decodeFunctionResult('getPair', pairData) as any
-          if (!pair || pair === ethers.ZeroAddress) return setPriceData([])
-
-          const [t0Data, t1Data] = await Promise.all([
-            provider.call({ to: pair, data: PAIR_META_IFACE_LIQ.encodeFunctionData('token0', []) }),
-            provider.call({ to: pair, data: PAIR_META_IFACE_LIQ.encodeFunctionData('token1', []) }),
-          ])
-          const [token0] = PAIR_META_IFACE_LIQ.decodeFunctionResult('token0', t0Data) as any
-          const [token1] = PAIR_META_IFACE_LIQ.decodeFunctionResult('token1', t1Data) as any
-
-          const fromAddr = String(aAddr).toLowerCase()
-          const toAddr = String(bAddr).toLowerCase()
-          const t0 = String(token0).toLowerCase()
-          const t1 = String(token1).toLowerCase()
-
-          const fromDec = await readDecimals(A, provider)
-          const toDec = await readDecimals(B, provider)
-
-          function priceFromReserves(res0: bigint, res1: bigint): number | null {
-            if (res0 === 0n || res1 === 0n) return null
-            if (fromAddr === t0 && toAddr === t1) {
-              const rFrom = Number(ethers.formatUnits(res0, fromDec))
-              const rTo = Number(ethers.formatUnits(res1, toDec))
-              if (!Number.isFinite(rFrom) || !Number.isFinite(rTo) || rFrom <= 0) return null
-              return rTo / rFrom
-            }
-            if (fromAddr === t1 && toAddr === t0) {
-              const rTo = Number(ethers.formatUnits(res0, toDec))
-              const rFrom = Number(ethers.formatUnits(res1, fromDec))
-              if (!Number.isFinite(rFrom) || !Number.isFinite(rTo) || rFrom <= 0) return null
-              return rTo / rFrom
-            }
-            return null
-          }
-
-          const pairKey = `${ALK_CHAIN_ID}_${String(pair).toLowerCase()}`
-
-          const latestSnap = await getDocs(query(
-            collection(db, 'amm_events'),
-            where('pairKey', '==', pairKey),
-            where('event', '==', 'Sync'),
-            orderBy('blockTime', 'desc'),
-            limit(1)
-          ))
-          if (latestSnap.empty) return setPriceData([])
-
-          const latestBlockTime = latestSnap.docs[0].data().blockTime as number
-          const minBlockTime = latestBlockTime - 48 * 60 * 60
-
-          const qy = query(
-            collection(db, 'amm_events'),
-            where('pairKey', '==', pairKey),
-            where('event', '==', 'Sync'),
-            where('blockTime', '>=', minBlockTime),
-            orderBy('blockTime', 'asc'),
-            limit(600)
-          )
-
-          unsub = onSnapshot(qy, (snap) => {
-            const pts: PricePoint[] = []
-            snap.forEach((doc) => {
-              const x: any = doc.data()
-              const r0s = x?.args?.reserve0
-              const r1s = x?.args?.reserve1
-              const tMs =
-                typeof x?.blockTimeMs === 'number'
-                  ? x.blockTimeMs
-                  : typeof x?.blockTime === 'number'
-                    ? x.blockTime * 1000
-                    : null
-              if (!r0s || !r1s || !tMs) return
-              const p = priceFromReserves(BigInt(r0s), BigInt(r1s))
-              if (p == null) return
-              pts.push({ t: tMs, p })
-            })
-            setPriceData(pts)
-          }, (err) => {
-            console.error('[LiquidityChart] Firestore snapshot error:', err)
-          })
-        } catch (e) {
-          console.error('[LiquidityChart] setup error:', e)
-          setPriceData([])
-        }
-      })()
-
-    return () => { if (unsub) unsub() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, tokenA, tokenB])
-
-  // ---------------- Fees / P&L (from Firestore logs) ----------------
-  useEffect(() => {
-    if (!address || !pairAddr || pairAddr === '—') {
-      setFeesPnlUi('—')
-      setFeesPnlNote(null)
-      return
-    }
-
-    const D = 1_000_000n
-    const LP_FEE_PPM = 2_500n // 0.25%
-
-    const bn = (x: any) => {
-      try { return BigInt(x ?? 0) } catch { return 0n }
-    }
+    if (!address || !pairAddr || pairAddr === '—') { setFeesPnlUi('—'); setFeesPnlNote(null); return }
+    const D = 1_000_000n; const LP_FEE_PPM = 2_500n
+    const bn = (x: any) => { try { return BigInt(x ?? 0) } catch { return 0n } }
     const lower = (x: any) => String(x ?? '').toLowerCase()
-
-    const aAddr = tokenAddressForPath(TOKENS[tokenA]).toLowerCase()
-    const bAddr = tokenAddressForPath(TOKENS[tokenB]).toLowerCase()
-    const pairKey = `${ALK_CHAIN_ID}_${pairAddr.toLowerCase()}`
-    const userKey = address.toLowerCase()
-
+    const aAddr = tokenAddressForPath(TOKENS[tokenA]).toLowerCase(); const bAddr = tokenAddressForPath(TOKENS[tokenB]).toLowerCase()
+    const pairKey = `${ALK_CHAIN_ID}_${pairAddr.toLowerCase()}`; const userKey = address.toLowerCase()
     const map01toAB = (token0: string, token1: string, v0: bigint, v1: bigint) => {
-      const t0 = lower(token0)
-      const t1 = lower(token1)
-      const a = lower(aAddr)
-      const b = lower(bAddr)
-      if (a === t0 && b === t1) return { a: v0, b: v1 }
-      if (a === t1 && b === t0) return { a: v1, b: v0 }
-      return { a: v0, b: v1 }
+      const t0 = lower(token0); const t1 = lower(token1); const a = lower(aAddr); const b = lower(bAddr)
+      if (a === t0 && b === t1) return { a: v0, b: v1 }; if (a === t1 && b === t0) return { a: v1, b: v0 }; return { a: v0, b: v1 }
     }
-
-    // 1) user liquidity history (Mint/Burn + Sync in same tx)
-    const qUser = query(
-      collection(db, 'amm_events'),
-      where('pairKey', '==', pairKey),
-      where('user', '==', userKey),
-      orderBy('blockTime', 'asc'),
-      limit(1500)
-    )
-
+    const qUser = query(collection(db, 'amm_events'), where('pairKey', '==', pairKey), where('user', '==', userKey), orderBy('blockTime', 'asc'), limit(1500))
     const unsubUser = onSnapshot(qUser, (snap) => {
-      // group by txHash so we can find Sync in same tx
       const byTx = new Map<string, any[]>()
-      snap.forEach((d) => {
-        const x: any = d.data()
-        const tx = String(x.txHash || '')
-        if (!tx) return
-        const arr = byTx.get(tx) ?? []
-        arr.push(x)
-        byTx.set(tx, arr)
-      })
-
-      let depValueA = 0n
-      let wdrValueA = 0n
-      let firstAddTime: number | null = null
-
+      snap.forEach((d) => { const x: any = d.data(); const tx = String(x.txHash || ''); if (!tx) return; const arr = byTx.get(tx) ?? []; arr.push(x); byTx.set(tx, arr) })
+      let depValueA = 0n; let wdrValueA = 0n; let firstAddTime: number | null = null
       for (const rows of byTx.values()) {
         const sync = rows.find((r) => r?.event === 'Sync')
         const mint = rows.find((r) => r?.event === 'Mint' && r?.action === 'add_liquidity')
         const burn = rows.find((r) => r?.event === 'Burn' && r?.action === 'remove_liquidity')
-
-        // reserves at this tx (for valuation)
-        let rA = 0n, rB = 0n
-        if (sync?.args?.reserve0 != null && sync?.args?.reserve1 != null) {
-          const mapped = map01toAB(sync.token0, sync.token1, bn(sync.args.reserve0), bn(sync.args.reserve1))
-          rA = mapped.a
-          rB = mapped.b
-        }
-
-        const bToA = (bRaw: bigint) => {
-          if (rA === 0n || rB === 0n) return 0n
-          return quote(bRaw, rB, rA)
-        }
-
+        let rA = 0n; let rB = 0n
+        if (sync?.args?.reserve0 != null && sync?.args?.reserve1 != null) { const mapped = map01toAB(sync.token0, sync.token1, bn(sync.args.reserve0), bn(sync.args.reserve1)); rA = mapped.a; rB = mapped.b }
+        const bToA = (bRaw: bigint) => { if (rA === 0n || rB === 0n) return 0n; return quote(bRaw, rB, rA) }
         if (mint?.args?.amount0 != null && mint?.args?.amount1 != null) {
           if (!firstAddTime && typeof mint.blockTime === 'number') firstAddTime = mint.blockTime
-          const mapped = map01toAB(mint.token0, mint.token1, bn(mint.args.amount0), bn(mint.args.amount1))
-          depValueA += mapped.a + bToA(mapped.b)
+          const mapped = map01toAB(mint.token0, mint.token1, bn(mint.args.amount0), bn(mint.args.amount1)); depValueA += mapped.a + bToA(mapped.b)
         }
-
-        if (burn?.args?.amount0 != null && burn?.args?.amount1 != null) {
-          const mapped = map01toAB(burn.token0, burn.token1, bn(burn.args.amount0), bn(burn.args.amount1))
-          wdrValueA += mapped.a + bToA(mapped.b)
-        }
+        if (burn?.args?.amount0 != null && burn?.args?.amount1 != null) { const mapped = map01toAB(burn.token0, burn.token1, bn(burn.args.amount0), bn(burn.args.amount1)); wdrValueA += mapped.a + bToA(mapped.b) }
       }
-
-      // current position value in A (using current reserves)
       let curValueA = 0n
-      if (rawReserveA > 0n && rawReserveB > 0n && lpSupplyRaw > 0n && lpBalRaw > 0n) {
-        const curA = (rawReserveA * lpBalRaw) / lpSupplyRaw
-        const curB = (rawReserveB * lpBalRaw) / lpSupplyRaw
-        curValueA = curA + quote(curB, rawReserveB, rawReserveA)
-      }
-
+      if (rawReserveA > 0n && rawReserveB > 0n && lpSupplyRaw > 0n && lpBalRaw > 0n) { const curA = (rawReserveA * lpBalRaw) / lpSupplyRaw; const curB = (rawReserveB * lpBalRaw) / lpSupplyRaw; curValueA = curA + quote(curB, rawReserveB, rawReserveA) }
       const pnlA = (curValueA + wdrValueA) - depValueA
-      const pnlUi = `${pnlA >= 0n ? '+' : ''}${fmtNum(ethers.formatUnits(pnlA, decAState))} ${tokenA}`
-
       firstAddTimeRef.current = firstAddTime
-      setFeesPnlUi(`P&L: ${pnlUi} • Fees: …`)
+      setFeesPnlUi(`P&L: ${pnlA >= 0n ? '+' : ''}${fmtNum(ethers.formatUnits(pnlA, decAState))} ${tokenA} • Fees: …`)
       setFeesPnlNote('Fees are estimated (uses current LP share). Exact fees require LP share over time.')
-    }, (err) => {
-      console.error('[Liquidity] P&L user snapshot error:', err)
-    })
-
-    // 2) swaps fee estimate since first add
-    const qSwaps = query(
-      collection(db, 'amm_events'),
-      where('pairKey', '==', pairKey),
-      where('event', '==', 'Swap'),
-      orderBy('blockTime', 'asc'),
-      limit(2000)
-    )
-
+    }, (err) => console.error('[Liquidity] P&L user snapshot error:', err))
+    const qSwaps = query(collection(db, 'amm_events'), where('pairKey', '==', pairKey), where('event', '==', 'Swap'), orderBy('blockTime', 'asc'), limit(2000))
     const unsubSwaps = onSnapshot(qSwaps, (snap) => {
-      const firstAddTime = firstAddTimeRef.current
-      if (!firstAddTime) return
-
-      if (lpSupplyRaw <= 0n || lpBalRaw <= 0n) {
-        setFeesPnlUi((prev) => prev.replace(/Fees: .*/, `Fees: 0 ${tokenA} (est)`))
-        return
-      }
-
-      const sharePpm = (lpBalRaw * 1_000_000n) / lpSupplyRaw
-
-      let totalFeeA = 0n
-      let totalFeeB = 0n
-
+      const firstAddTime = firstAddTimeRef.current; if (!firstAddTime) return
+      if (lpSupplyRaw <= 0n || lpBalRaw <= 0n) { setFeesPnlUi((prev) => prev.replace(/Fees: .*/, `Fees: 0 ${tokenA} (est)`)); return }
+      const sharePpm = (lpBalRaw * 1_000_000n) / lpSupplyRaw; let totalFeeA = 0n; let totalFeeB = 0n
       snap.forEach((d) => {
-        const x: any = d.data()
-        if (!x?.blockTime || x.blockTime < firstAddTime) return
-
-        const a0In = bn(x?.args?.amount0In)
-        const a1In = bn(x?.args?.amount1In)
-
-        const fee0 = (a0In * LP_FEE_PPM) / D
-        const fee1 = (a1In * LP_FEE_PPM) / D
-
-        const mapped = map01toAB(x.token0, x.token1, fee0, fee1)
-        totalFeeA += mapped.a
-        totalFeeB += mapped.b
+        const x: any = d.data(); if (!x?.blockTime || x.blockTime < firstAddTime) return
+        const fee0 = (bn(x?.args?.amount0In) * LP_FEE_PPM) / D; const fee1 = (bn(x?.args?.amount1In) * LP_FEE_PPM) / D
+        const mapped = map01toAB(x.token0, x.token1, fee0, fee1); totalFeeA += mapped.a; totalFeeB += mapped.b
+        function bn(x: any) { try { return BigInt(x ?? 0) } catch { return 0n } }
       })
-
       let feesValueA = 0n
-      if (rawReserveA > 0n && rawReserveB > 0n) {
-        feesValueA = totalFeeA + quote(totalFeeB, rawReserveB, rawReserveA)
-      }
-
+      if (rawReserveA > 0n && rawReserveB > 0n) feesValueA = totalFeeA + quote(totalFeeB, rawReserveB, rawReserveA)
       const userFeesA = (feesValueA * sharePpm) / 1_000_000n
-      const feesUi = `+${fmtNum(ethers.formatUnits(userFeesA, decAState))} ${tokenA} (est)`
-      setFeesPnlUi((prev) => prev.replace(/Fees: .*/, `Fees: ${feesUi}`))
-    }, (err) => {
-      console.error('[Liquidity] P&L swaps snapshot error:', err)
-    })
-
-    return () => {
-      unsubUser()
-      unsubSwaps()
-    }
+      setFeesPnlUi((prev) => prev.replace(/Fees: .*/, `Fees: +${fmtNum(ethers.formatUnits(userFeesA, decAState))} ${tokenA} (est)`))
+    }, (err) => console.error('[Liquidity] P&L swaps snapshot error:', err))
+    return () => { unsubUser(); unsubSwaps() }
   }, [address, pairAddr, tokenA, tokenB, rawReserveA, rawReserveB, decAState, lpBalRaw, lpSupplyRaw])
 
-
   async function onAddLiquidity() {
-    setErr(null)
-    setAddLiqDialogErr(null)
-    setAddLiqDialogDetails(null)
-    setBusy(true)
-
+    setErr(null); setAddLiqDialogErr(null); setAddLiqDialogDetails(null); setBusy(true)
     let dialogOpened = false
-
     try {
       if (!walletConnected || !address) throw new Error('Connect your wallet using the top bar to continue.')
       if (!ROUTER) throw new Error('Missing VITE_JOLLOF_ROUTER_ALK')
       if (tokenA === tokenB) throw new Error('Select different tokens.')
-
-      if (lpGate.blocked && !isAdmin) {
-        throw new Error(lpGate.reason ?? 'Pool needs admin repair before adding liquidity.')
-      }
-
-      const aStr = clampAmountStr(amtA.trim())
-      const bStr = clampAmountStr(amtB.trim())
+      if (lpGate.blocked && !isAdmin) throw new Error(lpGate.reason ?? 'Pool needs admin repair before adding liquidity.')
+      const aStr = clampAmountStr(amtA.trim()); const bStr = clampAmountStr(amtB.trim())
       if (!aStr || Number(aStr) <= 0) throw new Error('Enter a valid Amount A.')
       if (!bStr || Number(bStr) <= 0) throw new Error('Enter a valid Amount B.')
-
-      if (balANum > 0 && Number(aStr) > balANum) {
-        throw new Error(`Insufficient ${tokenA} balance. You have ${balA} ${tokenA}.`)
-      }
-      if (balBNum > 0 && Number(bStr) > balBNum) {
-        throw new Error(`Insufficient ${tokenB} balance. You have ${balB} ${tokenB}.`)
-      }
-
-      const A = TOKENS[tokenA]
-      const B = TOKENS[tokenB]
-
+      if (balANum > 0 && Number(aStr) > balANum) throw new Error(`Insufficient ${tokenA} balance. You have ${balA} ${tokenA}.`)
+      if (balBNum > 0 && Number(bStr) > balBNum) throw new Error(`Insufficient ${tokenB} balance. You have ${balB} ${tokenB}.`)
+      const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
       const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
-      const amountA = ethers.parseUnits(aStr, decA)
-      const amountB = ethers.parseUnits(bStr, decB)
-
-      const plan = await planAddLiquidity({
-        tokenA: A,
-        tokenB: B,
-        amountADesired: amountA,
-        amountBDesired: amountB,
-        slippageBps,
-        provider,
-      })
-
-      const usedA = plan.usedA
-      const usedB = plan.usedB
-      const minA = plan.minA
-      const minB = plan.minB
-
-      const usedAUi = fmtNum(ethers.formatUnits(usedA, decA))
-      const usedBUi = fmtNum(ethers.formatUnits(usedB, decB))
-
+      const amountA = ethers.parseUnits(aStr, decA); const amountB = ethers.parseUnits(bStr, decB)
+      const plan = await planAddLiquidity({ tokenA: A, tokenB: B, amountADesired: amountA, amountBDesired: amountB, slippageBps, provider })
+      const usedA = plan.usedA; const usedB = plan.usedB; const minA = plan.minA; const minB = plan.minB
+      const usedAUi = fmtNum(ethers.formatUnits(usedA, decA)); const usedBUi = fmtNum(ethers.formatUnits(usedB, decB))
       const txs: any[] = []
-
-      if (!A.isNative) {
-        const allowanceA = await getAllowance(address, A, ROUTER, provider)
-        if (allowanceA < usedA) {
-          const approveTx = buildApproveTx(A, ROUTER, usedA)
-          if (approveTx) txs.push(approveTx)
-        }
-      }
-      if (!B.isNative) {
-        const allowanceB = await getAllowance(address, B, ROUTER, provider)
-        if (allowanceB < usedB) {
-          const approveTx = buildApproveTx(B, ROUTER, usedB)
-          if (approveTx) txs.push(approveTx)
-        }
-      }
-
-      const addTx = buildAddLiquidityTx({
-        tokenA: A,
-        tokenB: B,
-        amountA,
-        amountB,
-        amountAMin: minA,
-        amountBMin: minB,
-        recipient: address,
-        deadlineSec: 10 * 60,
-        valueNative: plan.nativeValue > 0n ? plan.nativeValue : undefined,
-      })
-      txs.push(addTx)
-
+      if (!A.isNative) { const allowanceA = await getAllowance(address, A, ROUTER, provider); if (allowanceA < usedA) { const approveTx = buildApproveTx(A, ROUTER, usedA); if (approveTx) txs.push(approveTx) } }
+      if (!B.isNative) { const allowanceB = await getAllowance(address, B, ROUTER, provider); if (allowanceB < usedB) { const approveTx = buildApproveTx(B, ROUTER, usedB); if (approveTx) txs.push(approveTx) } }
+      txs.push(buildAddLiquidityTx({ tokenA: A, tokenB: B, amountA, amountB, amountAMin: minA, amountBMin: minB, recipient: address, deadlineSec: 10 * 60, valueNative: plan.nativeValue > 0n ? plan.nativeValue : undefined }))
       const safeTxs = txs.map(normalizeTx)
-
-      // Snapshot balances before sending
       setPreAddBals({ a: balA, b: balB })
-
-      const results = await sessionSendTransactions(
-        {
-          chainId: ALK_CHAIN_ID,
-          txs: safeTxs,
-          failFast: true,
-          preflight: LIQ_PREFLIGHT,
-        } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
-        'add_liquidity',
-      )
-
-      const firstFail = results?.find((r: any) => r?.ok === false)
-      if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
-
-      const hashes: string[] = (results || [])
-        .map((r: any) => r?.txHash as string | undefined)
-        .filter(Boolean) as string[]
-
+      const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: LIQ_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'add_liquidity')
+      const firstFail = results?.find((r: any) => r?.ok === false); if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
+      const hashes: string[] = (results || []).map((r: any) => r?.txHash as string | undefined).filter(Boolean) as string[]
       const addLiqHash = hashes[hashes.length - 1]
-
-      // AmVault has popped — open the progress dialog
-      setAddLiqDialogDetails({
-        symA: tokenA,
-        symB: tokenB,
-        amtA: usedAUi,
-        amtB: usedBUi,
-        txHash: addLiqHash,
-      })
-      setAddLiqDialogPhase('confirming')
-      setAddLiqDialogOpen(true)
-      dialogOpened = true
-
-      const labels: string[] = safeTxs.map((t: any, i: number) => {
-        const isRouter = (t?.to || '').toLowerCase() === ROUTER.toLowerCase()
-        if (isRouter) return 'addLiquidity'
-        return `approve #${i + 1}`
-      })
-
-      let anyFail = false
-      let lastReason: string | null = null
-
+      setAddLiqDialogDetails({ symA: tokenA, symB: tokenB, amtA: usedAUi, amtB: usedBUi, txHash: addLiqHash })
+      setAddLiqDialogPhase('confirming'); setAddLiqDialogOpen(true); dialogOpened = true
+      const labels: string[] = safeTxs.map((t: any, i: number) => { const isRouter = (t?.to || '').toLowerCase() === ROUTER.toLowerCase(); return isRouter ? 'addLiquidity' : `approve #${i + 1}` })
+      let anyFail = false; let lastReason: string | null = null
       for (let i = 0; i < hashes.length; i++) {
-        const h = hashes[i]
-        const r = await waitForReceipt(provider, h)
-
-        if (!r) {
-          anyFail = true
-        } else if (r.status === 1) {
-          if (labels[i] === 'addLiquidity') {
-            await logAmmEventsFromReceipt({
-              provider,
-              chainId: ALK_CHAIN_ID,
-              receipt: r,
-              action: 'add_liquidity',
-              user: address,
-              ain: ainLoading ? null : (ain ?? null),
-              tokenA,
-              tokenB,
-              pairHint: pairAddr !== '—' ? pairAddr : null,
-            })
-          }
+        const h = hashes[i]; const r = await waitForReceipt(provider, h)
+        if (!r) { anyFail = true } else if (r.status === 1) {
+          if (labels[i] === 'addLiquidity') await logAmmEventsFromReceipt({ provider, chainId: ALK_CHAIN_ID, receipt: r, action: 'add_liquidity', user: address, ain: ainLoading ? null : (ain ?? null), tokenA, tokenB, pairHint: pairAddr !== '—' ? pairAddr : null })
         } else {
           anyFail = true
           let reason = await getRevertReasonFromChain(provider, h)
-          if (!reason) {
-            const txObj = await provider.getTransaction(h)
-            if (txObj?.gasLimit && r.gasUsed >= txObj.gasLimit - 1000n) {
-              reason = `Out of gas (gasUsed≈gasLimit). Increase gasLimit.`
-            }
-          }
+          if (!reason) { const txObj = await provider.getTransaction(h); if (txObj?.gasLimit && r.gasUsed >= txObj.gasLimit - 1000n) reason = 'Out of gas (gasUsed≈gasLimit). Increase gasLimit.' }
           lastReason = reason ?? 'reverted (no reason decoded)'
         }
       }
-
-      if (anyFail) {
-        setAddLiqDialogPhase('error')
-        setAddLiqDialogErr(
-          lastReason
-            ? `addLiquidity reverted: ${lastReason}`
-            : 'One or more transactions reverted or did not confirm.'
-        )
-      } else {
-        setAddLiqDialogPhase('success')
-      }
-
-      await refreshBalances()
-      await refreshPositionAndReserves()
+      if (anyFail) { setAddLiqDialogPhase('error'); setAddLiqDialogErr(lastReason ? `addLiquidity reverted: ${lastReason}` : 'One or more transactions reverted or did not confirm.') } else setAddLiqDialogPhase('success')
+      await refreshBalances(); await refreshPositionAndReserves()
     } catch (e: any) {
       const msg = e?.shortMessage || e?.message || 'Add Liquidity failed.'
-      if (dialogOpened) {
-        setAddLiqDialogErr(msg)
-        setAddLiqDialogPhase('error')
-      } else {
-        setErr(msg)
-      }
-    } finally {
-      setBusy(false)
-    }
+      if (dialogOpened) { setAddLiqDialogErr(msg); setAddLiqDialogPhase('error') } else setErr(msg)
+    } finally { setBusy(false) }
   }
 
   async function onRemoveLiquidity() {
-    setErr(null)
-    setInfo(null)
-    setBusy(true)
-
+    setErr(null); setInfo(null); setBusy(true)
     try {
       if (!walletConnected || !address) throw new Error('Connect your wallet using the top bar to continue.')
       if (!ROUTER) throw new Error('Missing VITE_JOLLOF_ROUTER_ALK')
       if (tokenA === tokenB) throw new Error('Select different tokens.')
       if (!pairAddr || pairAddr === '—') throw new Error('No pair found for this token selection.')
       if (removePct <= 0) throw new Error('Pick a remove percentage.')
-
-      const A = TOKENS[tokenA]
-      const B = TOKENS[tokenB]
-
+      const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
       const pos = await getLpPosition({ owner: address, tokenA: A, tokenB: B })
       const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
       if (!pair) throw new Error('No pool exists yet for this pair.')
       if (pos.lpBalance <= 0n) throw new Error('You have no LP tokens for this pool.')
-
       const pctBps = BigInt(Math.max(0, Math.min(100, removePct)) * 100)
       const lpToRemove = (pos.lpBalance * pctBps) / 10_000n
       if (lpToRemove <= 0n) throw new Error('Remove amount too small.')
-
       const pairC = new ethers.Contract(pair, PAIR_ABI, provider)
       const [t0, t1, reserves] = await Promise.all([pairC.token0(), pairC.token1(), pairC.getReserves()])
-      const r0 = reserves[0] as bigint
-      const r1 = reserves[1] as bigint
-
-      const addrA = tokenAddressForPath(A).toLowerCase()
-      const addrB = tokenAddressForPath(B).toLowerCase()
-      const token0 = (t0 as string).toLowerCase()
-      const token1 = (t1 as string).toLowerCase()
-
-      let reserveA = 0n
-      let reserveB = 0n
-      if (addrA === token0 && addrB === token1) {
-        reserveA = r0
-        reserveB = r1
-      } else if (addrA === token1 && addrB === token0) {
-        reserveA = r1
-        reserveB = r0
-      } else {
-        reserveA = r0
-        reserveB = r1
-      }
-
+      const r0 = reserves[0] as bigint; const r1 = reserves[1] as bigint
+      const addrA = tokenAddressForPath(A).toLowerCase(); const addrB = tokenAddressForPath(B).toLowerCase()
+      const token0 = (t0 as string).toLowerCase(); const token1 = (t1 as string).toLowerCase()
+      let reserveA = 0n; let reserveB = 0n
+      if (addrA === token0 && addrB === token1) { reserveA = r0; reserveB = r1 } else if (addrA === token1 && addrB === token0) { reserveA = r1; reserveB = r0 } else { reserveA = r0; reserveB = r1 }
       if (pos.totalSupply <= 0n) throw new Error('Pool totalSupply is zero (unexpected).')
-      const outA = (reserveA * lpToRemove) / pos.totalSupply
-      const outB = (reserveB * lpToRemove) / pos.totalSupply
-
-      const minA = applySlippage(outA, slippageBps)
-      const minB = applySlippage(outB, slippageBps)
-
+      const outA = (reserveA * lpToRemove) / pos.totalSupply; const outB = (reserveB * lpToRemove) / pos.totalSupply
+      const minA = applySlippage(outA, slippageBps); const minB = applySlippage(outB, slippageBps)
       const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
-      setInfo(
-        `Removing ${removePct}%: ~${fmtNum(ethers.formatUnits(outA, decA))} ${tokenA} + ~${fmtNum(
-          ethers.formatUnits(outB, decB)
-        )} ${tokenB}. Confirm in your wallet…`
-      )
-
+      setInfo(`Removing ${removePct}%: ~${fmtNum(ethers.formatUnits(outA, decA))} ${tokenA} + ~${fmtNum(ethers.formatUnits(outB, decB))} ${tokenB}. Confirm in your wallet…`)
       const txs: any[] = []
-
       const lpC = new ethers.Contract(pair, ERC20_ABI, provider)
       const lpAllowance: bigint = await lpC.allowance(address, ROUTER)
-      if (lpAllowance < lpToRemove) {
-        txs.push(buildLpApproveTx(pair, ROUTER, lpToRemove))
-      }
-
-      txs.push(
-        buildRemoveLiquidityTx({
-          tokenA: A,
-          tokenB: B,
-          liquidity: lpToRemove,
-          amountAMin: minA,
-          amountBMin: minB,
-          recipient: address,
-          deadlineSec: 10 * 60,
-        })
-      )
-
+      if (lpAllowance < lpToRemove) txs.push(buildLpApproveTx(pair, ROUTER, lpToRemove))
+      txs.push(buildRemoveLiquidityTx({ tokenA: A, tokenB: B, liquidity: lpToRemove, amountAMin: minA, amountBMin: minB, recipient: address, deadlineSec: 10 * 60 }))
       const safeTxs = txs.map(normalizeTx)
-
-      const results = await sessionSendTransactions(
-        {
-          chainId: ALK_CHAIN_ID,
-          txs: safeTxs,
-          failFast: true,
-          preflight: REMOVE_PREFLIGHT,
-        } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
-        'remove_liquidity',
-      )
-
-      const firstFail = results?.find((r: any) => r?.ok === false)
-      if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
-
-      const hashes: string[] = (results || [])
-        .map((r: any) => r?.txHash as string | undefined)
-        .filter(Boolean) as string[]
-
-      const labels = safeTxs.map((t: any) => {
-        const toAddr = (t?.to || '').toLowerCase()
-        if (toAddr === pair.toLowerCase()) return 'approve LP'
-        if (toAddr === ROUTER.toLowerCase()) return 'removeLiquidity'
-        return 'tx'
-      })
-
+      const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: REMOVE_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'remove_liquidity')
+      const firstFail = results?.find((r: any) => r?.ok === false); if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
+      const hashes: string[] = (results || []).map((r: any) => r?.txHash).filter(Boolean) as string[]
+      const labels = safeTxs.map((t: any) => { const toAddr = (t?.to || '').toLowerCase(); if (toAddr === pair.toLowerCase()) return 'approve LP'; if (toAddr === ROUTER.toLowerCase()) return 'removeLiquidity'; return 'tx' })
       setInfo('Waiting for on-chain confirmation…')
-
-      let anyFail = false
-      let lastReason: string | null = null
-
+      let anyFail = false; let lastReason: string | null = null
       for (let i = 0; i < hashes.length; i++) {
-        const h = hashes[i]
-        const r = await waitForReceipt(provider, h)
-
-        if (!r) {
-          anyFail = true
-        } else if (r.status === 1) {
-          if (labels[i] === 'removeLiquidity') {
-            await logAmmEventsFromReceipt({
-              provider,
-              chainId: ALK_CHAIN_ID,
-              receipt: r,
-              action: 'remove_liquidity',
-              user: address,
-              ain: ainLoading ? null : (ain ?? null),
-              tokenA,
-              tokenB,
-              pairHint: pairAddr !== '—' ? pairAddr : null,
-            })
-          }
+        const h = hashes[i]; const r = await waitForReceipt(provider, h)
+        if (!r) { anyFail = true } else if (r.status === 1) {
+          if (labels[i] === 'removeLiquidity') await logAmmEventsFromReceipt({ provider, chainId: ALK_CHAIN_ID, receipt: r, action: 'remove_liquidity', user: address, ain: ainLoading ? null : (ain ?? null), tokenA, tokenB, pairHint: pairAddr !== '—' ? pairAddr : null })
         } else {
           anyFail = true
           let reason = await getRevertReasonFromChain(provider, h)
-
-          if (!reason) {
-            const txObj = await provider.getTransaction(h)
-            if (txObj?.gasLimit && r.gasUsed >= txObj.gasLimit - 1000n) {
-              reason = `Out of gas (gasUsed≈gasLimit). Increase gasLimit.`
-            }
-          }
-
+          if (!reason) { const txObj = await provider.getTransaction(h); if (txObj?.gasLimit && r.gasUsed >= txObj.gasLimit - 1000n) reason = 'Out of gas (gasUsed≈gasLimit). Increase gasLimit.' }
           lastReason = reason ?? 'reverted (no reason decoded)'
         }
       }
-
-      if (anyFail) {
-        setErr(lastReason ? `removeLiquidity reverted: ${lastReason}` : 'One or more transactions reverted or did not confirm.')
-        setInfo(null)
-      } else {
-        setInfo('Liquidity removed ✅')
-      }
-
-      await refreshBalances()
-      await refreshPositionAndReserves()
-    } catch (e: any) {
-      setErr(e?.shortMessage || e?.message || 'Remove Liquidity failed.')
-      setInfo(null)
-    } finally {
-      setBusy(false)
-    }
+      if (anyFail) { setErr(lastReason ? `removeLiquidity reverted: ${lastReason}` : 'One or more transactions reverted or did not confirm.'); setInfo(null) } else setInfo('Liquidity removed ✅')
+      await refreshBalances(); await refreshPositionAndReserves()
+    } catch (e: any) { setErr(e?.shortMessage || e?.message || 'Remove Liquidity failed.'); setInfo(null) } finally { setBusy(false) }
   }
 
   async function onRepairPool() {
-    setErr(null)
-    setInfo(null)
-    setBusy(true)
-
+    setErr(null); setInfo(null); setBusy(true)
     try {
       if (!walletConnected || !address) throw new Error('Connect your wallet to continue.')
       if (!isAdmin) throw new Error('Admin only.')
       if (!pairAddr || pairAddr === '—') throw new Error('No pair found.')
-
-      const A = TOKENS[tokenA]
-      const B = TOKENS[tokenB]
+      const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
       const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
-
-      const aStr = clampAmountStr(repairA.trim())
-      const bStr = clampAmountStr(repairB.trim())
-
-      const donateA = aStr ? ethers.parseUnits(aStr, decA) : 0n
-      const donateB = bStr ? ethers.parseUnits(bStr, decB) : 0n
+      const aStr = clampAmountStr(repairA.trim()); const bStr = clampAmountStr(repairB.trim())
+      const donateA = aStr ? ethers.parseUnits(aStr, decA) : 0n; const donateB = bStr ? ethers.parseUnits(bStr, decB) : 0n
       if (donateA <= 0n && donateB <= 0n) throw new Error('Enter a donate amount.')
-
-      // donate uses ERC20 addresses (native ALKE side is WAKE via tokenAddressForPath)
-      const addrA = tokenAddressForPath(A)
-      const addrB = tokenAddressForPath(B)
-
+      const addrA = tokenAddressForPath(A); const addrB = tokenAddressForPath(B)
       const txs: any[] = []
       if (donateA > 0n) txs.push(buildErc20TransferTx(addrA, pairAddr, donateA))
       if (donateB > 0n) txs.push(buildErc20TransferTx(addrB, pairAddr, donateB))
-
-      // sync() to update reserves
       txs.push({ to: pairAddr, data: PAIR_SYNC_IFACE.encodeFunctionData('sync', []), value: 0n })
-
       const safeTxs = txs.map(normalizeTx)
-
       setInfo('Repair queued. Confirm in your wallet…')
-
-      const results = await sessionSendTransactions(
-        { chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: { flow: 'repair_pool_v1' } } as any,
-        { app: APP_NAME, amvaultUrl: AMVAULT_URL },
-        'repair_pool',
-      )
-
-      const firstFail = results?.find((r: any) => r?.ok === false)
-      if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
-
+      const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: { flow: 'repair_pool_v1' } } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'repair_pool')
+      const firstFail = results?.find((r: any) => r?.ok === false); if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
       const hashes: string[] = (results || []).map((r: any) => r?.txHash).filter(Boolean)
       setInfo('Waiting for confirmation…')
-
-      // wait for last tx (sync) to log Sync event
       const syncHash = hashes[hashes.length - 1]
       const receipt = await waitForReceipt(provider, syncHash)
-      if (receipt && receipt.status === 1) {
-        await logAmmEventsFromReceipt({
-          provider,
-          chainId: ALK_CHAIN_ID,
-          receipt,
-          action: 'admin_repair',
-          user: address,
-          ain: ainLoading ? null : (ain ?? null),
-          tokenA,
-          tokenB,
-          pairHint: pairAddr,
-        })
-      }
-
+      if (receipt && receipt.status === 1) await logAmmEventsFromReceipt({ provider, chainId: ALK_CHAIN_ID, receipt, action: 'admin_repair', user: address, ain: ainLoading ? null : (ain ?? null), tokenA, tokenB, pairHint: pairAddr })
       setInfo('Pool repaired ✅ (donation + sync)')
       await refreshPositionAndReserves()
-    } catch (e: any) {
-      setErr(e?.shortMessage || e?.message || 'Repair failed.')
-      setInfo(null)
-    } finally {
-      setBusy(false)
-    }
+    } catch (e: any) { setErr(e?.shortMessage || e?.message || 'Repair failed.'); setInfo(null) } finally { setBusy(false) }
   }
 
-
-  function trim6(s: string) {
-    if (!s.includes('.')) return s
-    const [a, b] = s.split('.')
-    return `${a}.${(b || '').slice(0, 6)}`
-  }
+  function trim6(s: string) { if (!s.includes('.')) return s; const [a, b] = s.split('.'); return `${a}.${(b || '').slice(0, 6)}` }
 
   function syncBFromA(aStr: string) {
     if (!poolHasReserves || rawReserveA === 0n || rawReserveB === 0n) return
-    const v = clampAmountStr(aStr)
-    if (!v || Number(v) <= 0) return setAmtB('')
-    try {
-      const aIn = ethers.parseUnits(v, decAState)
-      const bOut = quote(aIn, rawReserveA, rawReserveB)
-      setAmtB(trim6(ethers.formatUnits(bOut, decBState)))
-    } catch { }
+    const v = clampAmountStr(aStr); if (!v || Number(v) <= 0) return setAmtB('')
+    try { const aIn = ethers.parseUnits(v, decAState); const bOut = quote(aIn, rawReserveA, rawReserveB); setAmtB(trim6(ethers.formatUnits(bOut, decBState))) } catch { }
   }
 
   function syncAFromB(bStr: string) {
     if (!poolHasReserves || rawReserveA === 0n || rawReserveB === 0n) return
-    const v = clampAmountStr(bStr)
-    if (!v || Number(v) <= 0) return setAmtA('')
-    try {
-      const bIn = ethers.parseUnits(v, decBState)
-      const aOut = quote(bIn, rawReserveB, rawReserveA)
-      setAmtA(trim6(ethers.formatUnits(aOut, decAState)))
-    } catch { }
+    const v = clampAmountStr(bStr); if (!v || Number(v) <= 0) return setAmtA('')
+    try { const bIn = ethers.parseUnits(v, decBState); const aOut = quote(bIn, rawReserveB, rawReserveA); setAmtA(trim6(ethers.formatUnits(aOut, decAState))) } catch { }
   }
 
   const balADisplay = hideBalances ? '•••' : (loadingBalances ? '…' : balA)
   const balBDisplay = hideBalances ? '•••' : (loadingBalances ? '…' : balB)
 
-  // USD values for the input amounts
   const amtANum = Number(clampAmountStr(amtA.trim())) || 0
   const amtBNum = Number(clampAmountStr(amtB.trim())) || 0
 
   const ratioAtoBNum: number | null = (() => {
     if (!poolHasReserves || rawReserveA === 0n || rawReserveB === 0n) return null
-    try {
-      const oneA = ethers.parseUnits('1', decAState)
-      const outB = quote(oneA, rawReserveA, rawReserveB)
-      return Number(ethers.formatUnits(outB, decBState))
-    } catch { return null }
+    try { const oneA = ethers.parseUnits('1', decAState); const outB = quote(oneA, rawReserveA, rawReserveB); return Number(ethers.formatUnits(outB, decBState)) } catch { return null }
   })()
 
   const nonStableSym = tokenA.toUpperCase() === STABLE_SYM ? tokenB : tokenA
   const altUsdPerToken: number | null =
-    tokenA.toUpperCase() === STABLE_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0
-      ? STABLE_USD_PRICE / ratioAtoBNum
-      : tokenB.toUpperCase() === STABLE_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0
-        ? ratioAtoBNum * STABLE_USD_PRICE
-        : null
+    tokenA.toUpperCase() === STABLE_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0 ? STABLE_USD_PRICE / ratioAtoBNum
+      : tokenB.toUpperCase() === STABLE_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0 ? ratioAtoBNum * STABLE_USD_PRICE : null
 
   const usdA: number | null =
-    tokenA.toUpperCase() === STABLE_SYM && amtANum > 0
-      ? amtANum * STABLE_USD_PRICE
-      : tokenB.toUpperCase() === STABLE_SYM && altUsdPerToken !== null && amtANum > 0
-        ? amtANum * altUsdPerToken
-        : null
+    tokenA.toUpperCase() === STABLE_SYM && amtANum > 0 ? amtANum * STABLE_USD_PRICE
+      : tokenB.toUpperCase() === STABLE_SYM && altUsdPerToken !== null && amtANum > 0 ? amtANum * altUsdPerToken : null
 
   const usdB: number | null =
-    tokenB.toUpperCase() === STABLE_SYM && amtBNum > 0
-      ? amtBNum * STABLE_USD_PRICE
-      : tokenA.toUpperCase() === STABLE_SYM && altUsdPerToken !== null && amtBNum > 0
-        ? amtBNum * altUsdPerToken
-        : null
+    tokenB.toUpperCase() === STABLE_SYM && amtBNum > 0 ? amtBNum * STABLE_USD_PRICE
+      : tokenA.toUpperCase() === STABLE_SYM && altUsdPerToken !== null && amtBNum > 0 ? amtBNum * altUsdPerToken : null
 
-  const chartUsdHint = altUsdPerToken !== null
-    ? { sym: nonStableSym, price: altUsdPerToken }
-    : undefined
+  // Close settings on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) { if (!settingsRef.current?.contains(e.target as Node)) setSettingsOpen(false) }
+    if (settingsOpen) document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [settingsOpen])
+
+  // Close token modal on Escape
+  useEffect(() => {
+    function handler(e: KeyboardEvent) { if (e.key === 'Escape') setTokenModalFor(null) }
+    if (tokenModalFor) document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [tokenModalFor])
+
+  // ── Derived action state ──────────────────────────────────────────
+  const insuffA = !loadingBalances && walletConnected && !!address && amtANum > 0 && amtANum > balANum
+  const insuffB = !loadingBalances && walletConnected && !!address && amtBNum > 0 && amtBNum > balBNum
 
   return (
-    <div className="page">
-      <div className="mx-auto w-full max-w-3xl">
+    <>
+      <div className="jlf-app">
 
+        {/* LEFT: position card + pool info */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-        <WalletSummaryCard
-          walletConnected={walletConnected}
-          address={address}
-          ain={ainLoading ? null : ain}
-          stats={[
-            { label: tokenA, value: balADisplay },
-            { label: tokenB, value: balBDisplay },
-          ]}
-          notConnectedHint="Connect your wallet to add liquidity."
-        />
+          {/* Your LP Position */}
+          <div className="jlf-panel" style={{ padding: '24px' }}>
 
-        {/* Low MAH balance widget */}
-        {walletConnected && (() => {
-          const mahIsA = tokenA === STABLE_SYM
-          const mahIsB = tokenB === STABLE_SYM
-          if (!mahIsA && !mahIsB) return null
-          const mahAmt = Number(clampAmountStr(mahIsA ? amtA : amtB))
-          const mahBal = mahIsA ? balANum : balBNum
-          if (!mahAmt || mahAmt <= mahBal + 0.01) return null
-          return (
-            <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <div className="h-1 w-full bg-gradient-to-r from-jlfTomato/80 via-orange-400 to-amber-400" />
-              <div className="flex items-center gap-4 px-5 py-4">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-jlfTomato/10 dark:bg-jlfTomato/15">
-                  <CircleDollarSign className="h-5 w-5 text-jlfTomato" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="font-semibold text-slate-900 dark:text-slate-100">
-                    Your MAH balance is low
-                  </div>
-                  <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                    You need {mahAmt.toLocaleString('en-US', { maximumFractionDigits: 2 })} MAH but only have {mahBal.toLocaleString('en-US', { maximumFractionDigits: 2 })}. Get more MAH to continue.
-                  </div>
-                </div>
-                <Link
-                  to="/swap?from=USDC&to=MAH"
-                  className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-jlfTomato px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:opacity-80 transition"
-                >
-                  Get MAH
-                </Link>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>
+              <div style={{ fontSize: 11.5, color: 'var(--muted-2)', textTransform: 'uppercase', letterSpacing: '0.07em', fontWeight: 600 }}>Your LP position</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <span className="jlf-tcoin" style={{ background: tColor(tokenA), width: 26, height: 26, fontSize: 11, borderRadius: '50%', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700 }}>{tGlyph(tokenA)}</span>
+                <span className="jlf-tcoin" style={{ background: tColor(tokenB), width: 26, height: 26, fontSize: 11, borderRadius: '50%', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700, marginLeft: -10 }}>{tGlyph(tokenB)}</span>
               </div>
             </div>
-          )
-        })()}
 
-        <div className="grid gap-4 lg:grid-cols-[1fr_380px] lg:items-start">
-          {/* Add liquidity */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Add Liquidity</div>
-              </div>
-              <Badge>Network: Alkebuleum</Badge>
-            </div>
-
-            <div className="mt-4 flex flex-col">
-
-              {/* Token A box */}
-              <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="flex items-center gap-3">
-                  <select
-                    className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-900 outline-none cursor-pointer hover:bg-slate-200 focus:ring-2 focus:ring-orange-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus:ring-orange-500/20"
-                    value={tokenA}
-                    onChange={(e) => setTokenA(e.target.value as TokenKey)}
-                  >
-                    {tokenOptions.map((k) => (
-                      <option key={k} value={k} disabled={k === tokenB}>{k}</option>
-                    ))}
-                  </select>
-                  <input
-                    value={amtA}
-                    onChange={(e) => {
-                      const v = clampAmountStr(e.target.value)
-                      didUserEditRef.current = true
-                      setLastEdited('A')
-                      setAmtA(v)
-                      syncBFromA(v)
-                    }}
-                    className="w-full min-w-0 bg-transparent text-right text-2xl font-semibold text-slate-900 outline-none placeholder:text-slate-300 dark:text-slate-100 dark:placeholder:text-slate-700"
-                    placeholder="0"
-                    inputMode="decimal"
-                  />
-                </div>
-                <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                  <span>Balance: {balADisplay}</span>
-                  {usdA !== null && (
-                    <span className="tabular-nums">
-                      ≈&nbsp;${usdA.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
+            {/* Underlying assets */}
+            {underAUi !== '—' ? (
+              <div className="jlf-pos-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
+                <div style={{ padding: '14px 16px', background: 'var(--leg)', border: '1px solid var(--line-2)', borderRadius: 16 }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 6 }}>{tokenA}</div>
+                  <div style={{ fontFamily: '"DM Mono"', fontSize: 18, fontWeight: 600, color: 'var(--white)', lineHeight: 1.2 }}>{underAUi}</div>
+                  {usdA !== null && underAUi !== '—' && (
+                    <div style={{ marginTop: 4, fontFamily: '"DM Mono"', fontSize: 11.5, color: 'var(--muted-2)' }}>
+                      ≈ ${(Number(underAUi.replace(/,/g, '')) * (usdA / amtANum || 0)).toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    </div>
                   )}
                 </div>
-              </div>
-
-              {/* Centered swap-pair button */}
-              <div className="flex justify-center -my-3.5 relative z-10">
-                <button
-                  onClick={() => {
-                    const [a, b] = [tokenA, tokenB]
-                    const [va, vb] = [amtA, amtB]
-                    setTokenA(b); setTokenB(a)
-                    setAmtA(vb); setAmtB(va)
-                    setLastEdited('A')
-                    didUserEditRef.current = true
-                  }}
-                  title="Swap token positions"
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:scale-110 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
-                >
-                  <ArrowDownUp className="h-3.5 w-3.5 text-slate-600 dark:text-slate-300" />
-                </button>
-              </div>
-
-              {/* Token B box */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/60">
-                <div className="flex items-center gap-3">
-                  <select
-                    className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-900 outline-none cursor-pointer hover:bg-slate-200 focus:ring-2 focus:ring-orange-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus:ring-orange-500/20"
-                    value={tokenB}
-                    onChange={(e) => setTokenB(e.target.value as TokenKey)}
-                  >
-                    {tokenOptions.map((k) => (
-                      <option key={k} value={k} disabled={k === tokenA}>{k}</option>
-                    ))}
-                  </select>
-                  <input
-                    value={amtB}
-                    onChange={(e) => {
-                      const v = clampAmountStr(e.target.value)
-                      didUserEditRef.current = true
-                      setLastEdited('B')
-                      setAmtB(v)
-                      syncAFromB(v)
-                    }}
-                    className="w-full min-w-0 bg-transparent text-right text-2xl font-semibold text-slate-900 outline-none placeholder:text-slate-300 dark:text-slate-100 dark:placeholder:text-slate-700"
-                    placeholder="0"
-                    inputMode="decimal"
-                  />
-                </div>
-                <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                  <span>Balance: {balBDisplay}</span>
-                  {usdB !== null && (
-                    <span className="tabular-nums">
-                      ≈&nbsp;${usdB.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  )}
+                <div style={{ padding: '14px 16px', background: 'var(--leg)', border: '1px solid var(--line-2)', borderRadius: 16 }}>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 6 }}>{tokenB}</div>
+                  <div style={{ fontFamily: '"DM Mono"', fontSize: 18, fontWeight: 600, color: 'var(--white)', lineHeight: 1.2 }}>{underBUi}</div>
                 </div>
               </div>
-            </div>
-
-            {/* Rate + Slippage info bar */}
-            <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
-              {poolHasReserves && ratioAtoBNum !== null ? (
-                <div className="mb-2.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">
-                  1&nbsp;{tokenA}&nbsp;≈&nbsp;{fmtRate(ratioAtoBNum)}&nbsp;{tokenB}
-                  {altUsdPerToken !== null && (
-                    <span className="ml-2 text-slate-400 dark:text-slate-500">
-                      ·&ensp;1&nbsp;{nonStableSym}&nbsp;≈&nbsp;${fmtUsd(altUsdPerToken)}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <div className="mb-2.5 text-xs text-slate-400 dark:text-slate-500">
-                  No pool yet — first deposit sets the price.
-                </div>
-              )}
-              <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                <span>Slippage</span>
-                <div className="flex items-center gap-1.5">
-                  {[30, 50, 100].map((bps) => (
-                    <button
-                      key={bps}
-                      className={[
-                        'rounded-full px-2.5 py-1 font-semibold transition',
-                        slippageBps === bps
-                          ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
-                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
-                      ].join(' ')}
-                      onClick={() => setSlippageBps(bps)}
-                    >
-                      {(bps / 100).toFixed(2)}%
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {err && (
-              <div className="mt-3 whitespace-pre-wrap rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
-                {err}
+            ) : (
+              <div style={{ marginBottom: 20, padding: '20px', background: 'var(--leg)', border: '1px solid var(--line-2)', borderRadius: 16, textAlign: 'center' }}>
+                <div style={{ fontSize: 13, color: 'var(--muted)' }}>No position yet</div>
+                <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted-2)' }}>Add liquidity to start earning fees</div>
               </div>
             )}
 
-            {(() => {
-              const aNum = Number(clampAmountStr(amtA.trim()))
-              const bNum = Number(clampAmountStr(amtB.trim()))
-              const insuffA = !loadingBalances && walletConnected && !!address && aNum > 0 && aNum > balANum
-              const insuffB = !loadingBalances && walletConnected && !!address && bNum > 0 && bNum > balBNum
-              const insuff = insuffA || insuffB
-              return (
-                <button
-                  onClick={onAddLiquidity}
-                  disabled={!walletConnected || !address || busy || (lpGate.blocked && !isAdmin) || insuff}
-                  className="mt-4 w-full rounded-xl bg-orange-600 px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {busy
-                    ? 'Confirming on-chain…'
-                    : insuffA
-                      ? `Insufficient ${tokenA} balance`
-                      : insuffB
-                        ? `Insufficient ${tokenB} balance`
-                        : 'Preview & Add'}
-                </button>
-              )
-            })()}
+            {/* LP share + LP tokens */}
+            {lpShareUi !== '—' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
+                <div>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted-2)', marginBottom: 4 }}>Pool share</div>
+                  <div style={{ fontFamily: '"DM Mono"', fontSize: 17, fontWeight: 600, color: 'var(--green)' }}>{lpShareUi}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11.5, color: 'var(--muted-2)', marginBottom: 4 }}>LP tokens</div>
+                  <div style={{ fontFamily: '"DM Mono"', fontSize: 17, fontWeight: 600, color: 'var(--white)' }}>{lpBalUi}</div>
+                </div>
+              </div>
+            )}
 
-            {addLiqDialogDetails && !addLiqDialogOpen && (
-              <button
-                onClick={() => setAddLiqDialogOpen(true)}
-                className="mt-2 w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200"
-              >
-                View liquidity status →
-              </button>
+            {/* Fees / P&L */}
+            {feesPnlUi !== '—' && (
+              <div style={{ padding: '12px 14px', background: 'rgba(54,211,153,.06)', border: '1px solid rgba(54,211,153,.14)', borderRadius: 14 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Returns</div>
+                <div style={{ fontFamily: '"DM Mono"', fontSize: 13, color: 'var(--muted)' }}>{feesPnlUi}</div>
+                {feesPnlNote && <div style={{ marginTop: 4, fontSize: 11, color: 'var(--muted-2)' }}>{feesPnlNote}</div>}
+              </div>
             )}
           </div>
 
-          {/* Position + pool state */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-3">
+          {/* Pool info */}
+          <div className="jlf-panel" style={{ padding: '20px 24px' }}>
+            <div style={{ fontSize: 11.5, color: 'var(--muted-2)', textTransform: 'uppercase', letterSpacing: '0.07em', fontWeight: 600, marginBottom: 16 }}>
+              Pool reserves
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: poolHasReserves ? 14 : 0 }}>
               <div>
-                <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Pool</div>
+                <div style={{ fontFamily: '"DM Mono"', fontSize: 16, fontWeight: 500, color: 'var(--white)', lineHeight: 1.2 }}>{reserveAUi}</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{tokenA}</div>
               </div>
-
-              <div className="flex items-center gap-2">
-                <Badge>Fee: 0.30%</Badge>
-              </div>
-            </div>
-
-            {/* Your position — personalized, shown first */}
-            <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 dark:border-orange-500/20 dark:bg-orange-500/5">
-              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
-                <div className="text-xs font-semibold text-orange-700 dark:text-orange-400">
-                  {ain ? `AIN-${ain}'s position` : 'Your position'}
-                </div>
-                <div className="text-xs font-bold text-orange-700 dark:text-orange-400">{lpShareUi}</div>
-              </div>
-              <div className="mt-1 flex flex-wrap items-baseline gap-x-1 gap-y-0.5 text-base font-bold tabular-nums text-slate-900 dark:text-slate-100">
-                {underAUi !== '—' ? (
-                  <>
-                    <span>{underAUi}&nbsp;<span className="text-sm font-semibold text-slate-500">{tokenA}</span></span>
-                    <span className="text-slate-300 dark:text-slate-600">/</span>
-                    <span>{underBUi}&nbsp;<span className="text-sm font-semibold text-slate-500">{tokenB}</span></span>
-                  </>
-                ) : (
-                  <span className="text-sm font-normal text-slate-400 dark:text-slate-500">No position yet</span>
-                )}
+              <div>
+                <div style={{ fontFamily: '"DM Mono"', fontSize: 16, fontWeight: 500, color: 'var(--white)', lineHeight: 1.2 }}>{reserveBUi}</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>{tokenB}</div>
               </div>
             </div>
-
-            {/* Pool stats */}
-            <div className="mt-3 grid gap-2">
-              {/* Reserves */}
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">Pool reserves</div>
-                <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1 gap-y-0.5 text-sm font-semibold tabular-nums text-slate-900 dark:text-slate-100">
-                  <span>{reserveAUi} {tokenA}</span>
-                  <span className="text-slate-400">/</span>
-                  <span>{reserveBUi} {tokenB}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* See details toggle */}
-            <button
-              type="button"
-              onClick={() => setPoolDetailsOpen((v) => !v)}
-              className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-            >
-              {poolDetailsOpen ? 'Hide details' : 'See details'}
-            </button>
-
-            {poolDetailsOpen && (
-              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm dark:border-slate-800 dark:bg-slate-900">
-                <div className="grid gap-2">
-                  <Row label="Pair address" value={pairAddr === '—' ? '—' : pairAddr} mono />
-                  <Row label="LP balance" value={lpBalUi} />
-                  <Row label="LP total supply" value={lpTotalSupplyUi} />
-                  <Row label={`1 ${tokenB} ≈`} value={poolHasReserves ? `${ratioBtoA} ${tokenA}` : '—'} />
-                  <Row label="Fees / P&L" value={feesPnlUi} />
-                  {feesPnlNote && (
-                    <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">{feesPnlNote}</div>
-                  )}
-
-                </div>
+            {poolHasReserves && ratioAtoBNum !== null && (
+              <div style={{ paddingTop: 14, borderTop: '1px solid var(--line-2)', fontFamily: '"DM Mono"', fontSize: 12.5, color: 'var(--muted)', display: 'flex', justifyContent: 'space-between' }}>
+                <span>1&nbsp;{tokenA}&nbsp;≈&nbsp;{fmtRate(ratioAtoBNum)}&nbsp;{tokenB}</span>
+                {altUsdPerToken !== null && <span>1&nbsp;{nonStableSym}&nbsp;≈&nbsp;${fmtUsd(altUsdPerToken)}</span>}
               </div>
             )}
+            {lpTotalSupplyUi !== '—' && (
+              <div style={{ marginTop: 8, fontFamily: '"DM Mono"', fontSize: 12.5, color: 'var(--muted-2)' }}>
+                LP supply: {lpTotalSupplyUi}
+              </div>
+            )}
+          </div>
+        </div>
 
-            {/* Manage (remove) toggle */}
-            <button
-              type="button"
-              onClick={() => setPoolManageOpen((v) => !v)}
-              className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-            >
-              {poolManageOpen ? 'Hide manage' : 'Manage liquidity'}
-            </button>
+        {/* RIGHT: Liquidity card */}
+        <div className="jlf-swap-card jlf-swap-col">
 
-            {poolManageOpen && (
-              <div className="mt-3 border-t border-slate-200 pt-4 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <div className="text-base font-bold text-slate-900 dark:text-slate-100">Remove</div>
-                  <div className="text-sm font-semibold text-slate-700 tabular-nums dark:text-slate-200">
-                    {removePct}%
-                  </div>
+          {/* ── Header: tabs + settings ── */}
+          <div className="jlf-swap-top" ref={settingsRef}>
+            <div className="jlf-stabs">
+              <button className={activeTab === 'add' ? 'active' : ''} onClick={() => { setActiveTab('add'); setErr(null) }}>Add</button>
+              <button className={activeTab === 'remove' ? 'active' : ''} onClick={() => { setActiveTab('remove'); setErr(null) }}>Remove</button>
+            </div>
+            <div className="jlf-stools">
+              <button className="jlf-gear" onClick={() => setSettingsOpen(v => !v)} aria-label="Settings">
+                <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+                  <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7"/>
+                  <path d="M19.4 13.5a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-2.18-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008.6 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-2.18 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 8.6a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 002.18.33H9.5a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 2.18V12a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" strokeWidth="1.5"/>
+                </svg>
+                <span className="jlf-slip-badge">{(slippageBps / 100).toFixed(2)}%</span>
+              </button>
+            </div>
+            <div className={`jlf-pop${settingsOpen ? ' open' : ''}`}>
+              <h4>Max slippage</h4>
+              <div className="jlf-slips">
+                {[30, 50, 100].map((bps) => (
+                  <button key={bps} className={slippageBps === bps ? 'active' : ''} onClick={() => { setSlippageBps(bps); setSettingsOpen(false) }}>
+                    {(bps / 100).toFixed(2)}%
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ═══════════ ADD TAB ═══════════ */}
+          {activeTab === 'add' && (
+            <>
+              {/* Token A leg */}
+              <div className="jlf-leg">
+                <div className="jlf-leg-top">
+                  <span className="lab">{tokenA}</span>
+                  <span className="bal">Balance:&nbsp;<b>{balADisplay}</b></span>
                 </div>
+                <div className="jlf-leg-row">
+                  <input
+                    className="jlf-amt"
+                    value={amtA}
+                    onChange={(e) => {
+                      const v = clampAmountStr(e.target.value)
+                      didUserEditRef.current = true; setLastEdited('A'); setAmtA(v); syncBFromA(v)
+                    }}
+                    placeholder="0"
+                    inputMode="decimal"
+                  />
+                  <button className="jlf-tokbtn" onClick={() => { setTokenSearch(''); setTokenModalFor('A') }}>
+                    <span className="jlf-tcoin" style={{ background: tColor(tokenA), width: 26, height: 26, fontSize: 11 }}>{tGlyph(tokenA)}</span>
+                    <b>{tokenA}</b>
+                    <span className="caret">▾</span>
+                  </button>
+                </div>
+                <div className="jlf-leg-sub">
+                  <span>{usdA !== null ? `≈ $${usdA.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null}</span>
+                  <span className="jlf-max" onClick={() => { const v = balA.replace(/,/g, ''); if (v && v !== '—' && !isNaN(Number(v))) { setAmtA(v); syncBFromA(v); didUserEditRef.current = true; setLastEdited('A') } }}>Max</span>
+                </div>
+              </div>
 
-                <div className="mt-2 flex flex-wrap gap-2">
+              {/* Link connector */}
+              <div className="jlf-flip">
+                <button
+                  onClick={() => {
+                    const [a, b] = [tokenA, tokenB]; const [va, vb] = [amtA, amtB]
+                    setTokenA(b); setTokenB(a); setAmtA(vb); setAmtB(va); setLastEdited('A'); didUserEditRef.current = true
+                  }}
+                  title="Swap token positions"
+                >
+                  <ArrowDownUp style={{ width: 16, height: 16 }} />
+                </button>
+              </div>
+
+              {/* Token B leg */}
+              <div className="jlf-leg" style={{ marginTop: 6 }}>
+                <div className="jlf-leg-top">
+                  <span className="lab">{tokenB}</span>
+                  <span className="bal">Balance:&nbsp;<b>{balBDisplay}</b></span>
+                </div>
+                <div className="jlf-leg-row">
+                  <input
+                    className="jlf-amt"
+                    value={amtB}
+                    onChange={(e) => {
+                      const v = clampAmountStr(e.target.value)
+                      didUserEditRef.current = true; setLastEdited('B'); setAmtB(v); syncAFromB(v)
+                    }}
+                    placeholder="0"
+                    inputMode="decimal"
+                  />
+                  <button className="jlf-tokbtn" onClick={() => { setTokenSearch(''); setTokenModalFor('B') }}>
+                    <span className="jlf-tcoin" style={{ background: tColor(tokenB), width: 26, height: 26, fontSize: 11 }}>{tGlyph(tokenB)}</span>
+                    <b>{tokenB}</b>
+                    <span className="caret">▾</span>
+                  </button>
+                </div>
+                <div className="jlf-leg-sub">
+                  <span>{usdB !== null ? `≈ $${usdB.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : null}</span>
+                  <span className="jlf-max" onClick={() => { const v = balB.replace(/,/g, ''); if (v && v !== '—' && !isNaN(Number(v))) { setAmtB(v); syncAFromB(v); didUserEditRef.current = true; setLastEdited('B') } }}>Max</span>
+                </div>
+              </div>
+
+              {/* Rate / details */}
+              <div className="jlf-details">
+                <div className="jlf-det-row" onClick={() => setPoolDetailsOpen(v => !v)}>
+                  <span className="l">
+                    {poolHasReserves && ratioAtoBNum !== null
+                      ? `1 ${tokenA} ≈ ${fmtRate(ratioAtoBNum)} ${tokenB}`
+                      : 'No pool yet — first deposit sets the price'}
+                  </span>
+                  <span className="r">
+                    <span>{(slippageBps / 100).toFixed(2)}% slip</span>
+                    <span className="ex" style={{ display: 'inline-block', transform: poolDetailsOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
+                  </span>
+                </div>
+                <div className={`jlf-det-body${poolDetailsOpen ? ' open' : ''}`}>
+                  {lpShareUi !== '—' && (
+                    <div className="jlf-det-line"><span className="k">Your share</span><span className="v">{lpShareUi}</span></div>
+                  )}
+                  {poolHasReserves && (
+                    <div className="jlf-det-line"><span className="k">1 {tokenB} ≈</span><span className="v">{ratioBtoA} {tokenA}</span></div>
+                  )}
+                  <div className="jlf-det-line"><span className="k">Slippage</span><span className="v">{(slippageBps / 100).toFixed(2)}%</span></div>
+                  {feesPnlUi !== '—' && (
+                    <div className="jlf-det-line"><span className="k">P&amp;L / Fees</span><span className="v">{feesPnlUi}</span></div>
+                  )}
+                  {pairAddr !== '—' && (
+                    <div className="jlf-det-line"><span className="k">Pair</span><span className="v" style={{ fontFamily: '"DM Mono"', fontSize: 11 }}>{pairAddr.slice(0, 10)}…{pairAddr.slice(-6)}</span></div>
+                  )}
+                </div>
+              </div>
+
+              {/* Pool gate warning */}
+              {lpGate.blocked && !isAdmin && (
+                <div style={{ margin: '6px 0', padding: '10px 14px', background: 'rgba(247,181,59,.08)', border: '1px solid rgba(247,181,59,.22)', borderRadius: 14, fontSize: 13, color: 'var(--gold)' }}>
+                  {lpGate.reason}
+                </div>
+              )}
+
+              {/* Error */}
+              {err && (
+                <div style={{ margin: '6px 0', padding: '10px 14px', background: 'rgba(255,90,60,.08)', border: '1px solid rgba(255,90,60,.22)', borderRadius: 14, fontSize: 13, color: 'var(--red)', whiteSpace: 'pre-wrap' }}>
+                  {err}
+                </div>
+              )}
+
+              {/* Action button */}
+              {(() => {
+                if (!walletConnected || !address) {
+                  return <button className="jlf-action" onClick={openConnectModal}>Connect Wallet</button>
+                }
+                const btnClass = insuffA || insuffB ? 'jlf-action warn' : busy || amtANum <= 0 || amtBNum <= 0 || (lpGate.blocked && !isAdmin) ? 'jlf-action idle' : 'jlf-action'
+                return (
+                  <button className={btnClass} disabled={busy} onClick={() => { if (!insuffA && !insuffB && amtANum > 0 && amtBNum > 0 && !(lpGate.blocked && !isAdmin)) void onAddLiquidity() }}>
+                    {busy ? 'Confirming on-chain…' : insuffA ? `Insufficient ${tokenA}` : insuffB ? `Insufficient ${tokenB}` : amtANum <= 0 || amtBNum <= 0 ? 'Enter amounts' : 'Add Liquidity'}
+                  </button>
+                )
+              })()}
+
+              {addLiqDialogDetails && !addLiqDialogOpen && (
+                <button onClick={() => setAddLiqDialogOpen(true)} style={{ marginTop: 7, width: '100%', background: 'rgba(54,211,153,.08)', border: '1px solid rgba(54,211,153,.2)', borderRadius: 'var(--r)', padding: '12px', fontWeight: 600, fontSize: 14, color: 'var(--green)', cursor: 'pointer', fontFamily: '"Bricolage Grotesque"' }}>
+                  View liquidity status →
+                </button>
+              )}
+
+            </>
+          )}
+
+          {/* ═══════════ REMOVE TAB ═══════════ */}
+          {activeTab === 'remove' && (
+            <div style={{ padding: '8px 0' }}>
+
+              {/* Current position */}
+              <div style={{ margin: '0 0 12px', padding: '14px 16px', background: 'var(--leg)', border: '1px solid var(--line-2)', borderRadius: 18 }}>
+                <div style={{ fontSize: 11.5, color: 'var(--muted-2)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, marginBottom: 10 }}>
+                  {ain ? `AIN-${ain}'s position` : 'Your position'}
+                </div>
+                {underAUi !== '—' ? (
+                  <div style={{ fontFamily: '"DM Mono"', fontSize: 15, color: 'var(--white)', lineHeight: 1.6 }}>
+                    {underAUi}&nbsp;<span style={{ color: 'var(--muted)' }}>{tokenA}</span>
+                    <br />
+                    {underBUi}&nbsp;<span style={{ color: 'var(--muted)' }}>{tokenB}</span>
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--muted)', fontSize: 13 }}>No position yet</div>
+                )}
+                {lpShareUi !== '—' && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line-2)', fontSize: 12.5, fontFamily: '"DM Mono"', color: 'var(--muted)' }}>
+                    {lpShareUi} pool share · LP: {lpBalUi}
+                  </div>
+                )}
+              </div>
+
+              {/* Remove percentage */}
+              <div style={{ padding: '0 0 10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--white)' }}>Remove amount</div>
+                  <div style={{ fontFamily: '"DM Mono"', fontSize: 15, fontWeight: 600, color: 'var(--white)' }}>{removePct}%</div>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
                   {[25, 50, 75, 100].map((p) => (
                     <button
                       key={p}
                       onClick={() => setRemovePct(p)}
-                      className={[
-                        'rounded-full px-2.5 py-1 text-xs font-semibold transition',
-                        removePct === p
-                          ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
-                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
-                      ].join(' ')}
+                      style={{
+                        flex: 1, padding: '8px 0', borderRadius: 10, border: '1px solid',
+                        borderColor: removePct === p ? 'var(--red)' : 'var(--line)',
+                        background: removePct === p ? 'rgba(255,90,60,.12)' : 'rgba(255,255,255,.03)',
+                        color: removePct === p ? 'var(--red)' : 'var(--muted)',
+                        fontWeight: 600, fontSize: 13.5, cursor: 'pointer', transition: '.14s',
+                      }}
                     >
                       {p}%
                     </button>
                   ))}
                 </div>
-
-                <button
-                  onClick={onRemoveLiquidity}
-                  disabled={!walletConnected || !address || busy || pairAddr === '—'}
-                  className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                >
-                  {busy ? 'Confirming…' : 'Remove liquidity'}
-                </button>
-                {lpGate.blocked && (
-                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-                    <div className="font-semibold">Pool in repair mode</div>
-                    <div className="mt-1">{lpGate.reason}</div>
-                  </div>
-                )}
-
-                {isAdmin && pairAddr !== '—' && lpGate.blocked && (
-                  <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100">Admin repair (Donate + Sync)</div>
-                    <div className="mt-2 grid gap-2">
-                      <input
-                        value={repairA}
-                        onChange={(e) => setRepairA(clampAmountStr(e.target.value))}
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                        placeholder={`Donate ${tokenA}`}
-                        inputMode="decimal"
-                      />
-                      <input
-                        value={repairB}
-                        onChange={(e) => setRepairB(clampAmountStr(e.target.value))}
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
-                        placeholder={`Donate ${tokenB}`}
-                        inputMode="decimal"
-                      />
-                      <button
-                        onClick={onRepairPool}
-                        disabled={busy}
-                        className="w-full rounded-xl bg-slate-900 px-4 py-2 font-semibold text-white disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
-                      >
-                        Repair pool
-                      </button>
-                    </div>
-                  </div>
-                )}
-
               </div>
 
-            )}
-          </div>
+              {/* Pool gate warning */}
+              {lpGate.blocked && (
+                <div style={{ padding: '10px 14px', marginBottom: 10, background: 'rgba(247,181,59,.08)', border: '1px solid rgba(247,181,59,.22)', borderRadius: 14, fontSize: 13, color: 'var(--gold)' }}>
+                  <b>Pool in repair mode</b><br />{lpGate.reason}
+                </div>
+              )}
 
+              {/* Error / info */}
+              {err && (
+                <div style={{ padding: '10px 14px', marginBottom: 10, background: 'rgba(255,90,60,.08)', border: '1px solid rgba(255,90,60,.22)', borderRadius: 14, fontSize: 13, color: 'var(--red)', whiteSpace: 'pre-wrap' }}>
+                  {err}
+                </div>
+              )}
+              {info && (
+                <div style={{ padding: '10px 14px', marginBottom: 10, background: 'rgba(54,211,153,.06)', border: '1px solid rgba(54,211,153,.18)', borderRadius: 14, fontSize: 13, color: 'var(--green)' }}>
+                  {info}
+                </div>
+              )}
+
+              {/* Remove button */}
+              {(() => {
+                if (!walletConnected || !address) return <button className="jlf-action" onClick={openConnectModal}>Connect Wallet</button>
+                const disabled = busy || pairAddr === '—' || lpBalUi === '—' || lpBalUi === '0'
+                return (
+                  <button className={`jlf-action${disabled ? ' idle' : ''}`} disabled={busy} onClick={() => { if (!disabled) void onRemoveLiquidity() }}>
+                    {busy ? 'Confirming…' : 'Remove Liquidity'}
+                  </button>
+                )
+              })()}
+
+              {/* Admin repair */}
+              {isAdmin && pairAddr !== '—' && lpGate.blocked && (
+                <div style={{ marginTop: 14, padding: '14px 16px', background: 'var(--leg)', border: '1px solid var(--line-2)', borderRadius: 18 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--white)', marginBottom: 12 }}>Admin repair (Donate + Sync)</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <input
+                      className="jlf-amt"
+                      style={{ fontSize: 15, padding: '10px 14px', background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 12, color: 'var(--white)' }}
+                      value={repairA}
+                      onChange={(e) => setRepairA(clampAmountStr(e.target.value))}
+                      placeholder={`Donate ${tokenA}`}
+                      inputMode="decimal"
+                    />
+                    <input
+                      className="jlf-amt"
+                      style={{ fontSize: 15, padding: '10px 14px', background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 12, color: 'var(--white)' }}
+                      value={repairB}
+                      onChange={(e) => setRepairB(clampAmountStr(e.target.value))}
+                      placeholder={`Donate ${tokenB}`}
+                      inputMode="decimal"
+                    />
+                    <button className={`jlf-action${busy ? ' idle' : ''}`} disabled={busy} onClick={onRepairPool}>
+                      Repair pool
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
+      {/* ── Token selection modal ── */}
+      <div className={`jlf-overlay${tokenModalFor ? ' open' : ''}`} onClick={() => setTokenModalFor(null)}>
+        <div className="jlf-modal" onClick={e => e.stopPropagation()}>
+          <div className="jlf-modal-head">
+            <div className="row1">
+              <h3>Select a token</h3>
+              <button className="x" onClick={() => setTokenModalFor(null)}>✕</button>
+            </div>
+            <div className="jlf-search">
+              <svg viewBox="0 0 24 24" fill="none" width="17" height="17">
+                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2"/>
+                <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+              <input
+                value={tokenSearch}
+                onChange={e => setTokenSearch(e.target.value)}
+                placeholder="Search token"
+                autoComplete="off"
+                autoFocus={!!tokenModalFor}
+              />
+            </div>
+            <div className="jlf-popular">
+              {tokenOptions.slice(0, 5).map(sym => (
+                <button key={sym} className="jlf-ptok" onClick={() => {
+                  if (tokenModalFor === 'A') { if (sym === tokenB) { setTokenA(sym as TokenKey); setTokenB(tokenA) } else setTokenA(sym as TokenKey) }
+                  else { if (sym === tokenA) { setTokenB(sym as TokenKey); setTokenA(tokenB) } else setTokenB(sym as TokenKey) }
+                  setTokenModalFor(null)
+                }}>
+                  <span className="jlf-tcoin" style={{ background: tColor(sym), width: 22, height: 22, fontSize: 10 }}>{tGlyph(sym)}</span>
+                  {sym}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="jlf-tlist">
+            {tokenOptions
+              .filter(sym => !tokenSearch || sym.toLowerCase().includes(tokenSearch.toLowerCase()))
+              .map(sym => (
+                <div key={sym} className="it" onClick={() => {
+                  if (tokenModalFor === 'A') { if (sym === tokenB) { setTokenA(sym as TokenKey); setTokenB(tokenA) } else setTokenA(sym as TokenKey) }
+                  else { if (sym === tokenA) { setTokenB(sym as TokenKey); setTokenA(tokenB) } else setTokenB(sym as TokenKey) }
+                  setTokenModalFor(null)
+                }}>
+                  <span className="jlf-tcoin" style={{ background: tColor(sym), flexShrink: 0 }}>{tGlyph(sym)}</span>
+                  <span className="nm"><b>{sym}</b></span>
+                  <span className="hold">
+                    <b>{sym === tokenA ? balADisplay : sym === tokenB ? balBDisplay : '—'}</b>
+                  </span>
+                </div>
+              ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Add liquidity progress modal ── */}
       {addLiqDialogOpen && addLiqDialogDetails && (
         <AddLiqProgressModal
           phase={addLiqDialogPhase}
@@ -1860,281 +1111,107 @@ export default function Liquidity() {
           onClose={() => setAddLiqDialogOpen(false)}
         />
       )}
-    </div>
+    </>
   )
 }
 
 function AddLiqProgressModal({
-  phase,
-  details,
-  preAddBals,
-  balA,
-  balB,
-  lpShareUi,
-  err,
-  onClose,
+  phase, details, preAddBals, balA, balB, lpShareUi, err, onClose,
 }: {
   phase: 'confirming' | 'success' | 'error'
   details: { symA: string; symB: string; amtA: string; amtB: string; txHash: string }
   preAddBals: { a: string; b: string } | null
-  balA: string
-  balB: string
-  lpShareUi: string
-  err: string | null
-  onClose: () => void
+  balA: string; balB: string; lpShareUi: string; err: string | null; onClose: () => void
 }) {
-  const isDone = phase === 'success'
-  const isError = phase === 'error'
-  const isActive = !isDone && !isError
-
-  const steps: Array<{ label: string; sublabel?: string; done: boolean; active: boolean }> = [
-    {
-      label: 'Transaction submitted',
-      sublabel: `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}`,
-      done: true,
-      active: false,
-    },
-    {
-      label: 'Awaiting on-chain confirmation',
-      done: isDone,
-      active: isActive,
-    },
-    {
-      label: 'Liquidity added',
-      done: isDone,
-      active: false,
-    },
+  const isDone = phase === 'success'; const isError = phase === 'error'; const isActive = !isDone && !isError
+  const steps = [
+    { label: 'Transaction submitted', sublabel: `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}`, done: true, active: false },
+    { label: 'Awaiting on-chain confirmation', done: isDone, active: isActive },
+    { label: 'Liquidity added', done: isDone, active: false },
   ]
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900" style={{ maxHeight: '90vh' }}>
+  const headerBg = isDone ? 'rgba(54,211,153,.08)' : isError ? 'rgba(255,90,60,.08)' : 'rgba(247,181,59,.06)'
+  const headerColor = isDone ? 'var(--green)' : isError ? 'var(--red)' : 'var(--gold)'
 
-        {/* Header */}
-        <div
-          className={[
-            'px-5 py-4',
-            isDone
-              ? 'bg-green-50 dark:bg-green-950/30'
-              : isError
-                ? 'bg-red-50 dark:bg-red-950/30'
-                : 'bg-orange-50 dark:bg-orange-950/20',
-          ].join(' ')}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                {isDone
-                  ? 'Liquidity added'
-                  : isError
-                    ? 'Transaction failed'
-                    : 'Adding liquidity…'}
-              </div>
-              <div className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
-                {isDone
-                  ? `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} deposited.`
-                  : isError
-                    ? 'See details below.'
-                    : `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} · Alkebuleum`}
-              </div>
-            </div>
-            {(isDone || isError) && (
-              <button
-                onClick={onClose}
-                className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-              >
-                Close
-              </button>
-            )}
+  return (
+    <div className="jlf-overlay open" onClick={onClose}>
+      <div className="jlf-modal" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+        <div className="jlf-modal-head" style={{ background: headerBg, borderBottom: '1px solid var(--line-2)' }}>
+          <div className="row1">
+            <h3 style={{ color: headerColor }}>
+              {isDone ? 'Liquidity added' : isError ? 'Transaction failed' : 'Adding liquidity…'}
+            </h3>
+            {(isDone || isError) && <button className="x" onClick={onClose}>✕</button>}
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4, paddingBottom: 4 }}>
+            {isDone ? `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} deposited.`
+              : isError ? 'See details below.'
+              : `${details.amtA} ${details.symA} + ${details.amtB} ${details.symB} · Alkebuleum`}
           </div>
         </div>
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+        <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '60vh', overflowY: 'auto' }}>
 
-          {/* Step list */}
+          {/* Steps */}
           {!isError && (
             <div>
               {steps.map((step, i) => (
-                <div key={i} className="flex gap-3">
-                  <div className="flex flex-col items-center">
-                    <div
-                      className={[
-                        'relative grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold',
-                        step.done
-                          ? 'bg-green-500 text-white'
-                          : step.active
-                            ? 'bg-orange-500 text-white'
-                            : 'bg-slate-100 text-slate-400 dark:bg-slate-800',
-                      ].join(' ')}
-                    >
-                      {step.active && (
-                        <span className="absolute inset-0 animate-ping rounded-full bg-orange-400 opacity-40" />
-                      )}
-                      {step.done ? (
-                        <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <path d="M3 8l3.5 3.5L13 5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      ) : step.active ? (
-                        <svg viewBox="0 0 16 16" className="h-4 w-4 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="8" cy="8" r="6" strokeOpacity="0.25" />
-                          <path d="M8 2a6 6 0 0 1 6 6" strokeLinecap="round" />
-                        </svg>
-                      ) : (
-                        <span>{i + 1}</span>
-                      )}
+                <div key={i} style={{ display: 'flex', gap: 12 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ position: 'relative', width: 28, height: 28, borderRadius: '50%', display: 'grid', placeItems: 'center', flexShrink: 0, background: step.done ? 'var(--green)' : step.active ? 'var(--red)' : 'var(--surface-2)', color: step.done || step.active ? '#fff' : 'var(--muted)', fontWeight: 700, fontSize: 13 }}>
+                      {step.active && <span style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: 'var(--red)', opacity: 0.3, animation: 'jlf-spin .7s linear infinite' }} />}
+                      {step.done ? '✓' : step.active ? <div className="jlf-spin" style={{ width: 14, height: 14, borderWidth: 2 }} /> : i + 1}
                     </div>
-                    {i < steps.length - 1 && (
-                      <div
-                        className={[
-                          'my-1 w-0.5',
-                          step.done ? 'bg-green-400' : 'bg-slate-200 dark:bg-slate-700',
-                        ].join(' ')}
-                        style={{ minHeight: 20 }}
-                      />
-                    )}
+                    {i < steps.length - 1 && <div style={{ width: 1, flex: 1, minHeight: 20, marginBlock: 4, background: step.done ? 'var(--green)' : 'var(--line-2)' }} />}
                   </div>
-
-                  <div className="min-w-0 pb-5">
-                    <div
-                      className={[
-                        'text-sm font-semibold',
-                        step.done
-                          ? 'text-green-700 dark:text-green-400'
-                          : step.active
-                            ? 'text-orange-700 dark:text-orange-400'
-                            : 'text-slate-400 dark:text-slate-600',
-                      ].join(' ')}
-                    >
-                      {step.label}
-                    </div>
-                    {step.sublabel && (
-                      <div className="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">
-                        {step.sublabel}
-                      </div>
-                    )}
+                  <div style={{ paddingBottom: 16, minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 600, color: step.done ? 'var(--green)' : step.active ? 'var(--white)' : 'var(--muted)' }}>{step.label}</div>
+                    {step.sublabel && <div style={{ marginTop: 2, fontFamily: '"DM Mono"', fontSize: 11.5, color: 'var(--muted)' }}>{step.sublabel}</div>}
                   </div>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Error panel */}
+          {/* Error */}
           {isError && err && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-900/40 dark:bg-red-950/30">
-              <div className="mb-1 text-sm font-semibold text-red-700 dark:text-red-400">Error</div>
-              <div className="whitespace-pre-wrap text-sm text-red-600 dark:text-red-300">{err}</div>
+            <div style={{ padding: '12px 16px', background: 'rgba(255,90,60,.08)', border: '1px solid rgba(255,90,60,.22)', borderRadius: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--red)', marginBottom: 4 }}>Error</div>
+              <div style={{ fontSize: 13, color: '#ff7a4d', whiteSpace: 'pre-wrap' }}>{err}</div>
             </div>
           )}
 
           {/* Live balances */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
-            <div className="mb-3 flex items-center gap-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                {isDone ? 'Updated balances' : 'Live balances'}
-              </div>
-              {isActive && (
-                <span className="flex items-center gap-1">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-orange-400 opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-orange-500" />
-                  </span>
-                  <span className="text-[10px] font-medium text-orange-600 dark:text-orange-400">live</span>
-                </span>
-              )}
+          <div style={{ padding: '14px 16px', background: 'var(--leg)', border: '1px solid var(--line-2)', borderRadius: 16 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--muted-2)', marginBottom: 12 }}>
+              {isDone ? 'Updated balances' : 'Live balances'}
             </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              {/* Token A */}
-              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                <div className="text-xs text-slate-500 dark:text-slate-400">{details.symA}</div>
-                <div className={[
-                  'mt-1 text-lg font-bold tabular-nums',
-                  isDone ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100',
-                ].join(' ')}>
-                  {balA}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {[{ sym: details.symA, bal: balA, pre: preAddBals?.a }, { sym: details.symB, bal: balB, pre: preAddBals?.b }].map(({ sym, bal, pre }) => (
+                <div key={sym} style={{ padding: '10px 12px', background: 'var(--surface-2)', border: '1px solid var(--line-2)', borderRadius: 12 }}>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>{sym}</div>
+                  <div style={{ fontFamily: '"DM Mono"', fontSize: 15, fontWeight: 600, color: isDone ? 'var(--red)' : 'var(--white)' }}>{bal}</div>
+                  {isDone && pre && pre !== bal && <div style={{ fontFamily: '"DM Mono"', fontSize: 11, color: 'var(--muted-2)', textDecoration: 'line-through', marginTop: 2 }}>{pre}</div>}
                 </div>
-                {isDone && preAddBals && preAddBals.a !== balA && (
-                  <div className="mt-0.5 text-xs text-slate-400 line-through dark:text-slate-500">
-                    {preAddBals.a}
-                  </div>
-                )}
-              </div>
-
-              {/* Token B */}
-              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
-                <div className="text-xs text-slate-500 dark:text-slate-400">{details.symB}</div>
-                <div className={[
-                  'mt-1 text-lg font-bold tabular-nums',
-                  isDone ? 'text-red-600 dark:text-red-400' : 'text-slate-900 dark:text-slate-100',
-                ].join(' ')}>
-                  {balB}
-                </div>
-                {isDone && preAddBals && preAddBals.b !== balB && (
-                  <div className="mt-0.5 text-xs text-slate-400 line-through dark:text-slate-500">
-                    {preAddBals.b}
-                  </div>
-                )}
-              </div>
+              ))}
             </div>
-
-            {/* LP share on success */}
             {isDone && lpShareUi !== '—' && (
-              <div className="mt-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 dark:border-green-900/40 dark:bg-green-950/20">
-                <div className="text-xs text-green-700 dark:text-green-400">
-                  Your pool share
-                </div>
-                <div className="mt-0.5 text-sm font-bold text-green-800 dark:text-green-300">
-                  {lpShareUi}
-                </div>
+              <div style={{ marginTop: 10, padding: '8px 12px', background: 'rgba(54,211,153,.08)', border: '1px solid rgba(54,211,153,.18)', borderRadius: 10 }}>
+                <div style={{ fontSize: 11.5, color: 'var(--green)' }}>Pool share</div>
+                <div style={{ fontFamily: '"DM Mono"', fontSize: 14, fontWeight: 600, color: 'var(--green)', marginTop: 2 }}>{lpShareUi}</div>
               </div>
             )}
           </div>
 
-          {/* Actions */}
+          {/* Close */}
           {(isDone || isError) && (
-            <button
-              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-              onClick={onClose}
-            >
-              {isDone ? 'Close' : 'Dismiss'}
-            </button>
+            <button className="jlf-action" onClick={onClose}>{isDone ? 'Close' : 'Dismiss'}</button>
           )}
-
           {isActive && (
-            <div className="text-center text-xs text-slate-400 dark:text-slate-600">
-              Alkebuleum transactions typically confirm in under 30 seconds.
-            </div>
+            <div style={{ textAlign: 'center', fontSize: 12, color: 'var(--muted-2)' }}>Alkebuleum transactions typically confirm in under 30 seconds.</div>
           )}
         </div>
       </div>
     </div>
   )
 }
-
-function Badge({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-      {children}
-    </span>
-  )
-}
-
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <span className="shrink-0 text-slate-600 dark:text-slate-400">{label}</span>
-
-      <span
-        className={[
-          'min-w-0 text-right text-slate-900 dark:text-slate-100',
-          mono ? 'font-mono text-xs' : 'font-semibold',
-          // key fix:
-          'break-all',
-        ].join(' ')}
-      >
-        {value}
-      </span>
-    </div>
-  )
-}
-

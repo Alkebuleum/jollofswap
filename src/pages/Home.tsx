@@ -1,190 +1,258 @@
-// src/pages/Home.tsx
-import { Link } from 'react-router-dom'
-import type { ReactNode } from 'react'
-import LogoJollof from '../assets/logo-jollof.svg'
-import { ArrowLeftRight, Droplets, Coins, BadgeDollarSign, ArrowRight } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ArrowLeftRight, Droplets, Coins, BadgeDollarSign } from 'lucide-react'
 
-const btnPrimary =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-jlfTomato px-5 py-3 text-sm font-semibold text-jlfIvory shadow-sm hover:opacity-95 active:opacity-90'
-
-const btnOutline =
-  [
-    'inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold',
-    'text-slate-900 ring-1 ring-slate-200 hover:bg-slate-50 active:bg-slate-100',
-    'dark:bg-slate-950/60 dark:text-slate-100 dark:ring-slate-700/70 dark:hover:bg-slate-900/70 dark:active:bg-slate-900',
-    'dark:backdrop-blur',
-  ].join(' ')
-
-function ActionCard({
-  icon,
-  title,
-  desc,
-  to,
-}: {
-  icon: ReactNode
-  title: string
-  desc: string
-  to: string
-}) {
-  return (
-    <Link
-      to={to}
-      className={[
-        'group rounded-2xl bg-white/85 ring-1 ring-slate-200/80 p-5',
-        'shadow-[0_1px_0_rgba(15,23,42,0.04),0_18px_40px_rgba(15,23,42,0.08)]',
-        'transition hover:-translate-y-0.5 hover:ring-slate-300/80 hover:bg-white',
-        'dark:bg-slate-950/70 dark:ring-slate-800/70 dark:hover:bg-slate-950 dark:hover:ring-slate-700/70',
-      ].join(' ')}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="mt-0.5 w-10 h-10 rounded-xl bg-jlfIvory/70 ring-1 ring-slate-200 grid place-content-center text-jlfTomato dark:bg-slate-900 dark:ring-slate-700">
-            {icon}
-          </div>
-          <div>
-            <div className="font-bold text-slate-900 dark:text-slate-100">{title}</div>
-            <div className="mt-1 text-sm text-slate-600 leading-relaxed dark:text-slate-300">{desc}</div>
-          </div>
-        </div>
-
-        <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-slate-700 transition mt-2 dark:text-slate-500 dark:group-hover:text-slate-200" />
-      </div>
-    </Link>
-  )
+const TOKEN_COLORS: Record<string, string> = {
+  ALKE: 'linear-gradient(135deg,#8B5CF6,#a78bfa)',
+  MAH:  'linear-gradient(135deg,#F7B53B,#e09c25)',
+  JLF:  'linear-gradient(135deg,#FF5A3C,#ff7a4d)',
+  USDC: 'linear-gradient(135deg,#2775CA,#4a93e8)',
+  USDT: 'linear-gradient(135deg,#26A17B,#3fc497)',
+  WAKE: 'linear-gradient(135deg,#8B5CF6,#c4b5fd)',
+  cNGN: 'linear-gradient(135deg,#0a7d3c,#10b95a)',
+  cGHS: 'linear-gradient(135deg,#C9381F,#FF5A3C)',
+  cKES: 'linear-gradient(135deg,#b8161d,#e63946)',
+  cZAR: 'linear-gradient(135deg,#0b6b3a,#F7B53B)',
 }
+const TOKEN_GLYPHS: Record<string, string> = {
+  ALKE: 'A', MAH: 'M', JLF: 'J', USDC: '$', USDT: '₮', WAKE: 'W',
+  cNGN: '₦', cGHS: '₵', cKES: 'K', cZAR: 'R',
+}
+function tColor(s: string) { return TOKEN_COLORS[s] || 'linear-gradient(135deg,var(--red),var(--gold))' }
+function tGlyph(s: string) { return TOKEN_GLYPHS[s] || s.slice(0, 1).toUpperCase() }
 
+const MARKETS = [
+  { a: 'ALKE', b: 'USDC', price: '0.4201', chg:  4.2, vol: '$5.8M', name: 'Alkecoin' },
+  { a: 'cNGN', b: 'USDC', price: '0.00065', chg: -0.1, vol: '$4.2M', name: 'Naira stable' },
+  { a: 'cGHS', b: 'cNGN', price: '103.07',  chg:  1.8, vol: '$2.9M', name: 'Cedi stable' },
+  { a: 'cKES', b: 'USDT', price: '0.00770', chg:  0.4, vol: '$2.1M', name: 'Shilling stable' },
+  { a: 'cZAR', b: 'ALKE', price: '0.1309',  chg: -2.3, vol: '$1.7M', name: 'Rand stable' },
+  { a: 'ALKE', b: 'cNGN', price: '646.15',  chg:  3.9, vol: '$1.4M', name: 'Alkecoin' },
+]
+
+const ECOSYSTEM = [
+  { ico: '🪪', name: 'AfPass',   desc: 'Portable digital identity that travels with you across every African market.',     tag: 'Identity →',  to: '#' },
+  { ico: '🔐', name: 'Amvault',  desc: 'Self-custodial wallet, connected to JollofSwap in a single tap.',                  tag: 'Wallet →',    to: '#' },
+  { ico: '📜', name: 'DRIS',     desc: 'Verify documents and records on-chain — the trust layer beneath every trade.',     tag: 'Records →',   to: '#' },
+  { ico: '✦',  name: 'Nuru AI',  desc: 'Route and execute trades in plain language across the whole ecosystem.',           tag: 'Assistant →', to: '#' },
+]
+
+const SwapIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" width="17" height="17">
+    <path d="M12 4v16M12 20l5-5M12 20l-5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+)
 
 export default function Home() {
+  const navigate = useNavigate()
+
   return (
-    <main className="relative">
-      {/* HERO */}
-      <section className="relative overflow-hidden">
-        {/* LIGHT background */}
-        <div className="absolute inset-0 bg-gradient-to-b from-jlfIvory/70 via-white to-jlfIvory/35 dark:hidden" />
+    <main>
+      <div className="jlf-glow" aria-hidden="true" />
 
-        {/* DARK background (ink gradient + depth) */}
-        <div className="absolute inset-0 hidden dark:block bg-gradient-to-b from-[#060A12] via-[#070B14] to-[#050814]" />
+      {/* ── HERO ─────────────────────────────────────────────────── */}
+      <section className="jlf-hero">
+        <h1 className="jlf-display">
+          Swap value,<br />
+          <span className="jlf-grad">without borders.</span>
+        </h1>
 
-        {/* Brand glows */}
-        <div className="absolute -top-24 left-1/2 -translate-x-1/2 h-72 w-72 rounded-full bg-jlfTomato/10 blur-3xl" />
-        <div className="absolute -top-10 right-[-80px] h-64 w-64 rounded-full bg-jlfTomato/8 blur-3xl" />
-
-        {/* Extra DARK glows (orange + cool ink) */}
-        <div className="absolute inset-0 hidden dark:block">
-          <div className="absolute -top-24 left-1/2 -translate-x-1/2 h-[520px] w-[520px] rounded-full bg-jlfTomato/12 blur-[90px]" />
-          <div className="absolute top-10 left-[-140px] h-[420px] w-[420px] rounded-full bg-sky-500/8 blur-[110px]" />
-          <div className="absolute bottom-[-180px] right-[-140px] h-[520px] w-[520px] rounded-full bg-jlfTomato/10 blur-[110px]" />
-        </div>
-
-        {/* Subtle dot grid (LIGHT) */}
-        <div
-          className="absolute inset-0 opacity-[0.045] dark:hidden"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 1px 1px, rgba(15,23,42,0.9) 1px, transparent 0)',
-            backgroundSize: '20px 20px',
-          }}
-        />
-
-        {/* Subtle dot grid (DARK) */}
-        <div
-          className="absolute inset-0 hidden dark:block opacity-[0.12]"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 1px 1px, rgba(226,232,240,0.8) 1px, transparent 0)',
-            backgroundSize: '22px 22px',
-          }}
-        />
-
-        {/* faint diagonal sheen (DARK) */}
-        <div className="absolute inset-0 hidden dark:block opacity-[0.18]">
-          <div
-            className="absolute inset-0"
-            style={{
-              backgroundImage:
-                'linear-gradient(115deg, transparent 0%, rgba(255,255,255,0.06) 18%, transparent 36%, transparent 100%)',
-            }}
-          />
-        </div>
-
-        <div className="relative mx-auto max-w-7xl px-4 sm:px-6 pt-12 pb-24">
-          <div className="mx-auto max-w-3xl text-center">
-            <img src={LogoJollof} alt="JollofSwap" className="mx-auto w-12 h-12" />
-
-            <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/80 ring-1 ring-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-950/60 dark:ring-slate-700/70 dark:text-slate-200 dark:backdrop-blur">
-              <span className="h-2 w-2 rounded-full bg-jlfTomato" />
-              JollofSwap on Alkebuleum
+        {/* Hero swap card — decorative preview, navigates to /swap on interact */}
+        <div className="jlf-hero-card">
+          {/* Sell leg */}
+          <div className="jlf-hero-leg">
+            <div className="lab">Sell</div>
+            <div className="jlf-hero-leg-row">
+              <input
+                className="jlf-hero-amt"
+                defaultValue="100"
+                inputMode="decimal"
+                placeholder="0"
+                onFocus={() => navigate('/swap')}
+                readOnly
+              />
+              <button className="jlf-hero-tok" onClick={() => navigate('/swap')}>
+                <span className="jlf-tcoin" style={{ background: tColor('ALKE'), width: 30, height: 30, fontSize: 13 }}>
+                  {tGlyph('ALKE')}
+                </span>
+                <b>ALKE</b>
+                <span className="caret">▾</span>
+              </button>
             </div>
-
-            {/* LIGHT headline stays normal; DARK headline gets premium gradient */}
-            <h1 className="mt-5 text-4xl md:text-6xl font-extrabold tracking-tight text-slate-900 dark:hidden">
-              Africa’s Decentralized Exchange
-            </h1>
-            <h1 className="mt-5 hidden dark:block text-4xl md:text-6xl font-extrabold tracking-tight">
-              <span className="bg-gradient-to-b from-white via-slate-100 to-slate-300 bg-clip-text text-transparent">
-                Africa’s Decentralized Exchange
-              </span>
-            </h1>
-
-            <p className="mt-4 text-base md:text-lg text-slate-600 leading-relaxed dark:text-slate-300">
-              Start by getting{' '}
-              <span className="font-semibold text-slate-900 dark:text-slate-100">ALKE</span> for gas,
-              then swap tokens, add liquidity, or create and list your own token.
-            </p>
-
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <Link to="/swap?from=USDC&to=ALKE" className={btnPrimary}>
-                Get ALKE
-              </Link>
-              <Link to="/swap" className={btnOutline}>
-                Enter DEX
-              </Link>
-            </div>
+            <div className="jlf-hero-usd">$42.00</div>
           </div>
+
+          <div className="jlf-hero-flip">
+            <button onClick={() => navigate('/swap')} aria-label="Switch">
+              <SwapIcon />
+            </button>
+          </div>
+
+          {/* Buy leg */}
+          <div className="jlf-hero-leg" style={{ marginTop: 6 }}>
+            <div className="lab">Buy</div>
+            <div className="jlf-hero-leg-row">
+              <input
+                className="jlf-hero-amt"
+                placeholder="0"
+                readOnly
+                value="64,615"
+                onFocus={() => navigate('/swap')}
+              />
+              <button className="jlf-hero-tok" onClick={() => navigate('/swap')}>
+                <span className="jlf-tcoin" style={{ background: tColor('cNGN'), width: 30, height: 30, fontSize: 13 }}>
+                  {tGlyph('cNGN')}
+                </span>
+                <b>cNGN</b>
+                <span className="caret">▾</span>
+              </button>
+            </div>
+            <div className="jlf-hero-usd">$42.00</div>
+          </div>
+
+          <div className="jlf-hero-rate">
+            <span>1 ALKE = 646.15 cNGN</span>
+            <span>Slippage <b>0.50%</b></span>
+          </div>
+          <button className="jlf-hero-btn" onClick={() => navigate('/swap')}>
+            Get started
+          </button>
+          <div className="jlf-hero-route">Routed through JollofSwap V1 · Settled on Alkebuleum</div>
         </div>
+
+        <p className="jlf-subcopy">
+          Trade African stablecoins, ALKE, and global assets with{' '}
+          <b>zero protocol fees</b> on stablecoin pairs — self-custodial, instant, no middlemen.
+        </p>
       </section>
 
-      {/* ACTIONS */}
-      <section className="relative mx-auto max-w-7xl px-4 sm:px-6 -mt-14 pb-10">
-        <div className="grid md:grid-cols-4 gap-4">
-          <ActionCard
-            icon={<BadgeDollarSign className="w-5 h-5" />}
-            title="Get ALKE"
-            desc="Buy ALKE instantly with USD — no crypto experience needed."
-            to="/swap?from=USDC&to=ALKE"
-          />
-          <ActionCard
-            icon={<ArrowLeftRight className="w-5 h-5" />}
-            title="Swap"
-            desc="Trade across Alkebuleum tokens in a clean, fast UI."
-            to="/swap"
-          />
-          <ActionCard
-            icon={<Droplets className="w-5 h-5" />}
-            title="Liquidity"
-            desc="Create pools and provide liquidity to earn fees."
-            to="/liquidity"
-          />
-          <ActionCard
-            icon={<Coins className="w-5 h-5" />}
-            title="Tokens"
-            desc="Create your own token and list it on JollofSwap."
-            to="/tokens"
-          />
+      {/* ── ACTION CARDS ─────────────────────────────────────────── */}
+      <div style={{ padding: '40px 0 0' }}>
+        <div className="jlf-action-grid">
+          <Link className="jlf-action-card" to="/swap?from=USDC&to=ALKE">
+            <div className="ico"><BadgeDollarSign size={18} /></div>
+            <b>Get ALKE</b>
+            <small>Buy ALKE instantly with USD — no crypto experience needed.</small>
+          </Link>
+          <Link className="jlf-action-card" to="/swap">
+            <div className="ico"><ArrowLeftRight size={18} /></div>
+            <b>Swap</b>
+            <small>Trade across Alkebuleum tokens in a clean, fast UI.</small>
+          </Link>
+          <Link className="jlf-action-card" to="/liquidity">
+            <div className="ico"><Droplets size={18} /></div>
+            <b>Liquidity</b>
+            <small>Create pools and provide liquidity to earn fees.</small>
+          </Link>
+          <Link className="jlf-action-card" to="/tokens">
+            <div className="ico"><Coins size={18} /></div>
+            <b>Tokens</b>
+            <small>Create your own token and list it on JollofSwap.</small>
+          </Link>
         </div>
 
-        {/* Referral callout */}
-        <div className="mt-6 rounded-2xl bg-white/85 ring-1 ring-slate-200/80 px-5 py-4 shadow-sm flex items-center justify-center gap-2 text-sm dark:bg-slate-950/70 dark:ring-slate-800/70">
-          <BadgeDollarSign className="w-4 h-4 text-jlfTomato" />
-          <div className="text-slate-800 font-semibold dark:text-slate-200">
+        {/* Referral banner */}
+        <div className="jlf-referral">
+          <div className="jlf-referral-inner">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)', flexShrink: 0 }}>
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+              <path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
             Referral rewards: earn a share of transaction fees from your referrals — for life.
           </div>
         </div>
+      </div>
+
+      {/* ── STATEMENT ────────────────────────────────────────────── */}
+      <section className="jlf-statement">
+        <h2>
+          Africa's exchange.<br />
+          <span className="jlf-grad">Built for the continent.</span>
+        </h2>
+        <p>
+          JollofSwap delivers deep liquidity, proven security, and self-custodial trading
+          across fifty-five markets — all settled on Alkebuleum, the ledger the continent owns.
+        </p>
+        <Link className="jlf-ghost" to="/swap">
+          Trade without fees&nbsp;
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </Link>
       </section>
+
+      {/* ── STAT STRIP ───────────────────────────────────────────── */}
+      <div className="jlf-strip">
+        <div className="jlf-strip-grid">
+          <div className="jlf-st"><b>$184.6M</b><span>Total value locked</span></div>
+          <div className="jlf-st"><b>$23.1M</b><span>24h trading volume</span></div>
+          <div className="jlf-st"><b>312</b><span>Active liquidity pools</span></div>
+          <div className="jlf-st"><b>55</b><span>Markets across Africa</span></div>
+        </div>
+      </div>
+
+      {/* ── MARKETS ──────────────────────────────────────────────── */}
+      <section className="jlf-section" id="markets">
+        <div className="jlf-sh">
+          <div className="jlf-ey">Top markets</div>
+          <h3>The continent's deepest pools</h3>
+          <p>Real liquidity for African currencies, paired against ALKE and global stablecoins.</p>
+        </div>
+        <div className="jlf-market-table">
+          <div className="jlf-trow head">
+            <span>Pair</span>
+            <span>Price</span>
+            <span className="hide-m">24h</span>
+            <span className="hide-m">Volume</span>
+            <span />
+          </div>
+          {MARKETS.map((m) => (
+            <div className="jlf-trow" key={`${m.a}/${m.b}`}>
+              <div className="jlf-tpair">
+                <div className="jlf-tpair-coins">
+                  <span className="jlf-tcoin" style={{ background: tColor(m.a), width: 30, height: 30, fontSize: 12 }}>{tGlyph(m.a)}</span>
+                  <span className="jlf-tcoin" style={{ background: tColor(m.b), width: 30, height: 30, fontSize: 12 }}>{tGlyph(m.b)}</span>
+                </div>
+                <div className="jlf-pn">
+                  {m.a}/{m.b}
+                  <small>{m.name}</small>
+                </div>
+              </div>
+              <div className="jlf-tnum">{m.price}</div>
+              <div className={m.chg >= 0 ? 'jlf-pos hide-m' : 'jlf-neg hide-m'}>
+                {m.chg >= 0 ? '▲' : '▼'} {Math.abs(m.chg)}%
+              </div>
+              <div className="jlf-tnum hide-m">{m.vol}</div>
+              <Link
+                className="jlf-tradebtn"
+                to={`/swap?from=${m.a}&to=${m.b}`}
+                style={{ textDecoration: 'none' }}
+              >
+                Trade
+              </Link>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ── ECOSYSTEM ────────────────────────────────────────────── */}
+      <section className="jlf-section" id="eco" style={{ paddingTop: 0 }}>
+        <div className="jlf-sh">
+          <div className="jlf-ey">Part of Alkebuleum</div>
+          <h3>One ecosystem, end to end</h3>
+          <p>JollofSwap is the marketplace layer of a sovereign African network.</p>
+        </div>
+        <div className="jlf-eco-grid">
+          {ECOSYSTEM.map((e) => (
+            <a key={e.name} className="jlf-ecard" href={e.to}>
+              <div className="ico">{e.ico}</div>
+              <h4>{e.name}</h4>
+              <p>{e.desc}</p>
+              <span className="t">{e.tag}</span>
+            </a>
+          ))}
+        </div>
+      </section>
+
     </main>
   )
 }
-
-
-
-

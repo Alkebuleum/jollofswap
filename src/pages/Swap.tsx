@@ -6,6 +6,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { ArrowDownUp, Info, X, CircleDollarSign } from 'lucide-react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
 import { db } from '../services/firebase'
+import { ensureFirebaseGuest } from '../services/firebaseGuest'
 import { collection, onSnapshot, orderBy, query, where, limit, getDocs } from 'firebase/firestore'
 import ModernPriceChart from '../components/ModernPriceChart'
 
@@ -430,6 +431,7 @@ export default function Swap() {
   const [preSwapBals, setPreSwapBals] = useState<{ from: string; to: string } | null>(null)
 
   const quoteTimer = useRef<number | null>(null)
+  const settingsRef = useRef<HTMLDivElement>(null)
 
   const [quoteNotice, setQuoteNotice] = useState<string | null>(null)
   const [quoteNoLiquidity, setQuoteNoLiquidity] = useState(false)
@@ -455,6 +457,10 @@ export default function Swap() {
   } as any
 
   const [priceData, setPriceData] = useState<PricePoint[]>([])
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [tokenModalFor, setTokenModalFor] = useState<'from' | 'to' | null>(null)
+  const [tokenSearch, setTokenSearch] = useState('')
 
 
   useEffect(() => {
@@ -538,6 +544,9 @@ export default function Swap() {
 
           const pairKey = `${ALK_CHAIN_ID}_${String(pair).toLowerCase()}`
 
+          // Ensure Firebase auth so Firestore security rules allow reads
+          try { await ensureFirebaseGuest() } catch (e) { console.warn('[PriceChart] Firebase guest auth failed:', e) }
+
           // Find the most recent Sync for this pair to anchor the time window
           const latestSnap = await getDocs(query(
             collection(db, 'amm_events'),
@@ -550,7 +559,7 @@ export default function Swap() {
           if (latestSnap.empty) return setPriceData([])
 
           const latestBlockTime = latestSnap.docs[0].data().blockTime as number
-          const minBlockTime = latestBlockTime - 48 * 60 * 60 // 48 h before the latest record
+          const minBlockTime = latestBlockTime - 365 * 24 * 60 * 60 // 1 year before the latest record
 
           const qy = query(
             collection(db, 'amm_events'),
@@ -558,7 +567,7 @@ export default function Swap() {
             where('event', '==', 'Sync'),
             where('blockTime', '>=', minBlockTime),
             orderBy('blockTime', 'asc'),
-            limit(600)
+            limit(2000)
           )
 
           unsub = onSnapshot(qy, (snap) => {
@@ -1249,267 +1258,430 @@ export default function Swap() {
     [priceData, isUsdcMode]
   )
 
+  // Close settings popover on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (!settingsRef.current?.contains(e.target as Node)) setSettingsOpen(false)
+    }
+    if (settingsOpen) document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [settingsOpen])
+
+  // Close token modal on Escape
+  useEffect(() => {
+    function handler(e: KeyboardEvent) { if (e.key === 'Escape') setTokenModalFor(null) }
+    if (tokenModalFor) document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [tokenModalFor])
+
+  function tokenColor(sym: string): string {
+    const s = sym.toUpperCase()
+    const m: Record<string, string> = {
+      ALKE: 'linear-gradient(135deg,#8B5CF6,#a78bfa)',
+      MAH: 'linear-gradient(135deg,#F7B53B,#e09c25)',
+      JLF: 'linear-gradient(135deg,#FF5A3C,#ff7a4d)',
+      USDC: 'linear-gradient(135deg,#2775CA,#4a93e8)',
+      USDT: 'linear-gradient(135deg,#26A17B,#3fc497)',
+      WAKE: 'linear-gradient(135deg,#8B5CF6,#c4b5fd)',
+    }
+    return m[s] || 'linear-gradient(135deg,var(--red),var(--gold))'
+  }
+
+  function tokenGlyph(sym: string): string {
+    const s = sym.toUpperCase()
+    const m: Record<string, string> = { ALKE: 'A', MAH: 'M', JLF: 'J', USDC: '$', USDT: '₮', WAKE: 'W' }
+    return m[s] || s.slice(0, 1)
+  }
+
   return (
-    <div className="page">
-      <div className="mx-auto w-full max-w-3xl">
+    <>
+      <div className="jlf-app">
 
+        {/* LEFT: Price chart — ModernPriceChart owns its own header */}
+        <div className="jlf-panel jlf-chart-panel" style={{ height: '100%' }}>
+          <ModernPriceChart
+            data={chartData}
+            symbolFrom={isUsdcMode ? 'MAH' : from}
+            symbolTo={to}
+            usdHint={chartUsdHint}
+          />
+        </div>
 
-        <WalletSummaryCard
-          walletConnected={walletConnected}
-          address={address}
-          ain={ainLoading ? null : ain}
-          stats={
-            isUsdcMode
-              ? [
-                { label: 'USD balance', value: hideBalances ? '•••' : (loadingUsdBal ? '…' : `$${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) },
-                { label: to, value: toBalDisplay },
-                { label: 'POL (gas)', value: hideBalances ? '•••' : polBal },
-              ]
-              : [
-                { label: from, value: fromBalDisplay },
-                { label: to, value: toBalDisplay },
-              ]
-          }
-          notConnectedHint="Connect your wallet to see balances and swap."
-        />
+        {/* RIGHT: Swap card */}
+        <div className="jlf-swap-card jlf-swap-col">
 
-        {/* Low USD balance widget */}
-        {walletConnected && isUsdcMode && !loadingUsdBal && amtNumVal > 0 && amtNumVal > totalUsdNum + 0.01 && (
-          <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {/* Top accent bar */}
-            <div className="h-1 w-full bg-gradient-to-r from-jlfTomato/80 via-orange-400 to-amber-400" />
-            <div className="flex items-center gap-4 px-5 py-4">
-              {/* Icon */}
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-jlfTomato/10 dark:bg-jlfTomato/15">
-                <CircleDollarSign className="h-5 w-5 text-jlfTomato" />
+          {/* Header: tabs + settings gear */}
+          <div className="jlf-swap-top" ref={settingsRef}>
+            <div className="jlf-stabs">
+              <button className="active">Swap</button>
+            </div>
+            <div className="jlf-stools">
+              <button
+                className="jlf-gear"
+                onClick={() => setSettingsOpen(v => !v)}
+                aria-label="Settings"
+              >
+                <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+                  <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.7"/>
+                  <path d="M19.4 13.5a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-2.18-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008.6 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-2.18 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 8.6a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 002.18.33H9.5a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 2.18V12a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" strokeWidth="1.5"/>
+                </svg>
+                <span className="jlf-slip-badge">{(slippageBps / 100).toFixed(2)}%</span>
+              </button>
+            </div>
+
+            {/* Settings popover */}
+            <div className={`jlf-pop${settingsOpen ? ' open' : ''}`}>
+              <h4>Max slippage</h4>
+              <div className="jlf-slips">
+                {[30, 50, 100].map((bps) => (
+                  <button
+                    key={bps}
+                    className={slippageBps === bps ? 'active' : ''}
+                    onClick={() => { setSlippageBps(bps); setSettingsOpen(false) }}
+                  >
+                    {(bps / 100).toFixed(2)}%
+                  </button>
+                ))}
               </div>
-              {/* Text */}
-              <div className="min-w-0 flex-1">
-                <div className="font-semibold text-slate-900 dark:text-slate-100">
-                  Your USD balance is low
+            </div>
+          </div>
+
+          {/* Sell leg */}
+          <div className="jlf-leg">
+            <div className="jlf-leg-top">
+              <span className="lab">Sell</span>
+              <span className="bal">
+                Balance:&nbsp;
+                <b>
+                  {isUsdcMode ? (
+                    <button
+                      type="button"
+                      onClick={() => setUsdBalInfoOpen(true)}
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: '"DM Mono"', fontSize: 12.5, color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                    >
+                      {hideBalances ? '•••' : (loadingUsdBal ? '…' : `$${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}
+                      <Info style={{ width: 11, height: 11, opacity: 0.6 }} />
+                    </button>
+                  ) : fromBalDisplay}
+                </b>
+              </span>
+            </div>
+            <div className="jlf-leg-row">
+              <input
+                className="jlf-amt"
+                value={amount}
+                onChange={(e) => setAmount(clampAmountStr(e.target.value))}
+                placeholder="0"
+                inputMode="decimal"
+              />
+              <button
+                className="jlf-tokbtn"
+                onClick={() => { setTokenSearch(''); setTokenModalFor('from') }}
+              >
+                <span className="jlf-tcoin" style={{ background: tokenColor(isUsdcMode ? 'USDC' : from), width: 26, height: 26, fontSize: 11 }}>
+                  {tokenGlyph(isUsdcMode ? 'USDC' : from)}
+                </span>
+                <b>{isUsdcMode ? 'USD' : from}</b>
+                <span className="caret">▾</span>
+              </button>
+            </div>
+            <div className="jlf-leg-sub">
+              <span>
+                {!isUsdcMode && usdValue !== null
+                  ? `≈ $${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : null}
+              </span>
+              {!isUsdcMode && (
+                <span
+                  className="jlf-max"
+                  onClick={() => {
+                    const bal = fromBal.replace(/,/g, '')
+                    if (bal && bal !== '—' && !isNaN(Number(bal))) setAmount(bal)
+                  }}
+                >
+                  Max
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Flip button */}
+          <div className="jlf-flip">
+            <button
+              onClick={() => { setErr(null); if (isUsdcMode) { setFrom('MAH') } else { setFrom(to); setTo(from) } }}
+              title="Flip tokens"
+              aria-label="Switch tokens"
+            >
+              <ArrowDownUp style={{ width: 16, height: 16 }} />
+            </button>
+          </div>
+
+          {/* Buy leg */}
+          <div className="jlf-leg" style={{ marginTop: 6 }}>
+            <div className="jlf-leg-top">
+              <span className="lab">Buy</span>
+              <span className="bal">Balance:&nbsp;<b>{toBalDisplay}</b></span>
+            </div>
+            <div className="jlf-leg-row">
+              <div className="jlf-amt" style={{ cursor: 'default' }}>
+                {quoteOut !== '—' ? quoteOut : <span style={{ color: '#393834' }}>0</span>}
+              </div>
+              <button
+                className="jlf-tokbtn"
+                onClick={() => { setTokenSearch(''); setTokenModalFor('to') }}
+              >
+                <span className="jlf-tcoin" style={{ background: tokenColor(to), width: 26, height: 26, fontSize: 11 }}>
+                  {tokenGlyph(to)}
+                </span>
+                <b>{to}</b>
+                <span className="caret">▾</span>
+              </button>
+            </div>
+            <div className="jlf-leg-sub">
+              <span>
+                {usdValue !== null
+                  ? `≈ $${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : minOut !== '—' ? `Min ${minOut} ${to}` : null}
+              </span>
+            </div>
+          </div>
+
+          {/* Error / notice */}
+          {quoteNotice && (
+            <div style={{ margin: '6px 0', padding: '10px 14px', background: 'rgba(255,90,60,.08)', border: '1px solid rgba(255,90,60,.18)', borderRadius: 14, fontSize: 13 }}>
+              <span style={{ fontWeight: 600, color: 'var(--white)' }}>{quoteNoLiquidity ? 'No liquidity yet' : 'Quote notice'}</span>
+              <span style={{ color: 'var(--muted)', marginLeft: 8 }}>{quoteNotice}</span>
+              {quoteNoLiquidity && (
+                <Link to={`/liquidity?a=${encodeURIComponent(from)}&b=${encodeURIComponent(to)}`} style={{ marginLeft: 8, color: 'var(--gold)', fontWeight: 600 }}>
+                  Add Liquidity →
+                </Link>
+              )}
+            </div>
+          )}
+
+          {err && (
+            <div style={{ margin: '6px 0', padding: '10px 14px', background: 'rgba(255,90,60,.08)', border: '1px solid rgba(255,90,60,.22)', borderRadius: 14, fontSize: 13, color: 'var(--red)', whiteSpace: 'pre-wrap' }}>
+              {err}
+            </div>
+          )}
+
+          {/* Details accordion */}
+          {spotRate !== null && (
+            <div className="jlf-details">
+              <div className="jlf-det-row" onClick={() => setDetailsOpen(v => !v)}>
+                <span className="l">
+                  1&nbsp;{isUsdcMode ? 'MAH' : from}&nbsp;=&nbsp;{fmtRate(spotRate)}&nbsp;{to}
+                </span>
+                <span className="r">
+                  <span>{(slippageBps / 100).toFixed(2)}% slip</span>
+                  <span className="ex" style={{ display: 'inline-block', transform: detailsOpen ? 'rotate(180deg)' : 'none' }}>▾</span>
+                </span>
+              </div>
+              <div className={`jlf-det-body${detailsOpen ? ' open' : ''}`}>
+                <div className="jlf-det-line">
+                  <span className="k">Slippage tolerance</span>
+                  <span className="v">{(slippageBps / 100).toFixed(2)}%</span>
                 </div>
-                <div className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                  You need ${amtNumVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} but only have ${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}. Deposit USDC to top up.
-                </div>
-                {depositErr && (
-                  <div className="mt-1.5 text-xs text-red-500 dark:text-red-400">{depositErr}</div>
+                {minOut !== '—' && (
+                  <div className="jlf-det-line">
+                    <span className="k">Min. received</span>
+                    <span className="v">{minOut} {to}</span>
+                  </div>
                 )}
+                {altUsdPerToken !== null && (
+                  <div className="jlf-det-line">
+                    <span className="k">1 {nonStableSym} price</span>
+                    <span className="v good">≈ ${fmtUsd(altUsdPerToken)}</span>
+                  </div>
+                )}
+                <div className="jlf-det-line">
+                  <span className="k">Route</span>
+                  <span className="v">
+                    <span className="jlf-route-chips">
+                      {isUsdcMode && (
+                        <>
+                          <span className="jlf-rc">USDC</span>
+                          <span className="jlf-rc-arr">→</span>
+                          <span className="jlf-rc">MAH</span>
+                          <span className="jlf-rc-arr">→</span>
+                        </>
+                      )}
+                      <span className="jlf-rc">{isUsdcMode ? 'MAH' : from}</span>
+                      <span className="jlf-rc-arr">→</span>
+                      <span className="jlf-rc">{to}</span>
+                    </span>
+                  </span>
+                </div>
               </div>
-              {/* CTA */}
+            </div>
+          )}
+
+          {/* Action button */}
+          {(() => {
+            if (!walletConnected || !address) {
+              return (
+                <button className="jlf-action" onClick={openModal}>
+                  Connect Wallet
+                </button>
+              )
+            }
+            const amtNum = Number(clampAmountStr(amount.trim()))
+            const insufficientBal = isUsdcMode
+              ? !loadingUsdBal && amtNum > 0 && amtNum > totalUsdNum + 0.01
+              : !loadingBalances && amtNum > 0 && amtNum > fromBalNum
+
+            const btnClass = insufficientBal
+              ? 'jlf-action warn'
+              : busy || quoteNoLiquidity || amtNum <= 0
+                ? 'jlf-action idle'
+                : 'jlf-action'
+
+            return (
+              <button
+                className={btnClass}
+                onClick={insufficientBal || quoteNoLiquidity || amtNum <= 0 ? undefined : onSwap}
+                disabled={busy}
+              >
+                {busy
+                  ? 'Processing…'
+                  : insufficientBal
+                    ? 'Insufficient balance'
+                    : quoteNoLiquidity
+                      ? 'No liquidity'
+                      : amtNum <= 0
+                        ? 'Enter an amount'
+                        : 'Swap'}
+              </button>
+            )
+          })()}
+
+          {swapDialogDetails && !swapDialogOpen && (
+            <button
+              onClick={() => setSwapDialogOpen(true)}
+              style={{ marginTop: 7, width: '100%', background: 'rgba(255,90,60,.1)', border: '1px solid rgba(255,90,60,.2)', borderRadius: 'var(--r)', padding: '12px', fontWeight: 600, fontSize: 14, color: 'var(--red)', cursor: 'pointer', fontFamily: '"Bricolage Grotesque"' }}
+            >
+              View swap status →
+            </button>
+          )}
+
+          {/* Low USD balance — deposit CTA */}
+          {walletConnected && isUsdcMode && !loadingUsdBal && amtNumVal > 0 && amtNumVal > totalUsdNum + 0.01 && (
+            <div style={{ marginTop: 8, padding: '12px 14px', background: 'rgba(255,90,60,.07)', border: '1px solid rgba(255,90,60,.15)', borderRadius: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <CircleDollarSign style={{ width: 18, height: 18, color: 'var(--red)', flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: 13, color: 'var(--muted)' }}>
+                Need ${amtNumVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, have ${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+              {depositErr && <span style={{ fontSize: 12, color: 'var(--red)' }}>{depositErr}</span>}
               <button
                 onClick={onDeposit}
                 disabled={depositLoading}
-                className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-jlfTomato px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60 transition"
+                style={{ flexShrink: 0, background: 'var(--red)', color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontWeight: 700, fontSize: 13, cursor: depositLoading ? 'default' : 'pointer', opacity: depositLoading ? 0.6 : 1 }}
               >
                 {depositLoading ? 'Opening…' : 'Deposit'}
               </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+      </div>
 
-        <div className="grid gap-4 lg:grid-cols-[1fr_380px] lg:items-start">
-          {/* Swap */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-start justify-between gap-3">
-              <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Swap</div>
+      {/* Token selection modal */}
+      <div
+        className={`jlf-overlay${tokenModalFor ? ' open' : ''}`}
+        onClick={() => setTokenModalFor(null)}
+      >
+        <div className="jlf-modal" onClick={e => e.stopPropagation()}>
+          <div className="jlf-modal-head">
+            <div className="row1">
+              <h3>Select a token</h3>
+              <button className="x" onClick={() => setTokenModalFor(null)}>✕</button>
             </div>
-
-            <div className="mt-4 flex flex-col gap-3">
-
-              {/* ── From + flip button + To as one visual unit ── */}
-              <div className="flex flex-col">
-
-                {/* From box */}
-                <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-950/40">
-                  <div className="flex items-center gap-3">
-                    <select
-                      className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-900 outline-none cursor-pointer hover:bg-slate-200 focus:ring-2 focus:ring-orange-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus:ring-orange-500/20"
-                      value={from}
-                      onChange={(e) => setFrom(e.target.value)}
-                    >
-                      <option value="USDC">USD</option>
-                      {tokenOptions.map((k) => <option key={k} value={k}>{k}</option>)}
-                    </select>
-                    <input
-                      value={amount}
-                      onChange={(e) => setAmount(clampAmountStr(e.target.value))}
-                      className="w-full min-w-0 bg-transparent text-right text-2xl font-semibold text-slate-900 outline-none placeholder:text-slate-300 dark:text-slate-100 dark:placeholder:text-slate-700"
-                      placeholder="0"
-                      inputMode="decimal"
-                    />
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                    {isUsdcMode
-                      ? (
-                        <button
-                          type="button"
-                          onClick={() => setUsdBalInfoOpen(true)}
-                          className="flex items-center gap-1 hover:text-slate-700 dark:hover:text-slate-200 transition"
-                        >
-                          <span>Est. USD Balance: {hideBalances ? '•••' : (loadingUsdBal ? '…' : `$${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}</span>
-                          <Info className="w-3 h-3 text-slate-400 dark:text-slate-500" />
-                        </button>
-                      )
-                      : <span>Balance: {fromBalDisplay}</span>
-                    }
-                    {usdValue !== null && !isUsdcMode && (
-                      <span className="tabular-nums">
-                        ≈&nbsp;${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Centered flip button — overlaps both boxes */}
-                <div className="flex justify-center -my-3.5 relative z-10">
-                  <button
-                    onClick={() => { setErr(null); if (isUsdcMode) { setFrom('MAH') } else { setFrom(to); setTo(from) } }}
-                    title="Flip tokens"
-                    className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm transition hover:scale-110 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
-                  >
-                    <ArrowDownUp className="h-3.5 w-3.5 text-slate-600 dark:text-slate-300" />
-                  </button>
-                </div>
-
-                {/* To box */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/60">
-                  <div className="flex items-center gap-3">
-                    <select
-                      className="shrink-0 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-bold text-slate-900 outline-none cursor-pointer hover:bg-slate-200 focus:ring-2 focus:ring-orange-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 dark:focus:ring-orange-500/20"
-                      value={to}
-                      onChange={(e) => setTo(e.target.value)}
-                    >
-                      {tokenOptions.map((k) => <option key={k} value={k}>{k}</option>)}
-                    </select>
-                    <div className="w-full text-right text-2xl font-semibold tabular-nums leading-none text-slate-900 dark:text-slate-100">
-                      {quoteOut !== '—'
-                        ? quoteOut
-                        : <span className="text-slate-300 dark:text-slate-700">0</span>}
-                    </div>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                    <span>Balance: {toBalDisplay}</span>
-                    <span className="tabular-nums">
-                      {usdValue !== null && (
-                        <span>≈&nbsp;${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}&ensp;·&ensp;</span>
-                      )}
-                      {minOut !== '—' && <span>Min&nbsp;{minOut}</span>}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Rate + Slippage info bar ── */}
-              <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
-                {spotRate !== null && (
-                  <div className="mb-2.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">
-                    1&nbsp;{from}&nbsp;=&nbsp;{fmtRate(spotRate)}&nbsp;{to}
-                    {altUsdPerToken !== null && (
-                      <span className="ml-2 text-slate-400 dark:text-slate-500">
-                        ·&ensp;1&nbsp;{nonStableSym}&nbsp;≈&nbsp;${fmtUsd(altUsdPerToken)}
-                      </span>
-                    )}
-                  </div>
-                )}
-                <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                  <span>Slippage</span>
-                  <div className="flex items-center gap-1.5">
-                    {[30, 50, 100].map((bps) => (
-                      <button
-                        key={bps}
-                        onClick={() => setSlippageBps(bps)}
-                        className={[
-                          'rounded-full px-2.5 py-1 font-semibold transition',
-                          slippageBps === bps
-                            ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
-                            : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
-                        ].join(' ')}
-                      >
-                        {(bps / 100).toFixed(2)}%
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {quoteNotice && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
-                  <div className="font-semibold">{quoteNoLiquidity ? 'No liquidity yet' : 'Quote notice'}</div>
-                  <div className="mt-1">{quoteNotice}</div>
-                  {quoteNoLiquidity && (
-                    <div className="mt-2">
-                      <Link
-                        to={`/liquidity?a=${encodeURIComponent(from)}&b=${encodeURIComponent(to)}`}
-                        className="font-semibold underline"
-                      >
-                        Add Liquidity
-                      </Link>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {err && (
-                <div className="whitespace-pre-wrap rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300">
-                  {err}
-                </div>
-              )}
-
-              {(() => {
-                if (!walletConnected || !address) {
-                  return (
-                    <button
-                      onClick={openModal}
-                      className="w-full rounded-xl bg-violet-600 px-4 py-3.5 font-semibold text-white shadow-sm transition hover:bg-violet-700"
-                    >
-                      Connect Wallet
-                    </button>
-                  )
-                }
-                const amtNum = Number(clampAmountStr(amount.trim()))
-                const insufficientBal = isUsdcMode
-                  ? !loadingUsdBal && amtNum > 0 && amtNum > totalUsdNum + 0.01
-                  : !loadingBalances && amtNum > 0 && amtNum > fromBalNum
-                return (
-                  <button
-                    onClick={onSwap}
-                    disabled={busy || quoteNoLiquidity || insufficientBal}
-                    className="w-full rounded-xl bg-orange-600 px-4 py-3.5 font-semibold text-white shadow-sm transition hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {busy
-                      ? 'Processing…'
-                      : insufficientBal
-                        ? 'Insufficient balance'
-                        : 'Swap'}
-                  </button>
-                )
-              })()}
-
-              {swapDialogDetails && !swapDialogOpen && (
-                <button
-                  onClick={() => setSwapDialogOpen(true)}
-                  className="w-full rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 text-sm font-semibold text-orange-800 transition hover:bg-orange-100 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200"
-                >
-                  View swap status →
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Price chart — self-contained with header, flip toggle, time range tabs */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="h-[300px]">
-              <ModernPriceChart
-                data={chartData}
-                symbolFrom={isUsdcMode ? 'USD' : from}
-                symbolTo={to}
-                usdHint={chartUsdHint}
+            <div className="jlf-search">
+              <svg viewBox="0 0 24 24" fill="none" width="17" height="17">
+                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2"/>
+                <path d="m20 20-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+              <input
+                value={tokenSearch}
+                onChange={e => setTokenSearch(e.target.value)}
+                placeholder="Search name or paste address"
+                autoComplete="off"
+                autoFocus={!!tokenModalFor}
               />
             </div>
+            <div className="jlf-popular">
+              {(tokenModalFor === 'from'
+                ? ['USDC', ...tokenOptions.slice(0, 4)]
+                : tokenOptions.slice(0, 5)
+              ).map(sym => (
+                <button
+                  key={sym}
+                  className="jlf-ptok"
+                  onClick={() => {
+                    if (tokenModalFor === 'from') {
+                      if (sym === to) setTo(from === 'USDC' ? (tokenOptions[0] ?? 'MAH') : from)
+                      setFrom(sym)
+                    } else {
+                      if (sym === from) setFrom(to)
+                      setTo(sym)
+                    }
+                    setTokenModalFor(null)
+                  }}
+                >
+                  <span className="jlf-tcoin" style={{ background: tokenColor(sym), width: 22, height: 22, fontSize: 10 }}>
+                    {tokenGlyph(sym)}
+                  </span>
+                  {sym === 'USDC' ? 'USD' : sym}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="jlf-tlist">
+            {(tokenModalFor === 'from'
+              ? [{ sym: 'USDC', name: 'USD · via USDC on Polygon' }, ...tokenOptions.map(s => ({ sym: s, name: (regTokens || []).find(t => t.symbol === s)?.name || s }))]
+              : tokenOptions.map(s => ({ sym: s, name: (regTokens || []).find(t => t.symbol === s)?.name || s }))
+            )
+              .filter(({ sym, name }) => {
+                const q = tokenSearch.toLowerCase()
+                return !q || sym.toLowerCase().includes(q) || (name || '').toLowerCase().includes(q)
+              })
+              .map(({ sym, name }) => (
+                <div
+                  key={sym}
+                  className="it"
+                  onClick={() => {
+                    if (tokenModalFor === 'from') {
+                      if (sym === to) setTo(from === 'USDC' ? (tokenOptions[0] ?? 'MAH') : from)
+                      setFrom(sym)
+                    } else {
+                      if (sym === from) setFrom(to)
+                      setTo(sym)
+                    }
+                    setTokenModalFor(null)
+                  }}
+                >
+                  <span className="jlf-tcoin" style={{ background: tokenColor(sym), flexShrink: 0 }}>
+                    {tokenGlyph(sym)}
+                  </span>
+                  <span className="nm">
+                    <b>{sym === 'USDC' ? 'USD' : sym}</b>
+                    <small>{name}</small>
+                  </span>
+                  <span className="hold">
+                    <b>
+                      {sym === 'USDC'
+                        ? (hideBalances ? '•••' : (loadingUsdBal ? '…' : `$${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`))
+                        : sym === from ? fromBalDisplay
+                        : sym === to ? toBalDisplay
+                        : '—'}
+                    </b>
+                  </span>
+                </div>
+              ))}
           </div>
         </div>
       </div>
 
+      {/* Swap progress modal */}
       {swapDialogOpen && swapDialogDetails && (
         <SwapProgressModal
           phase={swapDialogPhase}
@@ -1522,53 +1694,45 @@ export default function Swap() {
         />
       )}
 
+      {/* USD balance breakdown modal */}
       {usdBalInfoOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" onClick={() => setUsdBalInfoOpen(false)}>
-          <div className="relative w-full max-w-sm rounded-2xl bg-white shadow-xl ring-1 ring-slate-200 dark:bg-slate-950 dark:ring-slate-700" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-slate-100 dark:border-slate-800">
-              <h3 className="font-bold text-slate-900 dark:text-slate-100">USD Balance</h3>
-              <button onClick={() => setUsdBalInfoOpen(false)} className="rounded-lg p-1 hover:bg-slate-100 dark:hover:bg-slate-800 transition">
-                <X className="w-4 h-4 text-slate-500" />
-              </button>
-            </div>
-            <div className="px-5 py-4 space-y-3 text-sm">
-              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-                Your estimated USD balance is the sum of two balances, converted to USD:
-              </p>
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-900 ring-1 ring-slate-200 dark:ring-slate-800 divide-y divide-slate-200 dark:divide-slate-800 overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3">
-                  <div>
-                    <div className="font-semibold text-slate-900 dark:text-slate-100">USDC</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">On Polygon network</div>
-                  </div>
-                  <div className="font-mono font-semibold text-slate-900 dark:text-slate-100">
-                    {hideBalances ? '•••' : (loadingUsdBal ? '…' : `$${usdcBalNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}
-                  </div>
-                </div>
-                <div className="flex items-center justify-between px-4 py-3">
-                  <div>
-                    <div className="font-semibold text-slate-900 dark:text-slate-100">MAH</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">On Alkebuleum network</div>
-                  </div>
-                  <div className="font-mono font-semibold text-slate-900 dark:text-slate-100">
-                    {hideBalances ? '•••' : (loadingUsdBal ? '…' : `$${(mahForUsdNum / MAH_PER_USDC).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}
-                  </div>
-                </div>
-                <div className="flex items-center justify-between px-4 py-3 bg-slate-100/60 dark:bg-slate-800/60">
-                  <div className="font-bold text-slate-900 dark:text-slate-100">Total</div>
-                  <div className="font-mono font-bold text-slate-900 dark:text-slate-100">
-                    {hideBalances ? '•••' : (loadingUsdBal ? '…' : `$${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}
-                  </div>
-                </div>
+        <div className="jlf-overlay open" onClick={() => setUsdBalInfoOpen(false)}>
+          <div className="jlf-modal" style={{ maxWidth: 380 }} onClick={e => e.stopPropagation()}>
+            <div className="jlf-modal-head">
+              <div className="row1">
+                <h3>USD Balance</h3>
+                <button className="x" onClick={() => setUsdBalInfoOpen(false)}>✕</button>
               </div>
-              <p className="text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
-                When you swap, funds are routed automatically — bridging from Polygon if needed. You don't need to manage this manually.
+            </div>
+            <div style={{ padding: '16px 20px 20px' }}>
+              <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.6 }}>
+                Your estimated USD balance is the sum of USDC on Polygon and MAH on Alkebuleum, converted to USD.
+              </p>
+              <div style={{ border: '1px solid var(--line-2)', borderRadius: 14, overflow: 'hidden' }}>
+                {[
+                  { label: 'USDC', sub: 'On Polygon', value: `$${usdcBalNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+                  { label: 'MAH', sub: 'On Alkebuleum', value: `$${(mahForUsdNum / MAH_PER_USDC).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+                  { label: 'Total', sub: '', value: `$${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, bold: true },
+                ].map(({ label, sub, value, bold }) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', borderBottom: label !== 'Total' ? '1px solid var(--line-2)' : 'none', background: bold ? 'rgba(255,255,255,.03)' : 'transparent' }}>
+                    <div>
+                      <div style={{ fontWeight: bold ? 700 : 600, color: 'var(--white)', fontSize: 14 }}>{label}</div>
+                      {sub && <div style={{ fontSize: 11.5, color: 'var(--muted-2)', marginTop: 2 }}>{sub}</div>}
+                    </div>
+                    <div style={{ fontFamily: '"DM Mono"', fontWeight: bold ? 700 : 500, color: 'var(--white)' }}>
+                      {hideBalances ? '•••' : (loadingUsdBal ? '…' : value)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p style={{ marginTop: 12, fontSize: 12, color: 'var(--muted-2)', lineHeight: 1.5 }}>
+                When you swap, funds are routed automatically — bridging from Polygon if needed.
               </p>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }
 

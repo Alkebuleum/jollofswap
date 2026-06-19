@@ -8,53 +8,26 @@ import {
     type UTCTimestamp,
     type ISeriesApi,
 } from 'lightweight-charts'
-import { ArrowLeftRight } from 'lucide-react'
 
-type PricePoint = { t: number; p: number } // t in ms, p = quote per base
-type TimeRange = '1H' | '24H' | '1W' | 'ALL'
+type PricePoint = { t: number; p: number }
+type TimeRange = '1H' | '1D' | '1W' | '1M' | '1Y'
+
+// Design system constants — always dark
+const BG       = '#101011'                        // var(--soft)
+const SURFACE2 = '#1a1a1d'                        // var(--surface-2)
+const LINE     = 'rgba(255,255,255,.045)'          // var(--line-2)
+const MUTED    = '#8B867E'                         // var(--muted)
+const WHITE    = '#FAFAF8'                         // var(--white)
+const GREEN    = '#36D399'
+const RED      = '#FF5A3C'
 
 const RANGE_MS: Record<TimeRange, number> = {
-    '1H':  1 * 60 * 60 * 1000,
-    '24H': 24 * 60 * 60 * 1000,
-    '1W':  7 * 24 * 60 * 60 * 1000,
-    'ALL': Infinity,
+    '1H':  1   * 60 * 60 * 1000,
+    '1D':  24  * 60 * 60 * 1000,
+    '1W':  7   * 24 * 60 * 60 * 1000,
+    '1M':  30  * 24 * 60 * 60 * 1000,
+    '1Y':  365 * 24 * 60 * 60 * 1000,
 }
-
-// ── Hooks ────────────────────────────────────────────────────────────────────
-
-function useIsDarkMode() {
-    const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
-    useEffect(() => {
-        const el = document.documentElement
-        const obs = new MutationObserver(() => setDark(el.classList.contains('dark')))
-        obs.observe(el, { attributes: true, attributeFilter: ['class'] })
-        return () => obs.disconnect()
-    }, [])
-    return dark
-}
-
-function useTweenNumber(value: number, ms = 200) {
-    const [v, setV] = useState(value)
-    const prev = useRef(value)
-    useEffect(() => {
-        const from = prev.current
-        const to = value
-        prev.current = value
-        if (from === to) return
-        const start = performance.now()
-        let raf = 0
-        const tick = (now: number) => {
-            const t = Math.min(1, (now - start) / ms)
-            setV(from + (to - from) * t)
-            if (t < 1) raf = requestAnimationFrame(tick)
-        }
-        raf = requestAnimationFrame(tick)
-        return () => cancelAnimationFrame(raf)
-    }, [value, ms])
-    return v
-}
-
-// ── Formatters ───────────────────────────────────────────────────────────────
 
 function fmtPrice(p: number): string {
     if (!isFinite(p) || p <= 0) return '—'
@@ -65,8 +38,6 @@ function fmtPrice(p: number): string {
     return p.toExponential(4)
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
-
 export default function ModernPriceChart({
     data,
     symbolFrom,
@@ -76,86 +47,84 @@ export default function ModernPriceChart({
     data: PricePoint[]
     symbolFrom: string
     symbolTo: string
-    /** Optional USD price of the non-stable token — shown as a secondary hint */
     usdHint?: { sym: string; price: number }
 }) {
-    const dark    = useIsDarkMode()
-    const darkRef = useRef(dark)
-    useEffect(() => { darkRef.current = dark }, [dark])
     const hostRef    = useRef<HTMLDivElement | null>(null)
     const tooltipRef = useRef<HTMLDivElement | null>(null)
     const chartRef   = useRef<IChartApi | null>(null)
     const seriesRef  = useRef<ISeriesApi<'Area'> | null>(null)
 
-    const [flipped, setFlipped]       = useState(false)
-    const [timeRange, setTimeRange]   = useState<TimeRange>('ALL')
+    const [timeRange, setTimeRange] = useState<TimeRange>('1Y')
 
-    // Reset flip when the token pair changes
-    useEffect(() => { setFlipped(false) }, [symbolFrom, symbolTo])
+    // Keep refs so tooltip closure reads current symbols
+    const baseRef  = useRef(symbolFrom)
+    const quoteRef = useRef(symbolTo)
+    useEffect(() => { baseRef.current  = symbolFrom }, [symbolFrom])
+    useEffect(() => { quoteRef.current = symbolTo   }, [symbolTo])
 
-    // Which token is "base" (1 of this = X of the other)
-    const baseSymbol  = flipped ? symbolTo   : symbolFrom
-    const quoteSymbol = flipped ? symbolFrom : symbolTo
+    // Reset to 1Y when pair changes
+    useEffect(() => { setTimeRange('1Y') }, [symbolFrom, symbolTo])
 
-    // Keep refs so the tooltip closure always reads current symbols without re-subscribing
-    const baseRef  = useRef(baseSymbol)
-    const quoteRef = useRef(quoteSymbol)
-    useEffect(() => { baseRef.current  = baseSymbol  }, [baseSymbol])
-    useEffect(() => { quoteRef.current = quoteSymbol }, [quoteSymbol])
-
-    // Filter by time range, then apply flip
+    // Filter by selected time range
     const displayData = useMemo(() => {
         const rangeMs = RANGE_MS[timeRange]
-        const cutoff = rangeMs === Infinity ? 0 : Date.now() - rangeMs
-        const filtered = (data || []).filter(d => d.t >= cutoff && d.p > 0)
-        if (flipped) return filtered.map(d => ({ t: d.t, p: 1 / d.p }))
-        return filtered
-    }, [data, timeRange, flipped])
+        const cutoff  = Date.now() - rangeMs
+        return (data || []).filter(d => d.t >= cutoff && d.p > 0)
+    }, [data, timeRange])
 
-    // Stats for the current window
+    // Stats derived from visible data
     const stats = useMemo(() => {
         if (displayData.length < 2) return null
-        const first = displayData[0].p
-        const last  = displayData[displayData.length - 1].p
-        const chg   = first > 0 ? ((last - first) / first) * 100 : 0
-        return { last, chg }
+        const prices = displayData.map(d => d.p)
+        const first  = prices[0]
+        const last   = prices[prices.length - 1]
+        const high   = Math.max(...prices)
+        const low    = Math.min(...prices)
+        const chg    = first > 0 ? ((last - first) / first) * 100 : 0
+        return { last, chg, high, low }
     }, [displayData])
 
-    const priceTween = useTweenNumber(stats?.last ?? 0)
-    const chgTween   = useTweenNumber(stats?.chg  ?? 0)
-    const chgOk      = (stats?.chg ?? 0) >= 0
+    const isUp        = (stats?.chg ?? 0) >= 0
+    const lineColor   = isUp ? GREEN : RED
+    const topColor    = isUp ? 'rgba(54,211,153,0.20)' : 'rgba(255,90,60,0.18)'
+    const bottomColor = isUp ? 'rgba(54,211,153,0.00)' : 'rgba(255,90,60,0.00)'
 
-    // ── Init chart once on mount ─────────────────────────────────────────────
+    // Init lightweight-charts once on mount
     useEffect(() => {
         let ro: ResizeObserver | null = null
-
-        // Defer one tick so the flex layout has settled and the div has real pixel dimensions
         const timer = window.setTimeout(() => {
             if (!hostRef.current) return
             const el = hostRef.current
 
-            const isDark = darkRef.current
-            const bg   = isDark ? '#0b1220' : '#ffffff'
-            const text = isDark ? '#cbd5e1' : '#334155'
-            const grid = isDark ? 'rgba(148,163,184,0.09)' : 'rgba(15,23,42,0.07)'
-
             const chart = createChart(el, {
-                width:     Math.max(10, el.clientWidth),
-                height:    Math.max(10, el.clientHeight),
+                width:  Math.max(10, el.clientWidth),
+                height: Math.max(10, el.clientHeight),
                 crosshair: { mode: CrosshairMode.Normal },
                 rightPriceScale: { borderVisible: false },
-                timeScale:       { borderVisible: false, timeVisible: true, secondsVisible: false },
-                grid: { vertLines: { color: grid }, horzLines: { color: grid } },
+                timeScale: {
+                    borderVisible: false,
+                    timeVisible:   true,
+                    secondsVisible: false,
+                },
+                grid: {
+                    vertLines: { color: LINE },
+                    horzLines: { color: LINE },
+                },
                 handleScroll: true,
                 handleScale:  true,
-                layout: { attributionLogo: false, background: { type: ColorType.Solid, color: bg }, textColor: text },
+                layout: {
+                    attributionLogo: false,
+                    background: { type: ColorType.Solid, color: BG },
+                    textColor:  MUTED,
+                    fontFamily: '"DM Mono", monospace',
+                },
             })
 
             const series = chart.addSeries(AreaSeries, {
                 lineWidth:   2,
-                lineColor:   '#f97316',
-                topColor:    'rgba(249,115,22,0.22)',
-                bottomColor: 'rgba(249,115,22,0.02)',
+                lineColor:   GREEN,
+                topColor:    'rgba(54,211,153,0.20)',
+                bottomColor: 'rgba(54,211,153,0.00)',
             })
 
             chartRef.current  = chart
@@ -167,29 +136,25 @@ export default function ModernPriceChart({
             })
             ro.observe(el)
 
-            // Tooltip — reads baseRef/quoteRef so it stays current without re-subscribing
             chart.subscribeCrosshairMove((param) => {
                 const tt = tooltipRef.current
                 const s  = seriesRef.current
                 if (!tt || !s) return
-
                 if (!param.point || !param.time) { tt.style.opacity = '0'; return }
-
                 const sd: any = param.seriesData.get(s)
                 const price = sd?.value ?? sd?.close
                 if (price == null) { tt.style.opacity = '0'; return }
-
                 const d = new Date(Number(param.time) * 1000)
-                const timeLabel = d.toLocaleString(undefined, {
-                    month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                const label = d.toLocaleString(undefined, {
+                    month: 'short', day: '2-digit',
+                    hour: '2-digit', minute: '2-digit',
                 })
-
                 tt.style.opacity = '1'
                 tt.innerHTML = `
-                    <div style="font-weight:700;font-size:12px;margin-bottom:3px;">
+                    <div style="font-weight:700;font-size:12px;margin-bottom:2px;">
                         1&nbsp;${baseRef.current}&nbsp;=&nbsp;${fmtPrice(Number(price))}&nbsp;${quoteRef.current}
                     </div>
-                    <div style="font-size:11px;opacity:.7;">${timeLabel}</div>
+                    <div style="font-size:11px;opacity:.6;">${label}</div>
                 `
             })
         }, 0)
@@ -201,131 +166,136 @@ export default function ModernPriceChart({
             chartRef.current  = null
             seriesRef.current = null
         }
-    }, []) // init once only
+    }, [])
 
-    // ── Theme ─────────────────────────────────────────────────────────────────
+    // Update series colors when direction changes
     useEffect(() => {
-        const chart = chartRef.current
-        if (!chart) return
-        const bg   = dark ? '#0b1220' : '#ffffff'
-        const text = dark ? '#cbd5e1' : '#334155'
-        const grid = dark ? 'rgba(148,163,184,0.09)' : 'rgba(15,23,42,0.07)'
-        chart.applyOptions({
-            layout: { attributionLogo: false, background: { type: ColorType.Solid, color: bg }, textColor: text },
-            grid:   { vertLines: { color: grid }, horzLines: { color: grid } },
-        })
-    }, [dark])
+        seriesRef.current?.applyOptions({ lineColor, topColor, bottomColor })
+    }, [lineColor, topColor, bottomColor])
 
-    // ── Data ──────────────────────────────────────────────────────────────────
+    // Push data into chart whenever visible window changes
     useEffect(() => {
         function push() {
             const series = seriesRef.current
             const chart  = chartRef.current
             if (!series || !chart) return
-
             const mapped = displayData.map(d => ({
                 time:  Math.floor(d.t / 1000) as UTCTimestamp,
                 value: d.p,
             }))
-
             series.setData(mapped)
             if (mapped.length > 1) chart.timeScale().fitContent()
         }
-
-        // Try immediately; if the chart hasn't initialized yet (0ms defer still pending),
-        // retry after the defer has had time to fire.
         push()
-        const retry = window.setTimeout(push, 50)
+        const retry = window.setTimeout(push, 60)
         return () => window.clearTimeout(retry)
     }, [displayData])
 
     const noData = displayData.length < 2
 
-    // ── Render ────────────────────────────────────────────────────────────────
     return (
-        <div className="flex h-full w-full flex-col">
+        <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
 
-            {/* ── Header row ── */}
-            <div className="flex items-start justify-between gap-2">
-
-                {/* Left: pair label + live price + change + USD hint */}
-                <div className="min-w-0">
-                    {/* Pair label + flip button */}
-                    <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-                            {baseSymbol}&nbsp;/&nbsp;{quoteSymbol}
-                        </span>
-                        <button
-                            onClick={() => setFlipped(f => !f)}
-                            title={`Flip to ${quoteSymbol} / ${baseSymbol}`}
-                            className="rounded p-0.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-500 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                        >
-                            <ArrowLeftRight className="h-3 w-3" />
-                        </button>
-                    </div>
-
-                    {/* Current price — large */}
-                    <div className="mt-0.5 text-2xl font-extrabold tabular-nums leading-none text-slate-900 dark:text-slate-100">
-                        {stats ? fmtPrice(priceTween) : '—'}
-                    </div>
-
-                    {/* Change % + USD hint */}
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className={[
-                            'text-xs font-semibold tabular-nums',
-                            stats
-                                ? chgOk
-                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                    : 'text-rose-600 dark:text-rose-400'
-                                : 'text-slate-400',
-                        ].join(' ')}>
-                            {stats ? `${chgTween >= 0 ? '+' : ''}${chgTween.toFixed(2)}%` : '—'}
-                        </span>
-
-                        {usdHint && (
-                            <span className="text-xs tabular-nums text-slate-400 dark:text-slate-500">
-                                ≈&nbsp;${fmtPrice(usdHint.price)}&nbsp;per&nbsp;{usdHint.sym}
-                            </span>
+            {/* ── Chart header ── */}
+            <div className="jlf-chart-head">
+                <div>
+                    <div className="jlf-pair-nm">
+                        <b>{symbolFrom}&nbsp;/&nbsp;{symbolTo}</b>
+                        {stats && (
+                            <small>
+                                {fmtPrice(stats.last)}
+                                &ensp;
+                                <span style={{ color: isUp ? GREEN : RED }}>
+                                    {isUp ? '▲' : '▼'}&nbsp;{Math.abs(stats.chg).toFixed(2)}%
+                                </span>
+                            </small>
                         )}
                     </div>
+                    {usdHint && (
+                        <div style={{ marginTop: 4, fontFamily: '"DM Mono"', fontSize: 11.5, color: MUTED }}>
+                            1&nbsp;{usdHint.sym}&nbsp;≈&nbsp;${fmtPrice(usdHint.price)}
+                        </div>
+                    )}
                 </div>
 
-                {/* Right: time range tabs */}
-                <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-                    {(['1H', '24H', '1W', 'ALL'] as const).map(r => (
-                        <button
-                            key={r}
-                            onClick={() => setTimeRange(r)}
-                            className={[
-                                'rounded-md px-2.5 py-1 text-xs font-semibold transition',
-                                timeRange === r
-                                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
-                                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100',
-                            ].join(' ')}
-                        >
-                            {r}
-                        </button>
-                    ))}
-                </div>
+                {stats && (
+                    <div className="jlf-price-now">
+                        <div className="px">{fmtPrice(stats.last)}</div>
+                        <div className={`chg ${isUp ? 'up' : 'dn'}`}>
+                            {isUp ? '▲' : '▼'}&nbsp;{Math.abs(stats.chg).toFixed(2)}%
+                            &ensp;<span style={{ color: '#5B5853' }}>24h</span>
+                        </div>
+                    </div>
+                )}
             </div>
 
-            {/* ── Chart area ── canvas always stays mounted so lightweight-charts can init */}
-            <div className="relative mt-3 flex-1 min-h-[140px]">
-                <div ref={hostRef} className="h-full w-full overflow-hidden rounded-xl" />
+            {/* ── Range tabs ── */}
+            <div className="jlf-ranges">
+                {(['1H', '1D', '1W', '1M', '1Y'] as const).map(r => (
+                    <button
+                        key={r}
+                        className={timeRange === r ? 'active' : ''}
+                        onClick={() => setTimeRange(r)}
+                    >
+                        {r}
+                    </button>
+                ))}
+            </div>
 
-                {/* "No data" overlay — sits on top of the canvas, never unmounts the canvas */}
+            {/* ── Chart canvas ── */}
+            <div style={{ position: 'relative', flex: 1, minHeight: 220, overflow: 'hidden' }}>
+                <div
+                    ref={hostRef}
+                    style={{ position: 'absolute', inset: 0 }}
+                />
+
                 {noData && (
-                    <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/80 text-xs text-slate-400 dark:bg-slate-950/80 dark:text-slate-500">
-                        No data for this period
+                    <div style={{
+                        position: 'absolute', inset: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'rgba(16,16,17,.7)',
+                        fontSize: 13, color: MUTED, fontFamily: '"DM Mono"',
+                    }}>
+                        {data.length === 0 ? 'Waiting for on-chain data…' : 'No data for this period'}
                     </div>
                 )}
 
                 <div
                     ref={tooltipRef}
-                    className="pointer-events-none absolute left-2 top-2 rounded-xl border border-slate-200 bg-white/95 px-3 py-2 text-slate-900 shadow-sm backdrop-blur dark:border-slate-800 dark:bg-slate-950/90 dark:text-slate-100"
-                    style={{ opacity: 0, transition: 'opacity 120ms ease' }}
+                    style={{
+                        position: 'absolute', left: 8, top: 8, zIndex: 2,
+                        background: SURFACE2, border: `1px solid rgba(255,255,255,.08)`,
+                        borderRadius: 9, padding: '6px 10px',
+                        fontFamily: '"DM Mono"', fontSize: 11.5, color: WHITE,
+                        pointerEvents: 'none',
+                        opacity: 0, transition: 'opacity 120ms ease',
+                    }}
                 />
             </div>
+
+            {/* ── Stats strip ── */}
+            {stats && (
+                <div className="jlf-cstats">
+                    <div className="jlf-cstat">
+                        <small>High</small>
+                        <b>{fmtPrice(stats.high)}</b>
+                    </div>
+                    <div className="jlf-cstat">
+                        <small>Low</small>
+                        <b>{fmtPrice(stats.low)}</b>
+                    </div>
+                    <div className="jlf-cstat">
+                        <small>Points</small>
+                        <b>{displayData.length}</b>
+                    </div>
+                    <div className="jlf-cstat">
+                        <small>Change</small>
+                        <b style={{ color: isUp ? GREEN : RED }}>
+                            {isUp ? '+' : ''}{stats.chg.toFixed(2)}%
+                        </b>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

@@ -1,30 +1,19 @@
-// src/components/TopBar.tsx
+// src/layout/TopBar.tsx
 import React, { useEffect, useRef, useState } from 'react'
-import { Link, NavLink, useLocation } from 'react-router-dom'
-import { Wallet2, LogOut, Copy, Check, Menu, X, Link2 } from 'lucide-react'
-import { useThemeStore } from '../store/themeStore'
+import { NavLink, useLocation } from 'react-router-dom'
+import { LogOut, Copy, Check } from 'lucide-react'
 import { FLAGS } from '../lib/flags'
 import { PRELAUNCH, isAllowedTester } from '../lib/prelaunch'
 import { useAuth } from 'amvault-connect'
 import { useSignerSessionStore } from '../store/signerSessionStore'
-import LogoJollof from '../assets/logo-jollof.svg'
 import { ethers } from 'ethers'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { wcDisconnect } from '../lib/wcProvider'
 import { useConnectModalStore } from '../store/connectModalStore'
 
-
-function shortAddr(a?: string) {
-  if (!a) return ''
-  return `${a.slice(0, 6)}…${a.slice(-4)}`
-}
-
 const ALK_RPC = (import.meta.env.VITE_ALK_RPC as string) ?? 'https://rpc.alkebuleum.com'
-
-// set this in .env: VITE_AIN_REGISTRY=0x...
 const AIN_REGISTRY = (import.meta.env.VITE_AIN_REGISTRY as string) ?? ''
-
 const AIN_READERS = [
   'function ainOf(address) view returns (uint256)',
   'function getAIN(address) view returns (uint256)',
@@ -32,359 +21,173 @@ const AIN_READERS = [
   'function ainByAddress(address) view returns (uint256)',
 ]
 
-
-const btnPrimary =
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-jlfTomato px-3 sm:px-4 py-2 sm:py-2.5 text-sm font-semibold text-jlfIvory shadow-sm hover:opacity-95 active:opacity-90 disabled:opacity-60'
-
-const btnOutline =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 ring-1 ring-slate-200 hover:bg-slate-50 active:bg-slate-100 disabled:opacity-60 dark:bg-slate-900 dark:text-slate-100 dark:ring-slate-700 dark:hover:bg-slate-800 dark:active:bg-slate-700'
+function shortAddr(a?: string) {
+  if (!a) return ''
+  return `${a.slice(0, 6)}…${a.slice(-4)}`
+}
 
 export default function TopBar() {
-  const { init } = useThemeStore()
-  useEffect(() => {
-    init()
-  }, [init])
-
   const { session, signout } = useAuth()
   const { clearSignerSession } = useSignerSessionStore()
   const { isConnected: walletConnected, address: wcAddr, connectionType } = useWalletConnection()
   const { openModal } = useConnectModalStore()
-  // addr: prefer session.address for AmVault; wcAddr for WalletConnect
   const addr = (session as any)?.address ?? wcAddr ?? undefined
   const { ain, ainLoading, setAin, setAinLoading } = useWalletMetaStore()
+  const location = useLocation()
 
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const dropRef = useRef<HTMLDivElement>(null)
 
+  const showNav = !PRELAUNCH || isAllowedTester(ain)
+
+  // Resolve AIN
   useEffect(() => {
     let cancelled = false
-
     async function resolveAIN() {
       setAin(null)
-
       if (!walletConnected || !addr) return
-
-      // 1) If amvault-connect already gives it, use it
       const sessionAny = session as any
       const fromSession = sessionAny?.ain ?? sessionAny?.AIN ?? null
       if (fromSession != null) {
         if (!cancelled) setAin(String(fromSession).trim().toUpperCase())
         return
       }
-
-      // 2) Fallback: read from on-chain registry
       if (!AIN_REGISTRY) return
-
       setAinLoading(true)
       try {
         const provider = new ethers.JsonRpcProvider(ALK_RPC)
         const c = new ethers.Contract(AIN_REGISTRY, AIN_READERS, provider)
-
         const fns = ['ainOf', 'getAIN', 'addressToAin', 'ainByAddress'] as const
         let found: string | null = null
-
         for (const fn of fns) {
           try {
             const v = await (c as any)[fn](addr)
             const n = typeof v === 'bigint' ? v : BigInt(v?.toString?.() ?? v)
-            if (n > 0n) {
-              found = n.toString()
-              break
-            }
-          } catch {
-            // try next function name
-          }
+            if (n > 0n) { found = n.toString(); break }
+          } catch { /* try next */ }
         }
-
         if (!cancelled) setAin(found ? found.trim().toUpperCase() : null)
       } finally {
         if (!cancelled) setAinLoading(false)
       }
     }
-
     resolveAIN()
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [walletConnected, addr, session])
 
-
-  // In prelaunch mode, only show nav to allowed testers
-  const showNav = !PRELAUNCH || isAllowedTester(ain)
-
-  const [open, setOpen] = useState(false) // desktop wallet dropdown
-  const [mobileOpen, setMobileOpen] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const wrapRef = useRef<HTMLDivElement | null>(null)
-
-  const location = useLocation()
-  useEffect(() => {
-    setMobileOpen(false)
-    setOpen(false)
-  }, [location.pathname])
-
-  // Close dropdown on outside click / escape
+  // Close dropdown on outside click / route change
   useEffect(() => {
     function onDown(e: MouseEvent) {
       if (!open) return
-      const el = wrapRef.current
-      if (el && !el.contains(e.target as Node)) setOpen(false)
+      if (dropRef.current && !dropRef.current.contains(e.target as Node)) setOpen(false)
     }
-    function onKey(e: KeyboardEvent) {
-      if (!open) return
-      if (e.key === 'Escape') setOpen(false)
-    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [open])
-
-  useEffect(() => {
-    if (!walletConnected) setOpen(false)
-  }, [walletConnected])
+  useEffect(() => { setOpen(false) }, [location.pathname])
+  useEffect(() => { if (!walletConnected) setOpen(false) }, [walletConnected])
 
   async function handleDisconnect() {
     setOpen(false)
-    if (connectionType === 'walletconnect') {
-      await wcDisconnect()
-    } else {
-      signout()
-    }
+    if (connectionType === 'walletconnect') await wcDisconnect()
+    else signout()
+    clearSignerSession()
   }
 
   async function copyAddress() {
     if (!addr) return
-    try {
-      await navigator.clipboard.writeText(addr)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1200)
-    } catch {
-      try {
-        const ta = document.createElement('textarea')
-        ta.value = addr
-        ta.style.position = 'fixed'
-        ta.style.left = '-9999px'
-        document.body.appendChild(ta)
-        ta.select()
-        document.execCommand('copy')
-        document.body.removeChild(ta)
-        setCopied(true)
-        window.setTimeout(() => setCopied(false), 1200)
-      } catch {
-        // ignore
-      }
-    }
+    try { await navigator.clipboard.writeText(addr) }
+    catch { /* fallback */ try { const ta = document.createElement('textarea'); ta.value = addr; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta) } catch { return } }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1400)
   }
 
   const navItems = [
-    ...(!FLAGS.V1_HIDE_P2P
-      ? [
-        { to: '/p2p/buy', label: 'P2P Buy' },
-        { to: '/p2p/sell', label: 'P2P Sell' },
-      ]
-      : []),
+    ...(!FLAGS.V1_HIDE_P2P ? [{ to: '/p2p/buy', label: 'P2P Buy' }, { to: '/p2p/sell', label: 'P2P Sell' }] : []),
     { to: '/swap', label: 'Swap' },
-    { to: '/liquidity', label: 'Liquidity' },
-    { to: '/tokens', label: 'Tokens' },
+    { to: '/liquidity', label: 'Pool' },
+    { to: '/tokens', label: 'Explore' },
   ]
 
-  const linkClass = (isActive: boolean) =>
-    [
-      'relative px-3 py-2 rounded-xl font-medium transition-all',
-      isActive
-        ? 'text-base font-semibold text-jlfTomato bg-jlfIvory/60 dark:bg-slate-900/60 shadow-sm'
-        : 'text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-slate-100',
-    ].join(' ')
+  const displayLabel = ain ? `AIN ${ain}` : shortAddr(addr)
 
   return (
-    <header className="sticky top-0 z-50 border-b border-slate-200/70 bg-white/75 backdrop-blur supports-[backdrop-filter]:bg-white/60 dark:border-slate-800/70 dark:bg-slate-950/75 dark:supports-[backdrop-filter]:bg-slate-950/60">
-      <div className="mx-auto max-w-7xl px-4 sm:px-6">
-        <div className="h-16 flex items-center justify-between gap-3">
-          {/* Brand */}
-          <Link to="/" className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-jlfIvory ring-1 ring-slate-200 grid place-content-center overflow-hidden dark:bg-slate-900 dark:ring-slate-700">
-              <img src={LogoJollof} alt="JollofSwap" className="w-6 h-6" />
-            </div>
-            <div className="leading-tight">
-              <div className="font-extrabold text-slate-900 tracking-tight dark:text-slate-100">JollofSwap</div>
-              <div className="text-[11px] text-slate-500 -mt-0.5 dark:text-slate-400">Built for Africa</div>
-            </div>
-          </Link>
+    <header className="jlf-bar">
+      {/* Brand */}
+      <NavLink to="/" style={{ display: 'flex', alignItems: 'center', gap: 11, textDecoration: 'none', color: 'var(--white)' }}>
+        <svg width="32" height="32" viewBox="0 0 30 30" fill="none" aria-label="JollofSwap">
+          <circle cx="11" cy="15" r="6.5" stroke="#CB5A33" strokeWidth="2.4"/>
+          <circle cx="19" cy="15" r="6.5" stroke="#CB5A33" strokeWidth="2.4"/>
+        </svg>
+        <b className="jlf-brandname" style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 700, fontSize: 19, letterSpacing: '-0.5px', color: '#F4EBDD' }}>
+          Jollof<i style={{ fontStyle: 'normal', color: '#E3A92E' }}>Swap</i>
+        </b>
+      </NavLink>
 
-          {/* Desktop nav — hidden in prelaunch mode for non-testers */}
-          {showNav && (
-            <nav className="hidden md:flex items-center gap-1">
-              {navItems.map((it) => (
-                <NavLink key={it.to} to={it.to} className={({ isActive }) => linkClass(isActive)}>
-                  {it.label}
-                </NavLink>
-              ))}
-            </nav>
-          )}
-
-          {/* Right actions */}
-          <div className="flex items-center gap-2">
-            {/* Hamburger — show when there is nav, or when connected (wallet panel) */}
-            {(showNav || walletConnected) && (
-              <button
-                className="md:hidden inline-flex items-center justify-center rounded-xl p-2 ring-1 ring-slate-200 bg-white hover:bg-slate-50 dark:ring-slate-700 dark:bg-slate-950 dark:hover:bg-slate-900"
-                onClick={() => setMobileOpen((v) => !v)}
-                aria-label="Open menu"
-              >
-                {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-              </button>
-            )}
-
-            {!walletConnected ? (
-              <button onClick={openModal} className={btnPrimary}>
-                <Wallet2 className="w-4 h-4" />
-                <span className="hidden sm:inline">Connect Wallet</span>
-                <span className="sm:hidden">Connect</span>
-              </button>
-            ) : (
-              <>
-                {/* Mobile: compact wallet pill (opens the mobile menu panel) */}
-                <button
-                  onClick={() => setMobileOpen(true)}
-                  className={[btnOutline, 'md:hidden', 'px-3 py-2', 'whitespace-nowrap'].join(' ')}
-                  title={addr ?? ''}
-                  aria-label="Wallet menu"
-                >
-                  <Wallet2 className="w-4 h-4" />
-                  <span className="font-mono text-xs">{ain ? `AIN ${ain}` : shortAddr(addr)}</span>
-
-                </button>
-
-                {/* Desktop: dropdown */}
-                <div className="relative hidden md:block" ref={wrapRef}>
-                  <button
-                    onClick={() => setOpen((v) => !v)}
-                    className={btnOutline}
-                    title={addr ?? ''}
-                    aria-haspopup="menu"
-                    aria-expanded={open}
-                  >
-                    <Wallet2 className="w-4 h-4" />
-                    <span className="font-mono">{ain ? `AIN ${ain}` : shortAddr(addr)}</span>
-                  </button>
-
-                  {open && (
-                    <div
-                      role="menu"
-                      className="absolute right-0 mt-2 w-64 rounded-2xl ring-1 ring-slate-200 bg-white shadow-xl overflow-hidden dark:ring-slate-700 dark:bg-slate-950"
-                    >
-                      <div className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-800">
-                        <div className="flex items-center gap-1.5">
-                          <div className="text-[11px] text-slate-500 dark:text-slate-400">Connected</div>
-                          {connectionType === 'walletconnect' && (
-                            <span className="inline-flex items-center gap-0.5 rounded-md bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
-                              <Link2 className="w-2.5 h-2.5" /> Nuru
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="mt-1 flex items-center justify-between gap-2">
-                          <div className="text-xs text-slate-600 dark:text-slate-400">
-                            <span className="font-semibold">AIN:</span>{' '}
-                            {ainLoading ? (
-                              <span>…</span>
-                            ) : ain ? (
-                              <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{ain}</span>
-                            ) : (
-                              <span>—</span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="mt-1 text-xs font-mono text-slate-800 dark:text-slate-100 break-all">{addr}</div>
-                      </div>
-
-
-                      <button
-                        role="menuitem"
-                        onClick={copyAddress}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-900 text-left"
-                      >
-                        {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-                        {copied ? 'Copied' : 'Copy address'}
-                      </button>
-
-                      <button
-                        role="menuitem"
-                        onClick={handleDisconnect}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 text-sm hover:bg-slate-50 dark:hover:bg-slate-900 text-left text-red-600"
-                      >
-                        <LogOut className="w-4 h-4" />
-                        {connectionType === 'walletconnect' ? 'Disconnect' : 'Logout'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile menu panel */}
-      {mobileOpen && (
-        <div className="md:hidden border-t border-slate-200/70 bg-white dark:border-slate-800/70 dark:bg-slate-950">
-          <div className="mx-auto max-w-7xl px-4 sm:px-6 py-3 grid gap-1">
-            {showNav && navItems.map((it) => (
-              <NavLink
-                key={it.to}
-                to={it.to}
-                className={({ isActive }) =>
-                  [
-                    'px-3 py-2.5 rounded-xl text-sm font-medium',
-                    isActive
-                      ? 'bg-jlfIvory/70 text-jlfTomato dark:bg-slate-900/60'
-                      : 'hover:bg-slate-50 dark:hover:bg-slate-900 text-slate-800 dark:text-slate-200',
-                  ].join(' ')
-                }
-              >
-                {it.label}
-              </NavLink>
-            ))}
-
-            <div className="pt-2 mt-2 border-t border-slate-100 dark:border-slate-800">
-              {!walletConnected ? (
-                <button onClick={openModal} className={btnPrimary + ' w-full'}>
-                  <Wallet2 className="w-4 h-4" />
-                  Connect Wallet
-                </button>
-              ) : (
-                <div className="rounded-2xl ring-1 ring-slate-200 bg-white p-3 dark:ring-slate-700 dark:bg-slate-950">
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400">Connected</div>
-
-                  <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
-                    <span className="font-semibold">AIN:</span>{' '}
-                    {ainLoading ? '…' : ain ? <span className="font-mono font-semibold text-slate-900 dark:text-slate-100">{ain}</span> : '—'}
-                  </div>
-
-                  <div className="mt-1 text-xs font-mono text-slate-800 dark:text-slate-100 break-all">{addr}</div>
-
-                  <div className="mt-3 flex gap-2">
-                    <button onClick={copyAddress} className={btnOutline + ' flex-1'}>
-                      {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-                      {copied ? 'Copied' : 'Copy'}
-                    </button>
-
-                    <button
-                      onClick={handleDisconnect}
-                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-red-600 ring-1 ring-red-200 bg-white hover:bg-red-50 dark:bg-slate-950 dark:ring-red-900/40 dark:hover:bg-red-950/30"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      {connectionType === 'walletconnect' ? 'Disconnect' : 'Logout'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+      {/* Nav tabs */}
+      {showNav && (
+        <nav className="jlf-tabs">
+          {navItems.map((it) => (
+            <NavLink
+              key={it.to}
+              to={it.to}
+              className={({ isActive }) => isActive ? 'active' : ''}
+            >
+              {it.label}
+            </NavLink>
+          ))}
+        </nav>
       )}
+
+      {/* Right side */}
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>
+        {/* Chain indicator */}
+        <button className="jlf-chip" style={{ gap: 8 }}>
+          <span className="dot" />
+          <span className="jlf-chain-label">Alkebuleum</span>
+          <span style={{ color: 'var(--muted)', fontSize: 10 }}>▾</span>
+        </button>
+
+        {!walletConnected ? (
+          <button className="jlf-btn-connect" onClick={openModal}>
+            Connect wallet
+          </button>
+        ) : (
+          <div style={{ position: 'relative' }} ref={dropRef}>
+            <button
+              className="jlf-chip wallet"
+              onClick={() => setOpen((v) => !v)}
+              title={addr}
+            >
+              <span className="avatar" />
+              <span>{displayLabel}</span>
+            </button>
+
+            {open && (
+              <div className="jlf-wallet-drop">
+                <div className="head">
+                  <div className="label">Connected {connectionType === 'walletconnect' ? '· Nuru' : ''}</div>
+                  {ain && <div className="ain">AIN {ain}</div>}
+                  <div className="addr">{addr}</div>
+                </div>
+                <button className="jlf-drop-item" onClick={copyAddress}>
+                  {copied
+                    ? <Check width={15} height={15} />
+                    : <Copy width={15} height={15} />}
+                  {copied ? 'Copied!' : 'Copy address'}
+                </button>
+                <button className="jlf-drop-item danger" onClick={handleDisconnect}>
+                  <LogOut width={15} height={15} />
+                  {connectionType === 'walletconnect' ? 'Disconnect' : 'Sign out'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </header>
   )
 }

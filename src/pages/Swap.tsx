@@ -678,12 +678,9 @@ export default function Swap() {
           setToBal('—')
           return
         }
-        // Alkebuleum balances: sum AA wallet + signer for each token (mirrors Nuru wallet).
-        // In browser mode signer funds can't be moved (aaWallet.execute wraps all txs),
-        // so only show aaWallet balance — prevents showing funds the user can't actually swap.
+        // Alkebuleum balances: sum AA wallet + signer for each token (mirrors Nuru wallet)
         const alkAddress = aaWallet ?? address
-        const isBrowserModeLoad = typeof window !== 'undefined' && (window as any).ethereum?._isNuruWallet === true
-        const signerAlk = !isBrowserModeLoad && polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
+        const signerAlk = polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
           ? polyAddress : null
         const getCombined = async (token: ReturnType<typeof getToken>) => {
           if (!token) return 0n
@@ -771,12 +768,9 @@ export default function Swap() {
           } catch { return 0 }
         })()
 
-        // MAH on Alkebuleum — fetch aaWallet and signer separately, sum for display.
-        // In Nuru browser mode all Alkebuleum txs are wrapped through aaWallet.execute(),
-        // so signer EOA funds can't be moved; only count aaWallet balance.
+        // MAH on Alkebuleum — fetch aaWallet and signer separately, sum for display
         const alkAddress = aaWallet ?? address
-        const isBrowserMode = typeof window !== 'undefined' && (window as any).ethereum?._isNuruWallet === true
-        const signerAlkAddr = !isBrowserMode && polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
+        const signerAlkAddr = polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
           ? polyAddress : null
         let aaMahNum = 0
         let signerMahComputed = 0
@@ -1157,10 +1151,15 @@ export default function Swap() {
           }
         }
 
-        // After all deposits: verify aaWallet has enough MAH to cover the swap
+        // After all deposits: verify aaWallet has enough MAH to cover the swap.
+        // In browser mode, consolidation was skipped — signer MAH couldn't be moved automatically.
         if (mahAfterBridge < netMah - 0.001) {
+          const signerHas = signerMahNum > 0.001
+          const aaAddr = (aaWallet ?? address) || ''
           throw new Error(
-            `Not enough MAH in your account. Have ${mahAfterBridge.toFixed(2)} MAH, need ${netMah.toFixed(2)} MAH.`
+            signerHas && isNuroBrowserSwap
+              ? `Your MAH is not yet in your spendable account. In the Nuru app, send MAH to your account address: ${aaAddr.slice(0, 8)}…${aaAddr.slice(-6)}`
+              : `Not enough MAH in your account. Have ${mahAfterBridge.toFixed(2)} MAH, need ${netMah.toFixed(2)} MAH.`
           )
         }
 

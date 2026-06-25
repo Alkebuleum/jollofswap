@@ -28,6 +28,8 @@ import {
   tokenAddressForPath,
   planAddLiquidity,
   quote,
+  getBalance,
+  erc20Iface,
 } from '../lib/jollofAmm'
 import { routerIface } from '../lib/jollofAmm'
 import { ArrowDownUp } from 'lucide-react'
@@ -188,7 +190,12 @@ async function getRevertReasonFromChain(provider: ethers.JsonRpcProvider, txHash
 
 export default function Liquidity() {
   const { isConnected: walletConnected, address } = useWalletConnection()
-  const { ain, ainLoading } = useWalletMetaStore()
+  const { ain, ainLoading, aaWallet } = useWalletMetaStore()
+
+  // If user has an AA wallet, LP tokens go there and positions are read from there.
+  // If no AA wallet (plain EOA), use the signer address directly.
+  const accountAddress = (aaWallet && ethers.isAddress(aaWallet)) ? aaWallet : (address ?? '')
+  const hasDistinctSigner = !!aaWallet && !!address && aaWallet.toLowerCase() !== address.toLowerCase()
   const { sessionSendTransactions } = useSignerSession()
   const openConnectModal = useConnectModalStore(s => s.openModal)
 
@@ -317,6 +324,12 @@ export default function Liquidity() {
   const [preAddBals, setPreAddBals] = useState<{ a: string; b: string } | null>(null)
   const [removePct, setRemovePct] = useState(100)
 
+  // Signer reconcile — only populated when aaWallet exists and signer holds LP separately
+  const [signerLpBalRaw, setSignerLpBalRaw] = useState<bigint>(0n)
+  const [signerUnderAUi, setSignerUnderAUi] = useState<string>('—')
+  const [signerUnderBUi, setSignerUnderBUi] = useState<string>('—')
+  const [reconcileBusy, setReconcileBusy] = useState(false)
+
   const REMOVE_PREFLIGHT = { flow: 'remove_liquidity_v1', gasTopup: { enabled: true, purpose: 'jswap-remove-liquidity' } } as any
   const LIQ_PREFLIGHT = { flow: 'liquidity_v1', gasTopup: { enabled: true, purpose: 'jswap-liquidity' } } as any
 
@@ -344,10 +357,16 @@ export default function Liquidity() {
     setPairAddr('—'); setLpBalUi('—'); setLpShareUi('—'); setLpBalRaw(0n); setLpSupplyRaw(0n)
     setReserveAUi('—'); setReserveBUi('—'); setUnderAUi('—'); setUnderBUi('—')
     setRawReserveA(0n); setRawReserveB(0n); setPoolHasReserves(false); setRatioAtoB('—'); setRatioBtoA('—')
-    if (!address || tokenA === tokenB) return
+    if (!accountAddress || tokenA === tokenB) return
     const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
+    // Reset signer reconcile state
+    setSignerLpBalRaw(0n); setSignerUnderAUi('—'); setSignerUnderBUi('—')
     try {
-      const pos = await getLpPosition({ owner: address, tokenA: A, tokenB: B })
+      // Read account position (AA wallet if available, else signer)
+      const [pos, signerPos] = await Promise.all([
+        getLpPosition({ owner: accountAddress, tokenA: A, tokenB: B }),
+        hasDistinctSigner && address ? getLpPosition({ owner: address, tokenA: A, tokenB: B }) : Promise.resolve(null),
+      ])
       if (!isLive()) return
       const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
       setPairAddr(pair || '—'); setLpBalRaw(pos.lpBalance); setLpSupplyRaw(pos.totalSupply)
@@ -385,6 +404,12 @@ export default function Liquidity() {
         setUnderAUi(fmtNum(ethers.formatUnits((reserveA * pos.lpBalance) / pos.totalSupply, decA)))
         setUnderBUi(fmtNum(ethers.formatUnits((reserveB * pos.lpBalance) / pos.totalSupply, decB)))
       } else { setUnderAUi('—'); setUnderBUi('—') }
+      // Signer reconcile: populate if signer holds separate LP tokens
+      if (signerPos && signerPos.lpBalance > 0n && has) {
+        setSignerLpBalRaw(signerPos.lpBalance)
+        setSignerUnderAUi(fmtNum(ethers.formatUnits((reserveA * signerPos.lpBalance) / pos.totalSupply, decA)))
+        setSignerUnderBUi(fmtNum(ethers.formatUnits((reserveB * signerPos.lpBalance) / pos.totalSupply, decB)))
+      }
     } catch { /* keep cleared UI */ }
   }
 
@@ -413,7 +438,7 @@ export default function Liquidity() {
     const id = window.setInterval(() => { if (!alive) return; refreshPositionAndReserves().catch(() => {}) }, 12000)
     return () => { alive = false; window.clearInterval(id) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address, tokenA, tokenB])
+  }, [accountAddress, address, tokenA, tokenB])
 
 
   // Fees / P&L
@@ -492,9 +517,49 @@ export default function Liquidity() {
       const usedA = plan.usedA; const usedB = plan.usedB; const minA = plan.minA; const minB = plan.minB
       const usedAUi = fmtNum(ethers.formatUnits(usedA, decA)); const usedBUi = fmtNum(ethers.formatUnits(usedB, decB))
       const txs: any[] = []
-      if (!A.isNative) { const allowanceA = await getAllowance(address, A, ROUTER, provider); if (allowanceA < usedA) { const approveTx = buildApproveTx(A, ROUTER, usedA); if (approveTx) txs.push(approveTx) } }
-      if (!B.isNative) { const allowanceB = await getAllowance(address, B, ROUTER, provider); if (allowanceB < usedB) { const approveTx = buildApproveTx(B, ROUTER, usedB); if (approveTx) txs.push(approveTx) } }
-      txs.push(buildAddLiquidityTx({ tokenA: A, tokenB: B, amountA, amountB, amountAMin: minA, amountBMin: minB, recipient: address, deadlineSec: 10 * 60, valueNative: plan.nativeValue > 0n ? plan.nativeValue : undefined }))
+
+      // ── Auto-deposit: top up AA wallet from signer if needed ──────────────
+      // Only when AA wallet and signer are distinct addresses.
+      if (hasDistinctSigner && accountAddress && address) {
+        for (const [tok, needed, dec] of [[A, usedA, decA], [B, usedB, decB]] as const) {
+          if ((tok as any).isNative) {
+            // Native ALKE: check AA wallet balance, top up from signer if short
+            const aaBal = await provider.getBalance(accountAddress)
+            if (aaBal < needed) {
+              const shortfall = needed - aaBal
+              const signerBal = await provider.getBalance(address)
+              const kMinGasWei = ethers.parseEther('0.5') // keep 0.5 ALKE on signer for gas
+              const transferable = signerBal > kMinGasWei ? signerBal - kMinGasWei : 0n
+              if (aaBal + transferable < needed) throw new Error(
+                `Insufficient ${(tok as any).symbol}. Need ${fmtNum(ethers.formatUnits(needed, dec as number))}, ` +
+                `account has ${fmtNum(ethers.formatUnits(aaBal, dec as number))}, ` +
+                `Account Key has ${fmtNum(ethers.formatUnits(transferable, dec as number))} (after gas reserve).`
+              )
+              setInfo(`Topping up account with ${fmtNum(ethers.formatUnits(shortfall, dec as number))} ${(tok as any).symbol} from Account Key…`)
+              txs.push({ to: accountAddress, value: shortfall, data: '0x' })
+            }
+          } else {
+            // ERC20: check AA wallet balance, transfer shortfall from signer
+            const aaBal: bigint = await getBalance(accountAddress, tok as any, provider)
+            if (aaBal < needed) {
+              const shortfall = needed - aaBal
+              const signerBal: bigint = await getBalance(address, tok as any, provider)
+              if (signerBal < shortfall) throw new Error(
+                `Insufficient ${(tok as any).symbol}. Need ${fmtNum(ethers.formatUnits(needed, dec as number))}, ` +
+                `account has ${fmtNum(ethers.formatUnits(aaBal, dec as number))}, ` +
+                `Account Key has ${fmtNum(ethers.formatUnits(signerBal, dec as number))}.`
+              )
+              setInfo(`Topping up account with ${fmtNum(ethers.formatUnits(shortfall, dec as number))} ${(tok as any).symbol} from Account Key…`)
+              const transferData = erc20Iface.encodeFunctionData('transfer', [accountAddress, shortfall])
+              txs.push({ to: (tok as any).address, data: transferData, value: 0n })
+            }
+          }
+        }
+      }
+
+      if (!A.isNative) { const allowanceA = await getAllowance(accountAddress, A, ROUTER, provider); if (allowanceA < usedA) { const approveTx = buildApproveTx(A, ROUTER, usedA); if (approveTx) txs.push(approveTx) } }
+      if (!B.isNative) { const allowanceB = await getAllowance(accountAddress, B, ROUTER, provider); if (allowanceB < usedB) { const approveTx = buildApproveTx(B, ROUTER, usedB); if (approveTx) txs.push(approveTx) } }
+      txs.push(buildAddLiquidityTx({ tokenA: A, tokenB: B, amountA, amountB, amountAMin: minA, amountBMin: minB, recipient: accountAddress, deadlineSec: 10 * 60, valueNative: plan.nativeValue > 0n ? plan.nativeValue : undefined }))
       const safeTxs = txs.map(normalizeTx)
       setPreAddBals({ a: balA, b: balB })
       const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: LIQ_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'add_liquidity')
@@ -533,7 +598,7 @@ export default function Liquidity() {
       if (!pairAddr || pairAddr === '—') throw new Error('No pair found for this token selection.')
       if (removePct <= 0) throw new Error('Pick a remove percentage.')
       const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
-      const pos = await getLpPosition({ owner: address, tokenA: A, tokenB: B })
+      const pos = await getLpPosition({ owner: accountAddress, tokenA: A, tokenB: B })
       const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
       if (!pair) throw new Error('No pool exists yet for this pair.')
       if (pos.lpBalance <= 0n) throw new Error('You have no LP tokens for this pool.')
@@ -554,9 +619,9 @@ export default function Liquidity() {
       setInfo(`Removing ${removePct}%: ~${fmtNum(ethers.formatUnits(outA, decA))} ${tokenA} + ~${fmtNum(ethers.formatUnits(outB, decB))} ${tokenB}. Confirm in your wallet…`)
       const txs: any[] = []
       const lpC = new ethers.Contract(pair, ERC20_ABI, provider)
-      const lpAllowance: bigint = await lpC.allowance(address, ROUTER)
+      const lpAllowance: bigint = await lpC.allowance(accountAddress, ROUTER)
       if (lpAllowance < lpToRemove) txs.push(buildLpApproveTx(pair, ROUTER, lpToRemove))
-      txs.push(buildRemoveLiquidityTx({ tokenA: A, tokenB: B, liquidity: lpToRemove, amountAMin: minA, amountBMin: minB, recipient: address, deadlineSec: 10 * 60 }))
+      txs.push(buildRemoveLiquidityTx({ tokenA: A, tokenB: B, liquidity: lpToRemove, amountAMin: minA, amountBMin: minB, recipient: accountAddress, deadlineSec: 10 * 60 }))
       const safeTxs = txs.map(normalizeTx)
       const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: REMOVE_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'remove_liquidity')
       const firstFail = results?.find((r: any) => r?.ok === false); if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
@@ -578,6 +643,38 @@ export default function Liquidity() {
       if (anyFail) { setErr(lastReason ? `removeLiquidity reverted: ${lastReason}` : 'One or more transactions reverted or did not confirm.'); setInfo(null) } else setInfo('Liquidity removed ✅')
       await refreshBalances(); await refreshPositionAndReserves()
     } catch (e: any) { setErr(e?.shortMessage || e?.message || 'Remove Liquidity failed.'); setInfo(null) } finally { setBusy(false) }
+  }
+
+  async function onReconcileSigner() {
+    if (!address || !pairAddr || pairAddr === '—' || signerLpBalRaw <= 0n || lpSupplyRaw <= 0n) return
+    setErr(null); setInfo(null); setReconcileBusy(true)
+    try {
+      const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
+      const pairC = new ethers.Contract(pairAddr, PAIR_ABI, provider)
+      const [t0, t1, reserves] = await Promise.all([pairC.token0(), pairC.token1(), pairC.getReserves()])
+      const r0 = reserves[0] as bigint; const r1 = reserves[1] as bigint
+      const addrA = tokenAddressForPath(A).toLowerCase()
+      let reserveA = 0n; let reserveB = 0n
+      if (addrA === (t0 as string).toLowerCase()) { reserveA = r0; reserveB = r1 } else { reserveA = r1; reserveB = r0 }
+      const outA = (reserveA * signerLpBalRaw) / lpSupplyRaw
+      const outB = (reserveB * signerLpBalRaw) / lpSupplyRaw
+      const minA = applySlippage(outA, slippageBps); const minB = applySlippage(outB, slippageBps)
+      const lpC = new ethers.Contract(pairAddr, ERC20_ABI, provider)
+      const lpAllowance: bigint = await lpC.allowance(address, ROUTER)
+      const txs: any[] = []
+      if (lpAllowance < signerLpBalRaw) txs.push(buildLpApproveTx(pairAddr, ROUTER, signerLpBalRaw))
+      // Recipient = accountAddress so tokens land in the AA wallet
+      txs.push(buildRemoveLiquidityTx({ tokenA: A, tokenB: B, liquidity: signerLpBalRaw, amountAMin: minA, amountBMin: minB, recipient: accountAddress, deadlineSec: 10 * 60 }))
+      setInfo('Reconciling — confirm in your wallet…')
+      await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: txs.map(normalizeTx), failFast: true, preflight: REMOVE_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'reconcile_signer')
+      setInfo('Reconciled! Signer position moved to your account.')
+      setSignerLpBalRaw(0n); setSignerUnderAUi('—'); setSignerUnderBUi('—')
+      await refreshPositionAndReserves()
+    } catch (e: any) {
+      setErr(e?.shortMessage ?? e?.message ?? String(e))
+    } finally {
+      setReconcileBusy(false)
+    }
   }
 
   async function onRepairPool() {
@@ -729,6 +826,32 @@ export default function Liquidity() {
                 <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Returns</div>
                 <div style={{ fontFamily: '"DM Mono"', fontSize: 13, color: 'var(--muted)' }}>{feesPnlUi}</div>
                 {feesPnlNote && <div style={{ marginTop: 4, fontSize: 11, color: 'var(--muted-2)' }}>{feesPnlNote}</div>}
+              </div>
+            )}
+
+            {/* Reconcile banner — Account Key holds a separate LP position */}
+            {hasDistinctSigner && signerLpBalRaw > 0n && (
+              <div style={{ marginTop: 16, padding: '12px 14px', background: 'rgba(245,158,11,.07)', border: '1px solid rgba(245,158,11,.25)', borderRadius: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+                  <span style={{ fontSize: 13 }}>⚠️</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#F59E0B' }}>Position on Account Key</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--muted-2)', lineHeight: 1.5, marginBottom: 10 }}>
+                  Your Account Key holds a separate liquidity position in this pool.
+                  Reconcile it to move the underlying tokens to your account.
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <span style={{ fontFamily: '"DM Mono"', fontSize: 11.5, color: 'var(--muted)' }}>
+                    {signerUnderAUi} {tokenA} · {signerUnderBUi} {tokenB}
+                  </span>
+                  <button
+                    onClick={onReconcileSigner}
+                    disabled={reconcileBusy}
+                    style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, color: '#F59E0B', background: 'rgba(245,158,11,.15)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 8, cursor: reconcileBusy ? 'not-allowed' : 'pointer', opacity: reconcileBusy ? 0.6 : 1 }}
+                  >
+                    {reconcileBusy ? 'Reconciling…' : 'Reconcile'}
+                  </button>
+                </div>
               </div>
             )}
           </div>

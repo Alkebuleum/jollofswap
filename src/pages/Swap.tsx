@@ -1021,8 +1021,8 @@ export default function Swap() {
 
         const injectedEthSwap = typeof window !== 'undefined' ? (window as any).ethereum : null
         const isNuroBrowserSwap = injectedEthSwap?._isNuruWallet === true
-        // In QR path, signer MAH will be deposited to aaWallet before the swap
-        const mahAvail = mahForUsdNum + (!isNuroBrowserSwap ? signerMahNum : 0)
+        // Combined balance: aaWallet + signer (signer will be deposited before swap in QR mode)
+        const mahAvail = mahForUsdNum + signerMahNum
         const mahNeeded = amtUsd * MAH_PER_USDC
         const mahFromExisting = Math.min(mahAvail, mahNeeded)
         const usdcToBridge = Math.max(0, (mahNeeded - mahFromExisting) / MAH_PER_USDC)
@@ -1096,7 +1096,8 @@ export default function Swap() {
                   data: ERC20_WRITE_IFACE.encodeFunctionData('decimals', []),
                 }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
                 const nowMah = Number(ethers.formatUnits(raw, dec))
-                if (nowMah > mahAvail + 0.1) { mahAfterBridge = nowMah; return }
+                // Compare against aaWallet-only baseline so signer MAH doesn't inflate threshold
+                if (nowMah > mahForUsdNum + 0.1) { mahAfterBridge = nowMah; return }
               } catch { /* keep polling */ }
             }
           })()
@@ -1141,13 +1142,28 @@ export default function Swap() {
               { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: true },
               'Consolidate wallet',
             )
-            // Deposit succeeded: aaWallet now holds aaWallet + signer MAH
-            mahAfterBridge = mahForUsdNum + Number(ethers.formatUnits(signerMahSnap.raw, signerMahSnap.dec))
+            // mahAfterBridge already reflects any bridged MAH; add signer deposit on top
+            mahAfterBridge = mahAfterBridge + Number(ethers.formatUnits(signerMahSnap.raw, signerMahSnap.dec))
             signerMahRef.current = null
           } catch (e) {
             // Non-fatal: proceed with aaWallet-only balance
             console.warn('[Jollof] Signer MAH deposit failed, continuing with aaWallet balance only:', e)
           }
+        }
+
+        // After all deposits: verify aaWallet has enough MAH to cover the swap
+        if (mahAfterBridge < netMah - 0.001) {
+          const signerHasMAH = signerMahNum > 0.001
+          if (isNuroBrowserSwap && signerHasMAH) {
+            throw new Error(
+              `$${(signerMahNum / MAH_PER_USDC).toFixed(2)} of your funds are on your signing wallet, ` +
+              `not your AA account. In browser mode JollofSwap can't move them automatically. ` +
+              `Please transfer MAH from your signing address to your account in the Nuru app, then retry.`
+            )
+          }
+          throw new Error(
+            `Not enough MAH in your account. Have ${mahAfterBridge.toFixed(2)} MAH, need ${netMah.toFixed(2)} MAH.`
+          )
         }
 
         // ── Swap step: MAH → to token ────────────────────────────────────

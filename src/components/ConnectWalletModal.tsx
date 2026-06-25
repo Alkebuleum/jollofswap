@@ -142,7 +142,7 @@ export default function ConnectWalletModal() {
           </button>
         </div>
 
-        <div style={{ padding: '18px 22px 24px' }}>
+        <div style={{ padding: '18px 22px calc(24px + env(safe-area-inset-bottom, 0px))' }}>
 
           {/* Session dropped banner */}
           {sessionDropped && (

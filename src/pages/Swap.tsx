@@ -678,9 +678,12 @@ export default function Swap() {
           setToBal('—')
           return
         }
-        // Alkebuleum balances: sum AA wallet + signer for each token (mirrors Nuru wallet)
+        // Alkebuleum balances: sum AA wallet + signer for each token (mirrors Nuru wallet).
+        // In browser mode signer funds can't be moved (aaWallet.execute wraps all txs),
+        // so only show aaWallet balance — prevents showing funds the user can't actually swap.
         const alkAddress = aaWallet ?? address
-        const signerAlk = polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
+        const isBrowserModeLoad = typeof window !== 'undefined' && (window as any).ethereum?._isNuruWallet === true
+        const signerAlk = !isBrowserModeLoad && polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
           ? polyAddress : null
         const getCombined = async (token: ReturnType<typeof getToken>) => {
           if (!token) return 0n
@@ -768,9 +771,12 @@ export default function Swap() {
           } catch { return 0 }
         })()
 
-        // MAH on Alkebuleum — fetch aaWallet and signer separately, sum for display
+        // MAH on Alkebuleum — fetch aaWallet and signer separately, sum for display.
+        // In Nuru browser mode all Alkebuleum txs are wrapped through aaWallet.execute(),
+        // so signer EOA funds can't be moved; only count aaWallet balance.
         const alkAddress = aaWallet ?? address
-        const signerAlkAddr = polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
+        const isBrowserMode = typeof window !== 'undefined' && (window as any).ethereum?._isNuruWallet === true
+        const signerAlkAddr = !isBrowserMode && polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
           ? polyAddress : null
         let aaMahNum = 0
         let signerMahComputed = 0
@@ -1153,14 +1159,6 @@ export default function Swap() {
 
         // After all deposits: verify aaWallet has enough MAH to cover the swap
         if (mahAfterBridge < netMah - 0.001) {
-          const signerHasMAH = signerMahNum > 0.001
-          if (isNuroBrowserSwap && signerHasMAH) {
-            throw new Error(
-              `$${(signerMahNum / MAH_PER_USDC).toFixed(2)} of your funds are on your signing wallet, ` +
-              `not your AA account. In browser mode JollofSwap can't move them automatically. ` +
-              `Please transfer MAH from your signing address to your account in the Nuru app, then retry.`
-            )
-          }
           throw new Error(
             `Not enough MAH in your account. Have ${mahAfterBridge.toFixed(2)} MAH, need ${netMah.toFixed(2)} MAH.`
           )

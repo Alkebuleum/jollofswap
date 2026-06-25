@@ -349,6 +349,8 @@ export default function Swap() {
   const [sp] = useSearchParams()
   const location = useLocation()
   const didInitRef = useRef(false)
+  // Tracks signer's MAH on Alkebuleum separately — used for auto-deposit before swaps
+  const signerMahRef = useRef<{ raw: bigint; dec: number } | null>(null)
 
   type TokenSym = string
 
@@ -423,7 +425,7 @@ export default function Swap() {
 
   // Swap progress dialog (phases include auto-bridge stages)
   const [swapDialogOpen, setSwapDialogOpen] = useState(false)
-  const [swapDialogPhase, setSwapDialogPhase] = useState<'waiting' | 'bridging' | 'minting' | 'confirming' | 'success' | 'error'>('waiting')
+  const [swapDialogPhase, setSwapDialogPhase] = useState<'waiting' | 'consolidating' | 'bridging' | 'minting' | 'confirming' | 'success' | 'error'>('waiting')
   const [swapDialogErr, setSwapDialogErr] = useState<string | null>(null)
   const [swapDialogDetails, setSwapDialogDetails] = useState<{
     fromSym: string
@@ -759,19 +761,31 @@ export default function Swap() {
           } catch { return 0 }
         })()
 
-        // MAH on Alkebuleum — read from AA wallet if available, else EOA
+        // MAH on Alkebuleum — sum AA wallet + signer (like Nuru wallet does)
         const alkAddress = aaWallet ?? address
+        const signerAlkAddr = polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
+          ? polyAddress : null
         const mahNum = await (async () => {
           try {
             const dec: number = Number(await provider.call({
               to: MAH_TOKEN_ALK,
               data: ERC20_WRITE_IFACE.encodeFunctionData('decimals', []),
             }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
-            const raw: bigint = BigInt(await provider.call({
+            const aaRaw: bigint = BigInt(await provider.call({
               to: MAH_TOKEN_ALK,
               data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [alkAddress]),
             }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0]))
-            return Number(ethers.formatUnits(raw, dec))
+            let signerRaw = 0n
+            if (signerAlkAddr) {
+              signerRaw = await provider.call({
+                to: MAH_TOKEN_ALK,
+                data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [signerAlkAddr]),
+              }).then(d => BigInt(ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0])).catch(() => 0n)
+              signerMahRef.current = signerRaw > 0n ? { raw: signerRaw, dec } : null
+            } else {
+              signerMahRef.current = null
+            }
+            return Number(ethers.formatUnits(aaRaw + signerRaw, dec))
           } catch { return 0 }
         })()
 
@@ -1093,6 +1107,38 @@ export default function Swap() {
         if (isBridgeOnly) {
           setSwapDialogPhase('success')
           return
+        }
+
+        // ── Auto-deposit: sweep signer MAH into aaWallet (QR path only) ─────
+        // Mirrors Nuru wallet behaviour: combined balance is displayed, but swaps
+        // always execute from the aaWallet. The signer's MAH is swept first.
+        // Skipped in Nuru browser mode — window.ethereum already routes through aaWallet.
+        const injectedEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+        const isNuroBrowser = injectedEth?._isNuruWallet === true
+        const signerMahSnap = signerMahRef.current
+        if (
+          !isNuroBrowser &&
+          polyAddress &&
+          polyAddress.toLowerCase() !== alkRecipient.toLowerCase() &&
+          signerMahSnap &&
+          signerMahSnap.raw > 0n
+        ) {
+          setSwapDialogPhase('consolidating')
+          try {
+            const transferData = ERC20_WRITE_IFACE.encodeFunctionData('transfer', [alkRecipient, signerMahSnap.raw])
+            await sessionSendTransactions(
+              { chainId: ALK_CHAIN_ID, txs: [{ to: MAH_TOKEN_ALK, data: transferData, value: 0, gas: 80_000 }], failFast: true },
+              { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: true },
+              'Consolidate wallet',
+            )
+            // After deposit, aaWallet has the full combined balance
+            mahAfterBridge += Number(ethers.formatUnits(signerMahSnap.raw, signerMahSnap.dec))
+            signerMahRef.current = null
+          } catch (e) {
+            // Non-fatal: proceed with aaWallet balance only if deposit fails
+            console.warn('[Jollof] Signer MAH deposit failed, continuing with aaWallet balance only:', e)
+            mahAfterBridge -= Number(ethers.formatUnits(signerMahSnap.raw, signerMahSnap.dec))
+          }
         }
 
         // ── Swap step: MAH → to token ────────────────────────────────────
@@ -1765,7 +1811,7 @@ function SwapProgressModal({
   err,
   onClose,
 }: {
-  phase: 'waiting' | 'bridging' | 'minting' | 'confirming' | 'success' | 'error'
+  phase: 'waiting' | 'consolidating' | 'bridging' | 'minting' | 'confirming' | 'success' | 'error'
   details: { fromSym: string; toSym: string; amountIn: string; estimatedOut: string; txHash: string }
   preSwapBals: { from: string; to: string } | null
   fromBal: string
@@ -1776,14 +1822,21 @@ function SwapProgressModal({
   const isDone = phase === 'success'
   const isError = phase === 'error'
   const isUsdFlow = details.fromSym === 'USD'
+  const pastConsolidate = phase === 'bridging' || phase === 'minting' || phase === 'confirming' || isDone
 
-  // Steps for USD smart-route flow (bridge + swap) — two separate signatures required
+  // Steps for USD smart-route flow (bridge + swap) — signatures required
   const usdSteps: Array<{ label: string; sublabel?: string; done: boolean; active: boolean }> = [
     {
-      label: 'Signature 1 — Bridge',
+      label: 'Consolidate wallet funds',
+      sublabel: phase === 'consolidating' ? 'Moving MAH from signing wallet to your account…' : undefined,
+      done: pastConsolidate,
+      active: phase === 'waiting' || phase === 'consolidating',
+    },
+    {
+      label: 'Signature — Bridge',
       sublabel: phase === 'bridging' ? 'Confirm in your wallet to send USDC to the bridge' : (phase === 'minting' || phase === 'confirming' || isDone) && details.txHash ? `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}` : undefined,
       done: phase === 'minting' || phase === 'confirming' || isDone,
-      active: phase === 'waiting' || phase === 'bridging',
+      active: phase === 'bridging',
     },
     {
       label: 'Funds arriving on Alkebuleum',
@@ -1792,7 +1845,7 @@ function SwapProgressModal({
       active: phase === 'minting',
     },
     {
-      label: 'Signature 2 — Swap',
+      label: 'Signature — Swap',
       sublabel: phase === 'confirming' ? 'Confirm in your wallet to complete the swap' : isDone && details.txHash ? `${details.txHash.slice(0, 10)}…${details.txHash.slice(-6)}` : undefined,
       done: isDone,
       active: phase === 'confirming',

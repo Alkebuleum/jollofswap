@@ -200,7 +200,7 @@ async function nuroBrowserSendTransactions(txPayload: any): Promise<{ ok: boolea
 // All signing goes through a nuruProvider wrapper — transactions and messages
 // are QR-scanned and approved in Nuru without any WalletConnect relay.
 
-async function wcSendTransactions(txPayload: any, label = 'Transaction'): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
+async function wcSendTransactions(txPayload: any, label = 'Transaction', skipAaWrap = false): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
   // Get connected addresses from store — Firebase connect provides both aaWallet and signer
   const { wcAddress: connectedAddr, signer: signerAddr } = useWcStore.getState()
   if (!connectedAddr) throw new Error('No wallet connected. Please connect your wallet first.')
@@ -255,7 +255,7 @@ async function wcSendTransactions(txPayload: any, label = 'Transaction'): Promis
     }
 
     // ── AA wallet path (Alkebuleum only) ─────────────────────────────────────
-    if (isAlkebuleum && aaWallet) {
+    if (isAlkebuleum && aaWallet && !skipAaWrap) {
       console.log('[Jollof] AA path → aaWallet', aaWallet, 'signer', effectiveSigner)
       // await so that finally runs after aaExecuteTransactions fully completes,
       // not synchronously right after the return statement
@@ -378,7 +378,7 @@ export function useSignerSession() {
 
   const sessionSendTransactions = useCallback(async (
     txPayload: any,
-    opts: { app: string; amvaultUrl: string; keepPopupOpen?: boolean },
+    opts: { app: string; amvaultUrl: string; keepPopupOpen?: boolean; skipAaWrap?: boolean },
     flowStep?: string,
   ) => {
     const { wcConnected } = useWcStore.getState()
@@ -388,6 +388,7 @@ export function useSignerSession() {
     if (wcConnected && isNuroBrowser) {
       // Inside Nuru dApp browser — use window.ethereum directly (native approval sheets).
       // Skip aaExecuteTransactions: the browser already wraps Alkebuleum txs through AA wallet.
+      // skipAaWrap is ignored here — browser path always routes through window.ethereum.
       console.log('[Jollof] sendTransactions via Nuru browser →', {
         txCount: txPayload?.txs?.length ?? 0,
         chainId: txPayload?.chainId,
@@ -402,9 +403,10 @@ export function useSignerSession() {
         flowStep: flowStep ?? null,
         txCount: txPayload?.txs?.length ?? 0,
         chainId: txPayload?.chainId,
+        skipAaWrap: opts.skipAaWrap ?? false,
       })
       const label = flowStep ?? txPayload?.label ?? opts.app ?? 'Transaction'
-      const results = await wcSendTransactions(txPayload, label)
+      const results = await wcSendTransactions(txPayload, label, opts.skipAaWrap ?? false)
       console.log('[Jollof] sendTransactions via Nuru QR ← ok', results.map(r => r.txHash))
       return results
     }

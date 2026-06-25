@@ -819,11 +819,13 @@ export default function Swap() {
         // USDC mode: route quote via MAH (USD → MAH bridge → to token swap)
         if (from === 'USDC') {
           const usdAmt = Number(amtStr)
-          const usdcToBridge = Math.max(0, usdAmt - mahForUsdNum / MAH_PER_USDC)
+          const mahNeeded = usdAmt * MAH_PER_USDC
+          const mahFromExisting = Math.min(mahForUsdNum, mahNeeded)
+          const usdcToBridge = Math.max(0, (mahNeeded - mahFromExisting) / MAH_PER_USDC)
           const bridgeFee = usdcToBridge > 0
             ? Math.min(BRIDGE_FEE_MAX_USD, Math.max(BRIDGE_FEE_MIN_USD, usdcToBridge * BRIDGE_FEE_BPS / 10000))
             : 0
-          const netMah = mahForUsdNum + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
+          const netMah = mahFromExisting + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
           if (netMah <= 0) { setQuoteOut('—'); setMinOut('—'); return }
 
           // USD → MAH: bridge output IS the result, no AMM step
@@ -995,11 +997,13 @@ export default function Swap() {
         const alkRecipient = aaWallet ?? address
 
         const mahAvail = mahForUsdNum
-        const usdcToBridge = Math.max(0, amtUsd - mahAvail / MAH_PER_USDC)
+        const mahNeeded = amtUsd * MAH_PER_USDC
+        const mahFromExisting = Math.min(mahAvail, mahNeeded)
+        const usdcToBridge = Math.max(0, (mahNeeded - mahFromExisting) / MAH_PER_USDC)
         const bridgeFee = usdcToBridge > 0
           ? Math.min(BRIDGE_FEE_MAX_USD, Math.max(BRIDGE_FEE_MIN_USD, usdcToBridge * BRIDGE_FEE_BPS / 10000))
           : 0
-        const netMah = mahAvail + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
+        const netMah = mahFromExisting + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
         if (netMah <= 0) throw new Error('Amount too small after fees.')
 
         setSwapDialogDetails({ fromSym: 'USD', toSym: to, amountIn: amtStr, estimatedOut: quoteOut !== '—' ? quoteOut : '—', txHash: '' })
@@ -1229,7 +1233,11 @@ export default function Swap() {
   const amtNumVal = Number(clampAmountStr(amount.trim()) || '0')
   const quoteNumVal = quoteOut === '—' ? NaN : Number(quoteOut.replace(/,/g, ''))
   const spotRate = amtNumVal > 0 && !isNaN(quoteNumVal) && quoteNumVal > 0
-    ? quoteNumVal / amtNumVal
+    ? isUsdcMode
+      // In USDC mode quoteOut is for netMah ≈ amtNumVal*MAH_PER_USDC MAH,
+      // so divide by MAH_PER_USDC to get back to ALKE-per-MAH.
+      ? (quoteNumVal / amtNumVal) / MAH_PER_USDC
+      : quoteNumVal / amtNumVal
     : null
 
   // USD value of the amount being spent

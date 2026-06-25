@@ -91,6 +91,15 @@ export function getWcProvider() {
   return _provider
 }
 
+/** Returns the active WC session topic, trying several internal paths. */
+export function getWcTopic(): string {
+  const p = _provider as any
+  return p?.session?.topic
+    ?? p?.signer?.session?.topic
+    ?? p?.signer?.client?.session?.getAll?.()[0]?.topic
+    ?? ''
+}
+
 /** Connect — shows URI via onWcUri listeners, waits for Nuru to accept. */
 export async function wcConnect(): Promise<string> {
   // Always create a fresh provider for a new connection attempt

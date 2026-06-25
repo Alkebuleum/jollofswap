@@ -2,12 +2,15 @@ import { create } from 'zustand'
 
 type WcState = {
   wcConnected: boolean
-  wcAddress: string | null
-  setWcState: (connected: boolean, address: string | null) => void
+  wcAddress: string | null  // primary address = aaWallet (for balance display)
+  signer: string | null     // EOA that signs transactions
+  setWcState: (connected: boolean, address: string | null, signer?: string | null) => void
 }
 
 export const useWcStore = create<WcState>((set) => ({
   wcConnected: false,
   wcAddress: null,
-  setWcState: (wcConnected, wcAddress) => set({ wcConnected, wcAddress }),
+  signer: null,
+  setWcState: (wcConnected, wcAddress, signer) =>
+    set({ wcConnected, wcAddress, signer: signer ?? null }),
 }))

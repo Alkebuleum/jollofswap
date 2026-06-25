@@ -3,12 +3,13 @@
 // Session-aware wrappers for sendTransactions and signMessage.
 //
 // Routing:
-//   - WalletConnect or injected window.ethereum (Nuru browser) → standard EIP-1193
+//   - WalletConnect or injected window.ethereum (Nuru browser) → Nuru QR signing
 //   - Otherwise → amvault-connect (legacy AmVault users)
 //
-// WC/injected path uses direct eth_sendTransaction calls (not ethers BrowserProvider)
-// so Alkebuleum's required legacy type-0 transactions are sent correctly.
-// Receipt confirmation polls the public JSON-RPC directly rather than the wallet provider.
+// For WC/injected wallet: all signing ops go through nuruSign (QR + Firestore).
+// The full transaction data is embedded in the QR so Nuru approves locally —
+// no WalletConnect relay required for the signing step.
+// Receipt confirmation polls the public JSON-RPC directly.
 
 import { useEffect, useCallback } from 'react'
 import { ethers } from 'ethers'
@@ -24,18 +25,18 @@ import { getWcProvider } from '../lib/wcProvider'
 import { ALK_CHAIN_ID, ALK_RPC, GAS_PRICE_WEI } from '../lib/jollofAmm'
 import { aaExecuteTransactions } from '../lib/aaOrchestrator'
 import { useWalletMetaStore } from '../store/walletMetaStore'
+import { useWcSigningStore } from '../store/wcSigningStore'
+import { createNuruProvider, nuruSign } from '../lib/nuruSigning'
 
 const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137)
 const POLY_RPC = (import.meta.env.VITE_POLY_RPC as string) ?? 'https://polygon-bor-rpc.publicnode.com'
 const FAUCET_API = (import.meta.env.VITE_FAUCET_API as string) ?? 'https://faucet.alkebuleum.com/api'
 
-// Minimum POL balance required before Polygon bridge transactions
 const MIN_POL_WEI = ethers.parseEther('0.1')
 
 const WARN_POLL_MS = 15_000
 const RECEIPT_POLL_MS = 1_500
 const RECEIPT_MAX_POLLS = 80
-const TX_SIGN_TIMEOUT_MS = 180_000  // 3 min — if Nuru doesn't respond, tell the user
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -54,13 +55,9 @@ function toHex(v: bigint | number | string): string {
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
 
 // ── Polygon POL gas top-up ────────────────────────────────────────────────────
-//
-// Mirrors the Nuru native faucet flow: if the wallet has < 0.1 POL, request a
-// signed challenge from the faucet, sign it with personal_sign, and submit.
-// This is called automatically before any Polygon bridge transaction.
 
 async function runPolyTopupIfNeeded(
-  eip1193: any,
+  nuruProvider: any,
   address: string,
   rpcProvider: ethers.JsonRpcProvider,
 ): Promise<void> {
@@ -86,12 +83,12 @@ async function runPolyTopupIfNeeded(
   ].join('\n')
 
   const msgHex = ethers.hexlify(ethers.toUtf8Bytes(msg))
-  const signature: string = await Promise.race([
-    eip1193.request({ method: 'personal_sign', params: [msgHex, address] }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Nuru did not respond. Open Nuru to approve the signature request.')), TX_SIGN_TIMEOUT_MS)
-    ),
-  ])
+
+  // Signed by Nuru via QR — the nuruProvider wrapper handles the QR/Firestore flow
+  const signature: string = await nuruProvider.request({
+    method: 'personal_sign',
+    params: [msgHex, address],
+  })
 
   const submitRes = await fetch(`${FAUCET_API}/poly/topup/submit`, {
     method: 'POST',
@@ -106,7 +103,6 @@ async function runPolyTopupIfNeeded(
     throw new Error(err?.error ?? 'POL gas top-up failed. Please add POL to your wallet on Polygon.')
   }
 
-  // Wait for balance to reflect (up to 10 seconds)
   for (let i = 0; i < 10; i++) {
     await sleep(1000)
     const newBal = await rpcProvider.getBalance(address).catch(() => 0n)
@@ -118,151 +114,244 @@ async function runPolyTopupIfNeeded(
   throw new Error('POL top-up submitted but balance not updated yet. Please retry in a moment.')
 }
 
-// ── EIP-1193 transaction sender ───────────────────────────────────────────────
+// ── Nuru in-app browser path ──────────────────────────────────────────────────
 //
-// Sends transactions via the connected wallet's EIP-1193 provider with explicit
-// legacy (type-0) gas fields so Alkebuleum's Besu node accepts them.
-// Polls receipts via the public JSON-RPC to avoid quirks in wallet providers.
+// JollofSwap is running inside the Nuru dApp browser (window.ethereum._isNuruWallet).
+// All signing goes through window.ethereum directly — the browser shows a native
+// Dart approval sheet for each tx/signature without any QR or Firestore involved.
+//
+// IMPORTANT: Do NOT wrap txs through aaExecuteTransactions here. The Nuru dApp
+// browser already wraps Alkebuleum txs through the AA wallet's execute() internally
+// (dapp_browser_tab.dart line 498). Double-wrapping would cause execute(execute(...)).
 
-async function wcSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
-  const eip1193 = getWcProvider() ?? (window as any).ethereum
-  if (!eip1193) throw new Error('No wallet connected. Please connect your wallet first.')
+async function nuroBrowserSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
+  const injEth = (window as any).ethereum
+  const txList: any[] = txPayload.txs ?? []
 
   const reqChainId: number | undefined =
     typeof txPayload.chainId === 'number' ? txPayload.chainId : undefined
-
-  // Switch to the required chain if needed (Alkebuleum or Polygon both supported)
-  if (reqChainId) {
-    const rawChain = await eip1193.request({ method: 'eth_chainId' })
-    const currentChainId = typeof rawChain === 'number'
-      ? rawChain
-      : parseInt(String(rawChain).replace('0x', ''), 16)
-    if (currentChainId !== reqChainId) {
-      await eip1193.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: toHex(reqChainId) }],
-      })
-      await sleep(300) // let chain switch settle in the wallet
-    }
-  }
-
-  const isPolygon = reqChainId === POLY_CHAIN_ID
-  const isAlkebuleum = reqChainId === ALK_CHAIN_ID
-  const rpcUrl = isPolygon ? POLY_RPC : ALK_RPC
-  const rpcChainId = isPolygon ? POLY_CHAIN_ID : ALK_CHAIN_ID
-  // Poll receipts via public RPC — more reliable than using the wallet provider
+  const isPolygon   = reqChainId === POLY_CHAIN_ID
+  const rpcUrl      = isPolygon ? POLY_RPC : ALK_RPC
+  const rpcChainId  = isPolygon ? POLY_CHAIN_ID : ALK_CHAIN_ID
   const rpcProvider = new ethers.JsonRpcProvider(rpcUrl, rpcChainId, { staticNetwork: true })
 
-  const accounts: string[] = await eip1193.request({ method: 'eth_accounts' })
-  const from = accounts?.[0]
-  if (!from) throw new Error('No account available — connect your wallet first.')
+  // Switch chain in the WebView if needed before sending
+  if (reqChainId != null) {
+    const curHex: string = await injEth.request({ method: 'eth_chainId' }).catch(() => null)
+    const curChain = curHex ? parseInt(curHex, 16) : null
+    if (curChain !== reqChainId) {
+      await injEth.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: '0x' + reqChainId.toString(16) }],
+      })
+    }
+  }
 
-  // Ensure the wallet has enough POL for Polygon gas before submitting bridge txs
+  // For Polygon txs, ensure the EOA has enough POL for gas (faucet top-up if needed).
+  // window.ethereum serves as the nuruProvider here — personal_sign shows a native approval sheet.
   if (isPolygon) {
-    await runPolyTopupIfNeeded(eip1193, from, rpcProvider)
-  }
-
-  const txList: any[] = txPayload.txs ?? []
-
-  // ── AA wallet path (Alkebuleum only) ─────────────────────────────────────
-  // When the user has an AA wallet registered, all Alkebuleum transactions are
-  // routed through aaWallet.execute() (primary key) or the relay (linked signer).
-  // Polygon bridge transactions always go direct-EOA regardless.
-  const { aaWallet } = useWalletMetaStore.getState()
-  if (isAlkebuleum && aaWallet) {
-    console.log('[Jollof] AA path → aaWallet', aaWallet, 'signer', from)
-    const aaResults = await aaExecuteTransactions({
-      aaWallet,
-      signerAddress: from,
-      eip1193,
-      innerTxs: txList,
-    })
-    return aaResults
-  }
-
-  // ── Direct EOA path (Polygon bridge + fallback when no AA wallet) ─────────
-  let cachedGasPrice: bigint | null = null
-  async function getChainGasPrice(): Promise<bigint> {
-    if (cachedGasPrice == null) {
-      const feeData = await rpcProvider.getFeeData().catch(() => null)
-      cachedGasPrice = feeData?.gasPrice ?? (isPolygon ? 30_000_000_000n : GAS_PRICE_WEI)
+    const signerAddress = useWcStore.getState().signer
+    if (signerAddress) {
+      await runPolyTopupIfNeeded(injEth, signerAddress, rpcProvider)
     }
-    return cachedGasPrice!
   }
 
-  const results: { ok: boolean; txHash: string; error?: string }[] = []
-
+  // Phase 1: send each tx through the injected provider (native approval sheet per tx)
+  const txHashes: string[] = []
   for (const tx of txList) {
-    const gasLimit = tx.gas ?? tx.gasLimit
-
-    let gasPriceHex: string
-    if (tx.gasPrice != null) {
-      gasPriceHex = typeof tx.gasPrice === 'string' && tx.gasPrice.startsWith('0x')
-        ? tx.gasPrice
-        : toHex(tx.gasPrice)
-    } else {
-      gasPriceHex = toHex(await getChainGasPrice())
-    }
-
     const txParams: Record<string, string> = {
-      from,
-      to: tx.to,
-      data: tx.data ?? '0x',
+      to:    tx.to,
+      data:  tx.data ?? '0x',
       value: toHex(toHexValue(tx.value)),
-      gasPrice: gasPriceHex,
     }
+    const gasLimit = tx.gas ?? tx.gasLimit
     if (gasLimit != null) txParams.gas = toHex(BigInt(gasLimit))
+    if (tx.gasPrice != null) {
+      txParams.gasPrice = typeof tx.gasPrice === 'string' && tx.gasPrice.startsWith('0x')
+        ? tx.gasPrice
+        : toHex(BigInt(tx.gasPrice))
+    }
+    const txHash: string = await injEth.request({ method: 'eth_sendTransaction', params: [txParams] })
+    txHashes.push(txHash)
+  }
 
-    console.log('[Jollof] eth_sendTransaction →', { to: tx.to, gas: txParams.gas, gasPrice: txParams.gasPrice, chainId: reqChainId })
-
-    const txHash: string = await Promise.race([
-      eip1193.request({ method: 'eth_sendTransaction', params: [txParams] }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() =>
-          reject(new Error('Nuru did not respond in time. Open Nuru and check for a pending approval, then try again.')),
-          TX_SIGN_TIMEOUT_MS
-        )
-      ),
-    ])
-
-    console.log('[Jollof] eth_sendTransaction ← hash', txHash)
-
+  // Phase 2: poll receipts
+  const results: { ok: boolean; txHash: string; error?: string }[] = []
+  for (const txHash of txHashes) {
     let receipt: ethers.TransactionReceipt | null = null
-    for (let i = 0; i < RECEIPT_MAX_POLLS; i++) {
+    for (let p = 0; p < RECEIPT_MAX_POLLS; p++) {
       receipt = await rpcProvider.getTransactionReceipt(txHash).catch(() => null)
       if (receipt) break
       await sleep(RECEIPT_POLL_MS)
     }
-
     const ok = receipt?.status === 1
     const error = !receipt
       ? 'Transaction not confirmed — check your wallet for status.'
-      : receipt.status === 0
-        ? 'Transaction reverted on-chain.'
-        : undefined
+      : receipt.status === 0 ? 'Transaction reverted on-chain.' : undefined
     results.push({ ok, txHash, error })
-
-    if (!ok && txPayload.failFast) {
-      throw new Error(error ?? 'Transaction failed')
-    }
-  }
-
-  // Switch back to Alkebuleum after Polygon transactions so the wallet is ready for next action
-  if (isPolygon) {
-    await eip1193.request({
-      method: 'wallet_switchEthereumChain',
-      params: [{ chainId: toHex(ALK_CHAIN_ID) }],
-    }).catch(() => {}) // non-fatal
+    if (!ok && txPayload.failFast) throw new Error(error ?? 'Transaction failed')
   }
 
   return results
+}
+
+// ── EIP-1193 transaction sender (Nuru QR path) ───────────────────────────────
+//
+// All signing goes through a nuruProvider wrapper — transactions and messages
+// are QR-scanned and approved in Nuru without any WalletConnect relay.
+
+async function wcSendTransactions(txPayload: any, label = 'Transaction'): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
+  // Get connected addresses from store — Firebase connect provides both aaWallet and signer
+  const { wcAddress: connectedAddr, signer: signerAddr } = useWcStore.getState()
+  if (!connectedAddr) throw new Error('No wallet connected. Please connect your wallet first.')
+
+  const signingStore = useWcSigningStore.getState()
+
+  const reqChainId: number | undefined =
+    typeof txPayload.chainId === 'number' ? txPayload.chainId : undefined
+
+  const isPolygon    = reqChainId === POLY_CHAIN_ID
+  const isAlkebuleum = reqChainId === ALK_CHAIN_ID
+  const rpcUrl       = isPolygon ? POLY_RPC : ALK_RPC
+  const rpcChainId   = isPolygon ? POLY_CHAIN_ID : ALK_CHAIN_ID
+  const rpcProvider  = new ethers.JsonRpcProvider(rpcUrl, rpcChainId, { staticNetwork: true })
+
+  // The EOA that actually signs. Falls back to connectedAddr (aaWallet) for injected wallet case.
+  const effectiveSigner = signerAddr ?? connectedAddr
+
+  // Extract txList before creating nuruProvider so total is captured in the onBegin closure
+  const txList: any[] = txPayload.txs ?? []
+  const { aaWallet } = useWalletMetaStore.getState()
+  const totalSigningSteps = Math.max(txList.length, 1)
+
+  // Stub EIP-1193: read-only calls go to RPC; signing calls are intercepted by nuruProvider.
+  // eth_accounts returns the AA wallet so dApps see the correct display address + balance.
+  const wcProvider = getWcProvider()
+  const injectedEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+  const stubEip1193 = {
+    request: async ({ method, params }: { method: string; params?: any[] }): Promise<any> => {
+      if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [connectedAddr]
+      if (method === 'eth_chainId') return toHex(rpcChainId)
+      if (method === 'wallet_switchEthereumChain') return null  // routing is txPayload.chainId-based
+      const real = wcProvider ?? injectedEth
+      if (real) return real.request({ method, params })
+      return rpcProvider.send(method, params ?? [])
+    },
+  }
+
+  // Create the Nuru provider wrapper — all signing ops routed through QR + Firestore
+  const nuruProvider = createNuruProvider(
+    stubEip1193,
+    reqChainId,
+    label,
+    (qrPayload) => signingStore.begin(qrPayload, label, totalSigningSteps),
+    (qrPayload) => signingStore.next(qrPayload),
+  )
+
+  try {
+    if (isPolygon) {
+      // Top up the EOA signer's POL balance (signer pays gas on Polygon)
+      await runPolyTopupIfNeeded(nuruProvider, effectiveSigner, rpcProvider)
+    }
+
+    // ── AA wallet path (Alkebuleum only) ─────────────────────────────────────
+    if (isAlkebuleum && aaWallet) {
+      console.log('[Jollof] AA path → aaWallet', aaWallet, 'signer', effectiveSigner)
+      // await so that finally runs after aaExecuteTransactions fully completes,
+      // not synchronously right after the return statement
+      return await aaExecuteTransactions({
+        aaWallet,
+        signerAddress: effectiveSigner,
+        eip1193: nuruProvider,
+        innerTxs: txList,
+      })
+    }
+
+    // ── Direct EOA path ───────────────────────────────────────────────────────
+    let cachedGasPrice: bigint | null = null
+    async function getChainGasPrice(): Promise<bigint> {
+      if (cachedGasPrice == null) {
+        const feeData = await rpcProvider.getFeeData().catch(() => null)
+        cachedGasPrice = feeData?.gasPrice ?? (isPolygon ? 30_000_000_000n : GAS_PRICE_WEI)
+      }
+      return cachedGasPrice!
+    }
+
+    // ── Phase 1: sign all transactions (QR is visible here) ──────────────────
+    const txHashes: string[] = []
+    for (let _txIdx = 0; _txIdx < txList.length; _txIdx++) {
+      const tx = txList[_txIdx]
+      const gasLimit = tx.gas ?? tx.gasLimit
+
+      let gasPriceHex: string
+      if (tx.gasPrice != null) {
+        gasPriceHex = typeof tx.gasPrice === 'string' && tx.gasPrice.startsWith('0x')
+          ? tx.gasPrice
+          : toHex(tx.gasPrice)
+      } else {
+        gasPriceHex = toHex(await getChainGasPrice())
+      }
+
+      const txParams: Record<string, string> = {
+        from: effectiveSigner,
+        to: tx.to,
+        data: tx.data ?? '0x',
+        value: toHex(toHexValue(tx.value)),
+        gasPrice: gasPriceHex,
+      }
+      if (gasLimit != null) txParams.gas = toHex(BigInt(gasLimit))
+
+      console.log('[Jollof] eth_sendTransaction →', { to: tx.to, gas: txParams.gas, gasPrice: txParams.gasPrice, chainId: reqChainId })
+
+      const txHash: string = await nuruProvider.request({
+        method: 'eth_sendTransaction',
+        params: [txParams],
+      })
+
+      console.log('[Jollof] eth_sendTransaction ← hash', txHash)
+      txHashes.push(txHash)
+    }
+
+    // Close the QR modal as soon as all signing is done — tx is in the mempool.
+    // Receipt polling happens below without the QR on screen.
+    signingStore.done()
+
+    // ── Phase 2: poll for receipts (QR is hidden) ────────────────────────────
+    const results: { ok: boolean; txHash: string; error?: string }[] = []
+    for (let i = 0; i < txHashes.length; i++) {
+      const txHash = txHashes[i]
+      let receipt: ethers.TransactionReceipt | null = null
+      for (let p = 0; p < RECEIPT_MAX_POLLS; p++) {
+        receipt = await rpcProvider.getTransactionReceipt(txHash).catch(() => null)
+        if (receipt) break
+        await sleep(RECEIPT_POLL_MS)
+      }
+
+      const ok = receipt?.status === 1
+      const error = !receipt
+        ? 'Transaction not confirmed — check your wallet for status.'
+        : receipt.status === 0
+          ? 'Transaction reverted on-chain.'
+          : undefined
+      results.push({ ok, txHash, error })
+
+      if (!ok && txPayload.failFast) {
+        throw new Error(error ?? 'Transaction failed')
+      }
+    }
+
+    return results
+
+  } finally {
+    // Safety net: ensure modal closes even if an error is thrown during signing
+    signingStore.done()
+  }
 }
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useSignerSession() {
 
-  // 1-minute idle warning poll (AmVault users only — WC users have no idle session)
   useEffect(() => {
     const id = setInterval(() => {
       const store = useSignerSessionStore.getState()
@@ -292,16 +381,31 @@ export function useSignerSession() {
     opts: { app: string; amvaultUrl: string; keepPopupOpen?: boolean },
     flowStep?: string,
   ) => {
-    // WalletConnect / injected wallet path
     const { wcConnected } = useWcStore.getState()
+    const injectedEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+    const isNuroBrowser = injectedEth?._isNuruWallet === true
+
+    if (wcConnected && isNuroBrowser) {
+      // Inside Nuru dApp browser — use window.ethereum directly (native approval sheets).
+      // Skip aaExecuteTransactions: the browser already wraps Alkebuleum txs through AA wallet.
+      console.log('[Jollof] sendTransactions via Nuru browser →', {
+        txCount: txPayload?.txs?.length ?? 0,
+        chainId: txPayload?.chainId,
+      })
+      const results = await nuroBrowserSendTransactions(txPayload)
+      console.log('[Jollof] sendTransactions via Nuru browser ← ok', results.map(r => r.txHash))
+      return results
+    }
+
     if (wcConnected) {
-      console.log('[Jollof] sendTransactions via wallet →', {
+      console.log('[Jollof] sendTransactions via Nuru QR →', {
         flowStep: flowStep ?? null,
         txCount: txPayload?.txs?.length ?? 0,
         chainId: txPayload?.chainId,
       })
-      const results = await wcSendTransactions(txPayload)
-      console.log('[Jollof] sendTransactions via wallet ← ok', results.map(r => r.txHash))
+      const label = flowStep ?? txPayload?.label ?? opts.app ?? 'Transaction'
+      const results = await wcSendTransactions(txPayload, label)
+      console.log('[Jollof] sendTransactions via Nuru QR ← ok', results.map(r => r.txHash))
       return results
     }
 
@@ -328,23 +432,34 @@ export function useSignerSession() {
     msgPayload: any,
     opts: { app: string; amvaultUrl: string },
   ) => {
-    const { wcConnected } = useWcStore.getState()
-    if (wcConnected) {
-      const eip1193 = getWcProvider() ?? (window as any).ethereum
-      if (!eip1193) throw new Error('No wallet connected')
-      const accounts: string[] = await eip1193.request({ method: 'eth_accounts' })
-      const from = accounts?.[0]
-      if (!from) throw new Error('No account available')
+    const { wcConnected, wcAddress } = useWcStore.getState()
+    const injectedEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+    const isNuroBrowser = injectedEth?._isNuruWallet === true
+
+    if (wcConnected && isNuroBrowser) {
+      // Inside Nuru dApp browser — personal_sign goes through injected provider (native sheet).
+      if (!wcAddress) throw new Error('No account available')
       const msg: string = msgPayload.message ?? msgPayload.msg ?? ''
-      // Encode as UTF-8 hex for personal_sign (wallet adds EIP-191 prefix internally)
       const msgHex = ethers.hexlify(ethers.toUtf8Bytes(msg))
-      const sig = await Promise.race([
-        eip1193.request({ method: 'personal_sign', params: [msgHex, from] }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Nuru did not respond. Open Nuru to approve the signature request.')), TX_SIGN_TIMEOUT_MS)
-        ),
-      ])
-      return sig
+      return await injectedEth.request({ method: 'personal_sign', params: [msgHex, wcAddress] })
+    }
+
+    if (wcConnected) {
+      if (!wcAddress) throw new Error('No account available')
+      const msg: string = msgPayload.message ?? msgPayload.msg ?? ''
+      const msgHex = ethers.hexlify(ethers.toUtf8Bytes(msg))
+      const signingStore = useWcSigningStore.getState()
+      try {
+        const sig = await nuruSign(
+          'personal_sign',
+          [msgHex, wcAddress],
+          ALK_CHAIN_ID,
+          (_, qrPayload) => signingStore.begin(qrPayload, 'Signature'),
+        )
+        return sig
+      } finally {
+        signingStore.done()
+      }
     }
 
     // AmVault path (legacy)

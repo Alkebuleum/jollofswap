@@ -1,14 +1,13 @@
 // src/pages/Liquidity.tsx
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
-import { collection, getDocs, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
+import { collection, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
 import { db } from '../services/firebase'
-import { ensureFirebaseGuest } from '../services/firebaseGuest'
 
 import { ethers } from 'ethers'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useSignerSession } from '../hooks/useSignerSession'
-import { Link, useLocation, useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import {
   ALK_CHAIN_ID,
   ALK_RPC,
@@ -28,7 +27,6 @@ import {
   tokenAddressForPath,
   planAddLiquidity,
   quote,
-  getBalance,
   erc20Iface,
 } from '../lib/jollofAmm'
 import { routerIface } from '../lib/jollofAmm'
@@ -41,13 +39,10 @@ const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amv
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 
 const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
-const WAKE = (import.meta.env.VITE_WAKE_ALK as string) ?? ''
 const MIN_POOL_RESERVE_HUMAN = '0.01'
 
 const STABLE_SYM = ((import.meta.env.VITE_USD_STABLE as string) ?? 'MAH').toUpperCase()
 const STABLE_USD_PRICE = Number(import.meta.env.VITE_USD_STABLE_PRICE ?? 0.01)
-
-type PricePoint = { t: number; p: number }
 
 function fmtUsd(v: number): string {
   if (!isFinite(v) || v < 0) return '—'
@@ -63,14 +58,6 @@ function fmtRate(r: number): string {
   if (r >= 0.0001) return r.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
   return r.toExponential(4)
 }
-
-const FACTORY_IFACE_LIQ = new ethers.Interface([
-  'function getPair(address tokenA, address tokenB) view returns (address pair)',
-])
-const PAIR_META_IFACE_LIQ = new ethers.Interface([
-  'function token0() view returns (address)',
-  'function token1() view returns (address)',
-])
 
 const FACTORY_ABI = ['function protocolTreasury() view returns (address)']
 const ERC20_XFER_IFACE = new ethers.Interface(['function transfer(address to,uint256 value) returns (bool)'])
@@ -227,7 +214,7 @@ export default function Liquidity() {
   const [feesPnlUi, setFeesPnlUi] = useState<string>('—')
   const [feesPnlNote, setFeesPnlNote] = useState<string | null>(null)
 
-  const [ratioAtoB, setRatioAtoB] = useState<string>('—')
+  const [, setRatioAtoB] = useState<string>('—')
   const [ratioBtoA, setRatioBtoA] = useState<string>('—')
 
   const [slippageBps, setSlippageBps] = useState<number>(() => readSlippageBps(50))
@@ -651,7 +638,7 @@ export default function Liquidity() {
     try {
       const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
       const pairC = new ethers.Contract(pairAddr, PAIR_ABI, provider)
-      const [t0, t1, reserves] = await Promise.all([pairC.token0(), pairC.token1(), pairC.getReserves()])
+      const [t0, , reserves] = await Promise.all([pairC.token0(), pairC.token1(), pairC.getReserves()])
       const r0 = reserves[0] as bigint; const r1 = reserves[1] as bigint
       const addrA = tokenAddressForPath(A).toLowerCase()
       let reserveA = 0n; let reserveB = 0n

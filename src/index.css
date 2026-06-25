@@ -48,6 +48,8 @@ body {
 button, input { font-family: inherit; }
 ::selection { background: rgba(255,90,60,.3); }
 * { -webkit-tap-highlight-color: transparent; }
+/* Respect device safe area (home indicator, notch) in all contexts including WebView */
+main { padding-bottom: env(safe-area-inset-bottom, 0px); }
 
 /* ── Typography helpers ────────────────────────────────────────────────────── */
 .font-brand { font-family: "Bricolage Grotesque", sans-serif; }
@@ -704,34 +706,69 @@ button, input { font-family: inherit; }
    ═══════════════════════════════════════════════════════════════ */
 
 /* Mobile bottom nav — hidden on desktop */
-.jlf-mob-nav { display: none; }
-.jlf-mob-nav-item {
-  flex: 1; display: flex; flex-direction: column;
+/* ── Hamburger button (hidden on desktop) ──────────────────────────────────── */
+.jlf-hamburger {
+  display: none;
   align-items: center; justify-content: center;
-  gap: 4px; padding: 5px 0; text-decoration: none;
-  color: var(--muted-2); font-size: 10px; font-weight: 600;
-  letter-spacing: .03em; transition: color .14s;
+  width: 38px; height: 38px; border-radius: 10px;
+  border: 1px solid var(--line); background: none;
+  color: var(--muted); cursor: pointer; flex-shrink: 0;
+  transition: color .14s, background .14s;
 }
-.jlf-mob-nav-item.active { color: var(--white); }
-.jlf-mob-nav-item:active { opacity: .7; }
+.jlf-hamburger:hover { color: var(--white); background: rgba(255,255,255,.06); }
+
+/* ── Mobile nav drawer ─────────────────────────────────────────────────────── */
+.jlf-mob-drawer {
+  position: fixed; top: 64px; left: 0; right: 0; bottom: 0; z-index: 39;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+  animation: jlfDrawerFadeIn .18s ease;
+}
+@keyframes jlfDrawerFadeIn { from { opacity: 0 } to { opacity: 1 } }
+
+.jlf-mob-drawer-inner {
+  display: flex; flex-direction: column;
+  background: var(--base); border-bottom: 1px solid var(--line-2);
+  padding: 8px 0 12px;
+  animation: jlfDrawerSlideDown .2s cubic-bezier(.22,.68,0,1.2);
+}
+@keyframes jlfDrawerSlideDown {
+  from { transform: translateY(-10px); opacity: 0 }
+  to   { transform: translateY(0);     opacity: 1 }
+}
+
+.jlf-mob-drawer-item {
+  display: flex; align-items: center;
+  padding: 14px 20px; text-decoration: none;
+  color: var(--muted); font-size: 15px; font-weight: 600;
+  transition: color .12s, background .12s;
+}
+.jlf-mob-drawer-item:active { background: rgba(255,255,255,.04); }
+.jlf-mob-drawer-item.active { color: var(--white); background: rgba(255,255,255,.05); }
+
+.jlf-mob-drawer-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 8px 12px 0; padding: 12px 14px;
+  border-radius: 12px; border: 1px solid var(--line);
+  background: var(--surface);
+}
+.jlf-mob-drawer-addr {
+  font-size: 13px; color: var(--muted); font-weight: 500;
+}
+.jlf-mob-drawer-disconnect {
+  display: flex; align-items: center; gap: 6px;
+  background: none; border: none; cursor: pointer;
+  color: var(--red); font-size: 13px; font-weight: 600; padding: 0;
+}
 
 /* ── ≤ 920px : tablet + phone ─────────────────────────────────────────────── */
 @media (max-width: 920px) {
-  /* Show bottom nav */
-  .jlf-mob-nav {
-    display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
-    height: 58px; background: rgba(10,10,11,.96);
-    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    border-top: 1px solid var(--line-2);
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  /* Push content above bottom nav */
-  main { padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px)) !important; }
+  /* Show hamburger, hide desktop tabs */
+  .jlf-hamburger { display: flex; }
 
-  /* Settings popover: anchor to bottom-right on mobile */
+  /* Settings popover: anchor to top-right on mobile */
   .jlf-pop {
-    position: fixed !important; top: auto !important;
-    bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 6px);
+    position: fixed !important; top: 70px !important;
     right: 8px; left: 8px; width: auto !important;
     max-height: 80dvh; overflow-y: auto;
   }
@@ -742,6 +779,7 @@ button, input { font-family: inherit; }
     max-width: 100% !important; width: 100% !important;
     border-radius: 24px 24px 0 0 !important;
     max-height: 92dvh !important;
+    padding-bottom: env(safe-area-inset-bottom, 16px);
   }
 
   /* TokModal (Tokens page modals) */
@@ -758,6 +796,7 @@ button, input { font-family: inherit; }
 @media (max-width: 640px) {
   /* TopBar */
   .jlf-bar { height: 54px; padding: 0 12px; gap: 8px; }
+  .jlf-mob-drawer { top: 54px; }
   .jlf-brandname { display: none; }
   .jlf-btn-connect { font-size: 13px; padding: 0 13px; height: 36px; }
   .jlf-chip { padding: 0 10px; height: 36px; font-size: 12.5px; gap: 6px; }

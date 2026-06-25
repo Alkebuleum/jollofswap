@@ -30,8 +30,9 @@ import {
 import { useTokenRegistry } from '../lib/tokenRegistry'
 import { PREF, readHideBalances, readSlippageBps, writeSlippageBps } from '../lib/prefs'
 
-import WalletSummaryCard from '../components/WalletSummaryCard'
+
 import { useWalletMetaStore } from '../store/walletMetaStore'
+import { useWcStore } from '../store/wcStore'
 import { useConnectModalStore } from '../store/connectModalStore'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
@@ -337,6 +338,9 @@ export default function Swap() {
   const { isConnected: walletConnected, address } = useWalletConnection()
 
   const { ain, ainLoading, aaWallet } = useWalletMetaStore()
+  // signer = EOA (signs txs, holds Polygon assets); address = aaWallet (holds Alkebuleum assets)
+  // polyAddress = EOA signer for Polygon queries; falls back to address for AmVault users
+  const polyAddress = (useWcStore((s) => s.signer) ?? address) as string
   const { startFlow, endFlow, sessionSendTransactions, sessionSignMessage } = useSignerSession()
   const { openModal } = useConnectModalStore()
 
@@ -740,7 +744,7 @@ export default function Swap() {
       // Only show spinner on the first fetch — background polls update silently
       if (isFirst) setLoadingUsdBal(true)
       try {
-        // USDC on Polygon
+        // USDC on Polygon — belongs to the EOA signer, not the aaWallet
         const usdcNum = await (async () => {
           try {
             const dec: number = Number(await polyProvider.call({
@@ -749,7 +753,7 @@ export default function Swap() {
             }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
             const raw: bigint = BigInt(await polyProvider.call({
               to: USDC_POLY,
-              data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [address]),
+              data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [polyAddress]),
             }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0]))
             return Number(ethers.formatUnits(raw, dec))
           } catch { return 0 }
@@ -771,7 +775,7 @@ export default function Swap() {
           } catch { return 0 }
         })()
 
-        const polRaw = await polyProvider.getBalance(address).catch(() => 0n)
+        const polRaw = await polyProvider.getBalance(polyAddress).catch(() => 0n)
         const polFmt = Number(ethers.formatEther(polRaw))
 
         if (!alive) return
@@ -789,7 +793,7 @@ export default function Swap() {
     loadUsd()
     const id = window.setInterval(loadUsd, 15000)
     return () => { alive = false; window.clearInterval(id) }
-  }, [address, polyProvider, provider])
+  }, [address, polyAddress, polyProvider, provider])
 
   useEffect(() => {
     if (quoteTimer.current) window.clearTimeout(quoteTimer.current)

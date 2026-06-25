@@ -1,4 +1,3 @@
-// src/pages/Settings.tsx
 import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import {
   readTheme, writeTheme, applyTheme,
@@ -7,154 +6,172 @@ import {
   PREF,
 } from '../lib/prefs'
 
-const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
+const APP_NAME    = (import.meta.env.VITE_APP_NAME    as string) ?? 'JollofSwap'
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const ALK_CHAIN_ID = Number(import.meta.env.VITE_ALK_CHAIN_ID ?? 237422)
-const ALK_RPC = (import.meta.env.VITE_ALK_RPC as string) ?? 'https://rpc.alkebuleum.com'
+const ALK_RPC     = (import.meta.env.VITE_ALK_RPC     as string) ?? 'https://rpc.alkebuleum.com'
 const ALK_EXPLORER = (import.meta.env.VITE_ALK_EXPLORER as string) ?? ''
 
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{
+      borderRadius: 18, background: 'var(--soft)',
+      border: '1px solid var(--line-2)', padding: '20px 20px 16px',
+    }}>
+      <div style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 700, fontSize: 15, color: 'var(--white)', marginBottom: 14 }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Row({ label, sub, right }: { label: string; sub?: string; right: React.ReactNode }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '12px 14px', borderRadius: 12,
+      border: '1px solid var(--line)', background: 'var(--surface)',
+      marginBottom: 8,
+    }}>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--white)' }}>{label}</div>
+        {sub && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 1 }}>{sub}</div>}
+      </div>
+      {right}
+    </div>
+  )
+}
+
 export default function Settings() {
-  const [darkMode, setDarkMode] = useState<boolean>(() => readTheme() === 'dark')
-  const [slippageBps, setSlippageBps] = useState<number>(() => readSlippageBps(50))
+  const [darkMode,     setDarkMode]     = useState<boolean>(() => readTheme() === 'dark')
+  const [slippageBps,  setSlippageBps]  = useState<number>(() => readSlippageBps(50))
   const [hideBalances, setHideBalances] = useState<boolean>(() => readHideBalances())
-  const [advanced, setAdvanced] = useState<boolean>(false)
 
-  useLayoutEffect(() => {
-    writeTheme(darkMode ? 'dark' : 'light')
-    applyTheme(darkMode ? 'dark' : 'light')
-  }, [darkMode])
-
+  useLayoutEffect(() => { writeTheme(darkMode ? 'dark' : 'light'); applyTheme(darkMode ? 'dark' : 'light') }, [darkMode])
   useEffect(() => writeSlippageBps(slippageBps), [slippageBps])
   useEffect(() => writeHideBalances(hideBalances), [hideBalances])
 
   const slippageOptions = useMemo(() => [30, 50, 100], [])
 
   return (
-    <div className="page">
-      <div className="mx-auto w-full max-w-3xl">
-        <div className="mb-4">
-          <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Settings</h1>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            V1 settings are stored on this device only. Wallet security is managed in amVault.
-          </p>
+    <div style={{ maxWidth: 600, margin: '0 auto', padding: '32px 16px 48px' }}>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 800, fontSize: 26, color: 'var(--white)', letterSpacing: '-0.5px' }}>
+          Settings
         </div>
+        <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
+          Preferences are stored on this device. Wallet security is managed in amVault.
+        </div>
+      </div>
 
-        <div className="grid gap-4">
-          {/* Preferences */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Preferences</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            <div className="mt-4 grid gap-3">
-              <div className="flex items-center justify-between rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-                <div>
-                  <div className="font-semibold text-slate-800 dark:text-slate-100">Dark mode</div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">UI theme preference</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={darkMode}
-                  onChange={(e) => setDarkMode(e.target.checked)}
-                  className="h-4 w-4 accent-orange-600"
-                />
-              </div>
-
-              <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-semibold text-slate-800 dark:text-slate-100">Default slippage</div>
-                    <div className="text-xs text-slate-500 dark:text-slate-400">Used as the initial slippage on Swap/Liquidity</div>
-                  </div>
-                  <div className="text-sm font-semibold text-slate-700 dark:text-slate-200">{(slippageBps / 100).toFixed(2)}%</div>
-                </div>
-
-                <div className="mt-2 flex items-center gap-2">
-                  {slippageOptions.map((bps) => (
-                    <button
-                      key={bps}
-                      onClick={() => setSlippageBps(bps)}
-                      className={[
-                        'rounded-full px-2.5 py-1 text-xs font-semibold transition',
-                        slippageBps === bps
-                          ? 'bg-orange-50 text-orange-700 dark:bg-orange-500/10 dark:text-orange-300'
-                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700',
-                      ].join(' ')}
-                    >
-                      {(bps / 100).toFixed(2)}%
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-
-
-              <button
-                onClick={() => {
-                  try {
-                    Object.values(PREF).forEach((k) => window.localStorage.removeItem(k))
-                  } catch { }
-                  setDarkMode(false)
-                  setSlippageBps(50)
-                  setHideBalances(false)
-                  setAdvanced(false)
-                }}
-                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-              >
-                Reset settings
-              </button>
-            </div>
-          </div>
-
-          {/* Security */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Security</div>
-            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              JollofSwap never stores your private keys. Security controls (PIN/biometrics/2FA) are handled in amVault.
-            </p>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <a
-                href={AMVAULT_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-xl bg-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-orange-700"
-              >
-                Open amVault
-              </a>
-            </div>
-          </div>
-
-          {/* Network */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            <div className="text-lg font-bold text-slate-900 dark:text-slate-100">Network</div>
-            <div className="mt-3 grid gap-2 text-sm">
-              <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <span className="text-slate-600 dark:text-slate-400">Chain</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100">Alkebuleum ({ALK_CHAIN_ID})</span>
-              </div>
-              <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/40">
-                <span className="text-slate-600 dark:text-slate-400">RPC</span>
-                <span className="font-mono text-xs text-slate-900 dark:text-slate-100">{ALK_RPC}</span>
-              </div>
-
-              {ALK_EXPLORER && (
-                <a
-                  href={ALK_EXPLORER}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+        {/* Preferences */}
+        <Section title="Preferences">
+          <Row
+            label="Dark mode"
+            sub="UI theme preference"
+            right={
+              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', gap: 8 }}>
+                <div
+                  onClick={() => setDarkMode(v => !v)}
+                  style={{
+                    width: 40, height: 22, borderRadius: 11, cursor: 'pointer',
+                    background: darkMode ? 'var(--red)' : 'var(--surface-2)',
+                    border: '1px solid var(--line)', position: 'relative', transition: 'background .2s',
+                  }}
                 >
-                  Open Explorer
-                </a>
-              )}
+                  <div style={{
+                    position: 'absolute', top: 3, left: darkMode ? 20 : 3,
+                    width: 14, height: 14, borderRadius: '50%', background: 'var(--white)',
+                    transition: 'left .2s',
+                  }} />
+                </div>
+              </label>
+            }
+          />
 
-              <div className="pt-2 text-xs text-slate-500 dark:text-slate-400">
-                App: {APP_NAME} • V1
+          <div style={{ padding: '12px 14px', borderRadius: 12, border: '1px solid var(--line)', background: 'var(--surface)', marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--white)' }}>Default slippage</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 1 }}>Initial slippage on Swap / Liquidity</div>
               </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold)' }}>{(slippageBps / 100).toFixed(2)}%</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {slippageOptions.map((bps) => (
+                <button
+                  key={bps}
+                  onClick={() => setSlippageBps(bps)}
+                  style={{
+                    padding: '6px 14px', borderRadius: 8, border: '1px solid var(--line)',
+                    background: slippageBps === bps ? 'rgba(247,181,59,.12)' : 'var(--surface-2)',
+                    color: slippageBps === bps ? 'var(--gold)' : 'var(--muted)',
+                    fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: '.15s',
+                  }}
+                >
+                  {(bps / 100).toFixed(2)}%
+                </button>
+              ))}
             </div>
           </div>
-        </div>
+
+          <button
+            onClick={() => {
+              try { Object.values(PREF).forEach((k) => window.localStorage.removeItem(k)) } catch { }
+              setDarkMode(false); setSlippageBps(50); setHideBalances(false)
+            }}
+            style={{
+              width: '100%', height: 42, borderRadius: 12,
+              border: '1px solid var(--line)', background: 'none',
+              color: 'var(--muted)', fontSize: 13.5, fontWeight: 600, cursor: 'pointer',
+            }}
+          >
+            Reset settings
+          </button>
+        </Section>
+
+        {/* Security */}
+        <Section title="Security">
+          <p style={{ fontSize: 13.5, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 14 }}>
+            JollofSwap never stores your private keys. Security controls (PIN / biometrics / 2FA) are handled in amVault.
+          </p>
+          <a
+            href={AMVAULT_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="jlf-action"
+            style={{ display: 'inline-block', textDecoration: 'none', padding: '0 20px', lineHeight: '42px', fontSize: 13.5 }}
+          >
+            Open amVault
+          </a>
+        </Section>
+
+        {/* Network */}
+        <Section title="Network">
+          <Row label="Chain" right={<span style={{ fontSize: 13, fontWeight: 600, color: 'var(--white)' }}>Alkebuleum ({ALK_CHAIN_ID})</span>} />
+          <Row label="RPC" right={<span style={{ fontSize: 11, fontFamily: '"DM Mono", monospace', color: 'var(--muted)' }}>{ALK_RPC}</span>} />
+          {ALK_EXPLORER && (
+            <a
+              href={ALK_EXPLORER}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'block', width: '100%', padding: '11px 14px', borderRadius: 12,
+                border: '1px solid var(--line)', background: 'none',
+                color: 'var(--muted)', fontSize: 13.5, fontWeight: 600,
+                textDecoration: 'none', textAlign: 'center', marginBottom: 8,
+              }}
+            >
+              Open Explorer ↗
+            </a>
+          )}
+          <div style={{ fontSize: 12, color: 'var(--muted-2)', marginTop: 4 }}>{APP_NAME} · V1</div>
+        </Section>
+
       </div>
     </div>
   )
 }
-

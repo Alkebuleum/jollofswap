@@ -30,3 +30,11 @@ git status
 git add -A
 git commit -m "adoption friendly UX"
 git push
+
+
+future deploy:
+  npm run build
+  git add dist/ && git commit -m "Deploy"
+  git push origin main
+  git push origin $(git subtree split --prefix dist HEAD):gh-pages  
+  --force

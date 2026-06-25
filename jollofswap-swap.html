@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JollofSwap — Swap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --base:#0A0A0B;--soft:#101011;--surface:#141416;--surface-2:#1a1a1d;
+    --leg:#0E0E10;--leg-2:#161618;
+    --line:rgba(255,255,255,.08);--line-2:rgba(255,255,255,.045);
+    --red:#FF5A3C;--red-2:#FF7A4D;--gold:#F7B53B;--purple:#8B5CF6;
+    --green:#36D399;--green-d:rgba(54,211,153,.12);--down:#FF5A3C;
+    --white:#FAFAF8;--muted:#8B867E;--muted-2:#5B5853;
+    --r:22px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--base);color:var(--white);font-family:"DM Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
+  ::selection{background:rgba(255,90,60,.3)}
+  button,input{font-family:inherit}
+
+  /* APP BAR */
+  .bar{position:sticky;top:0;z-index:40;height:64px;display:flex;align-items:center;gap:16px;
+    padding:0 20px;border-bottom:1px solid var(--line-2);background:rgba(10,10,11,.86);backdrop-filter:blur(14px)}
+  .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--white)}
+  .mark{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--gold),var(--red) 72%);box-shadow:0 3px 14px rgba(255,90,60,.4)}
+  .mark svg{width:16px;height:16px}
+  .brand b{font-family:"Bricolage Grotesque";font-weight:800;font-size:18px;letter-spacing:-.02em}
+  .brand b i{font-style:normal;color:var(--gold)}
+  .tabs{display:flex;gap:2px;margin-left:14px}
+  .tabs a{color:var(--muted);text-decoration:none;font-weight:600;font-size:14px;padding:8px 14px;border-radius:10px;transition:.15s}
+  .tabs a:hover{color:var(--white)}
+  .tabs a.on{color:var(--white);background:rgba(255,255,255,.06)}
+  .bar-right{margin-left:auto;display:flex;align-items:center;gap:9px}
+  .chip{display:flex;align-items:center;gap:8px;height:40px;padding:0 14px;border-radius:12px;
+    border:1px solid var(--line);background:rgba(255,255,255,.03);font-size:13.5px;font-weight:600;cursor:pointer;color:var(--white);transition:.15s}
+  .chip:hover{border-color:rgba(255,255,255,.2)}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  .wallet{gap:9px}
+  .avatar{width:22px;height:22px;border-radius:50%;background:conic-gradient(from 90deg,var(--red),var(--gold),var(--purple),var(--red))}
+  .wallet .bal{color:var(--muted);font-family:"DM Mono";font-size:12.5px}
+  .icobtn{width:40px;height:40px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted);cursor:pointer;display:grid;place-items:center;transition:.15s}
+  .icobtn:hover{color:var(--white);border-color:rgba(255,255,255,.2)}
+  .icobtn svg{width:18px;height:18px}
+
+  /* LAYOUT */
+  .app{max-width:1080px;margin:0 auto;padding:28px 20px 60px;
+    display:grid;grid-template-columns:1fr 436px;gap:22px;align-items:start}
+
+  /* CHART PANEL */
+  .panel{background:var(--soft);border:1px solid var(--line-2);border-radius:24px}
+  .chart-head{display:flex;align-items:flex-start;justify-content:space-between;padding:22px 24px 10px;gap:16px;flex-wrap:wrap}
+  .pairsel{display:flex;align-items:center;gap:11px;cursor:pointer}
+  .pair-coins{display:flex}
+  .pair-coins .tcoin:nth-child(2){margin-left:-9px;border:2px solid var(--soft)}
+  .pairsel .nm{display:flex;flex-direction:column}
+  .pairsel .nm b{font-family:"Bricolage Grotesque";font-weight:700;font-size:17px;display:flex;align-items:center;gap:6px}
+  .pairsel .nm b .caret{font-size:10px;color:var(--muted)}
+  .pairsel .nm small{font-size:12px;color:var(--muted)}
+  .price-now{text-align:right}
+  .price-now .px{font-family:"Bricolage Grotesque";font-weight:700;font-size:26px;letter-spacing:-.02em}
+  .price-now .px small{font-size:14px;color:var(--muted);font-weight:600;margin-left:4px}
+  .price-now .chg{font-family:"DM Mono";font-size:13px;margin-top:3px}
+  .up{color:var(--green)}.dn{color:var(--down)}
+
+  .tcoin{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:none;
+    font-family:"Bricolage Grotesque";font-weight:800;font-size:13px;color:#fff;letter-spacing:-.02em}
+
+  .ranges{display:flex;gap:3px;padding:4px 24px 0}
+  .ranges button{background:none;border:none;color:var(--muted);font-weight:600;font-size:12.5px;
+    padding:6px 11px;border-radius:8px;cursor:pointer;transition:.14s;font-family:"DM Mono")}
+  .ranges button.on{background:rgba(255,255,255,.07);color:var(--white)}
+  .ranges button:hover{color:var(--white)}
+  .chart-wrap{position:relative;padding:6px 12px 18px}
+  svg.chart{width:100%;height:240px;display:block;overflow:visible}
+  .cstats{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line-2)}
+  .cstat{padding:16px 24px;border-right:1px solid var(--line-2)}
+  .cstat:last-child{border-right:none}
+  .cstat small{font-size:11.5px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.06em}
+  .cstat b{display:block;font-family:"DM Mono";font-size:15px;margin-top:5px;font-weight:500}
+  .crosshair{position:absolute;top:6px;bottom:18px;width:1px;background:rgba(255,255,255,.18);display:none;pointer-events:none}
+  .ctip{position:absolute;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:6px 9px;font-family:"DM Mono";font-size:11.5px;white-space:nowrap;display:none;pointer-events:none;transform:translateX(-50%);top:-2px}
+
+  /* SWAP CARD */
+  .swap{background:var(--surface);border:1px solid var(--line);border-radius:24px;padding:8px;position:relative;
+    box-shadow:0 30px 70px -36px rgba(0,0,0,.9)}
+  .swap-top{display:flex;align-items:center;justify-content:space-between;padding:12px 12px 14px}
+  .stabs{display:flex;gap:2px}
+  .stabs button{background:none;border:none;color:var(--muted);font-weight:700;font-size:15px;padding:6px 12px;border-radius:9px;cursor:pointer;transition:.14s;font-family:"Bricolage Grotesque")}
+  .stabs button.on{color:var(--white)}
+  .stabs button:hover{color:var(--white)}
+  .stools{display:flex;gap:4px}
+  .gear{width:34px;height:34px;border-radius:10px;border:none;background:rgba(255,255,255,.05);color:var(--muted);cursor:pointer;display:grid;place-items:center;transition:.14s;position:relative}
+  .gear:hover{color:var(--white);background:rgba(255,255,255,.09)}
+  .gear svg{width:16px;height:16px}
+  .gear .slip{position:absolute;top:-7px;right:-7px;font-family:"DM Mono";font-size:9px;background:var(--red);color:#fff;border-radius:7px;padding:1px 4px;font-weight:600}
+
+  .leg{background:var(--leg);border:1px solid transparent;border-radius:var(--r);padding:17px 18px;transition:.16s}
+  .leg:focus-within{border-color:rgba(255,90,60,.3);background:var(--leg-2)}
+  .leg+.leg{margin-top:0}
+  .leg .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:11px}
+  .leg .top .lab{font-size:13.5px;color:var(--muted);font-weight:500}
+  .leg .top .bal{font-size:12.5px;color:var(--muted)}
+  .leg .top .bal b{color:var(--muted);font-family:"DM Mono";font-weight:400}
+  .leg-row{display:flex;align-items:center;gap:12px}
+  .amt{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--white);font-family:"Bricolage Grotesque";font-weight:600;font-size:34px;letter-spacing:-.02em;width:100%;line-height:1.1}
+  .amt::placeholder{color:#393834}
+  .amt:read-only{color:var(--white)}
+  .leg .sub{display:flex;justify-content:space-between;margin-top:10px;font-family:"DM Mono";font-size:12.5px;color:var(--muted-2)}
+  .max{font-family:"DM Sans";color:var(--gold);font-weight:600;cursor:pointer}
+  .max:hover{text-decoration:underline}
+
+  .tokbtn{display:flex;align-items:center;gap:9px;background:rgba(255,255,255,.06);border:1px solid var(--line);
+    border-radius:100px;padding:6px 13px 6px 6px;cursor:pointer;flex:none;transition:.15s}
+  .tokbtn:hover{background:rgba(255,255,255,.1)}
+  .tokbtn b{font-weight:700;font-size:15.5px}
+  .tokbtn .caret{color:var(--muted);font-size:10px}
+  .tokbtn.empty{background:var(--red);border-color:var(--red);padding:9px 16px}
+  .tokbtn.empty b{color:#fff}
+
+  .flip{display:flex;justify-content:center;height:0;position:relative;z-index:3}
+  .flip button{position:absolute;top:-19px;width:40px;height:40px;border-radius:12px;border:5px solid var(--surface);
+    background:var(--leg-2);color:var(--white);cursor:pointer;display:grid;place-items:center;transition:.26s}
+  .flip button svg{width:16px;height:16px}
+  .flip button:hover{transform:rotate(180deg);color:var(--red);background:#1f1f22}
+
+  /* DETAILS */
+  .details{margin-top:6px;border:1px solid var(--line-2);border-radius:16px;overflow:hidden}
+  .det-row{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;cursor:pointer}
+  .det-row .l{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--white);font-family:"DM Mono")}
+  .det-row .r{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);font-family:"DM Mono")}
+  .det-row .r .ex{transition:.2s;font-size:11px}
+  .det-body{display:none;padding:0 16px 14px;border-top:1px solid var(--line-2)}
+  .det-body.open{display:block}
+  .det-line{display:flex;justify-content:space-between;padding:10px 0;font-size:13px;border-bottom:1px solid var(--line-2)}
+  .det-line:last-child{border-bottom:none}
+  .det-line .k{color:var(--muted)}
+  .det-line .v{font-family:"DM Mono";color:var(--white)}
+  .det-line .v.good{color:var(--green)}
+  .route-chips{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+  .route-chips .rc{display:inline-flex;align-items:center;gap:5px;background:rgba(255,255,255,.05);border:1px solid var(--line-2);border-radius:100px;padding:3px 9px 3px 4px;font-size:11.5px;font-family:"DM Mono")}
+  .route-chips .arr{color:var(--muted-2);font-size:11px}
+
+  .action{width:100%;margin-top:7px;padding:18px;border-radius:var(--r);font-family:"Bricolage Grotesque";font-weight:700;font-size:17px;color:#fff;border:none;cursor:pointer;transition:.16s;
+    background:linear-gradient(120deg,var(--red),var(--gold) 132%);box-shadow:0 12px 30px rgba(255,90,60,.3)}
+  .action:hover{transform:translateY(-1px);box-shadow:0 16px 38px rgba(255,90,60,.42)}
+  .action.idle{background:rgba(255,255,255,.05);color:var(--muted);box-shadow:none;cursor:default}
+  .action.idle:hover{transform:none}
+  .action.warn{background:rgba(255,90,60,.14);color:var(--red);box-shadow:none;cursor:default}
+  .action.warn:hover{transform:none}
+
+  /* SETTINGS POPOVER */
+  .pop{position:absolute;top:54px;right:8px;z-index:30;width:300px;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 24px 50px -16px rgba(0,0,0,.85);display:none}
+  .pop.open{display:block}
+  .pop h4{font-size:13px;color:var(--muted);font-weight:600;margin-bottom:11px}
+  .slips{display:flex;gap:6px;margin-bottom:18px}
+  .slips button{flex:1;background:rgba(255,255,255,.05);border:1px solid var(--line-2);color:var(--white);
+    border-radius:11px;padding:9px 0;font-size:13px;font-weight:600;cursor:pointer;font-family:"DM Mono";transition:.14s}
+  .slips button.on{border-color:var(--red);background:rgba(255,90,60,.12);color:var(--red)}
+  .slips .cust{flex:1.3;display:flex;align-items:center;background:rgba(255,255,255,.05);border:1px solid var(--line-2);border-radius:11px;padding:0 10px}
+  .slips .cust input{width:100%;background:none;border:none;outline:none;color:var(--white);font-family:"DM Mono";font-size:13px;text-align:right}
+  .deadline{display:flex;align-items:center;justify-content:space-between}
+  .deadline .dl{display:flex;align-items:center;background:rgba(255,255,255,.05);border:1px solid var(--line-2);border-radius:11px;padding:7px 11px;gap:7px}
+  .deadline .dl input{width:42px;background:none;border:none;outline:none;color:var(--white);font-family:"DM Mono";font-size:13px;text-align:right}
+  .deadline .dl span{color:var(--muted);font-size:12.5px}
+
+  /* MODAL */
+  .overlay{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);display:none;align-items:flex-start;justify-content:center;padding:80px 18px}
+  .overlay.open{display:flex}
+  .modal{width:420px;max-width:100%;background:var(--surface);border:1px solid var(--line);border-radius:24px;overflow:hidden;
+    box-shadow:0 40px 90px -30px rgba(0,0,0,.9);max-height:78vh;display:flex;flex-direction:column}
+  .modal-head{padding:20px 20px 14px;border-bottom:1px solid var(--line-2)}
+  .modal-head .row1{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+  .modal-head h3{font-family:"Bricolage Grotesque";font-weight:700;font-size:18px}
+  .modal-head .x{width:32px;height:32px;border-radius:9px;border:none;background:rgba(255,255,255,.05);color:var(--muted);cursor:pointer;font-size:16px}
+  .modal-head .x:hover{color:var(--white)}
+  .search{display:flex;align-items:center;gap:9px;background:var(--leg);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+  .search svg{width:17px;height:17px;color:var(--muted);flex:none}
+  .search input{flex:1;background:none;border:none;outline:none;color:var(--white);font-size:15px}
+  .popular{display:flex;flex-wrap:wrap;gap:7px;margin-top:13px}
+  .ptok{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:100px;padding:5px 12px 5px 5px;cursor:pointer;font-size:13.5px;font-weight:600;transition:.14s}
+  .ptok:hover{border-color:rgba(255,255,255,.25)}
+  .tlist{overflow-y:auto;padding:6px}
+  .tlist .it{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:14px;cursor:pointer;transition:.12s}
+  .tlist .it:hover{background:rgba(255,255,255,.05)}
+  .tlist .it .nm{flex:1}
+  .tlist .it .nm b{display:block;font-size:15px;font-weight:700}
+  .tlist .it .nm small{font-size:12.5px;color:var(--muted)}
+  .tlist .it .hold{text-align:right;font-family:"DM Mono"}
+  .tlist .it .hold b{font-size:14px;font-weight:500}
+  .tlist .it .hold small{font-size:12px;color:var(--muted-2);display:block}
+
+  @media(max-width:920px){
+    .app{grid-template-columns:1fr;gap:18px}
+    .swap{order:-1}
+    .tabs{display:none}
+    .wallet .bal{display:none}
+  }
+  @media(max-width:520px){
+    .cstats{grid-template-columns:1fr 1fr}
+    .cstat:nth-child(2){border-right:none}
+    .cstat{border-bottom:1px solid var(--line-2)}
+    .app{padding:18px 14px 50px}
+  }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- APP BAR -->
+<div class="bar">
+  <a class="brand" href="#"><span class="mark"><svg viewBox="0 0 24 24" fill="none"><path d="M4 9h11l-3-3M20 15H9l3 3" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><b>Jollof<i>Swap</i></b></a>
+  <nav class="tabs">
+    <a href="#" class="on">Swap</a><a href="#">Limit</a><a href="#">Pools</a><a href="#">Explore</a>
+  </nav>
+  <div class="bar-right">
+    <button class="chip"><span class="dot"></span> Alkebuleum <span style="color:var(--muted);font-size:10px">▾</span></button>
+    <button class="chip wallet"><span class="avatar"></span><span>0x7A4…3Fc2</span><span class="bal">·&nbsp; 1,240 ALKE</span></button>
+    <button class="icobtn" aria-label="More"><svg viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/></svg></button>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app">
+
+  <!-- CHART -->
+  <div class="panel">
+    <div class="chart-head">
+      <div class="pairsel" id="pairSel">
+        <div class="pair-coins"><span class="tcoin" id="pcA">A</span><span class="tcoin" id="pcB">₦</span></div>
+        <div class="nm"><b id="pairName">ALKE / cNGN <span class="caret">▾</span></b><small id="pairSub">Alkecoin · Naira stable</small></div>
+      </div>
+      <div class="price-now">
+        <div class="px" id="bigPx">646.15 <small id="bigPxUsd">$0.4200</small></div>
+        <div class="chg up" id="bigChg">▲ 3.92% &nbsp;<span style="color:var(--muted-2)">24h</span></div>
+      </div>
+    </div>
+    <div class="ranges" id="ranges">
+      <button data-r="1H">1H</button><button data-r="1D" class="on">1D</button><button data-r="1W">1W</button><button data-r="1M">1M</button><button data-r="1Y">1Y</button>
+    </div>
+    <div class="chart-wrap">
+      <svg class="chart" id="chart" viewBox="0 0 600 240" preserveAspectRatio="none"></svg>
+      <div class="crosshair" id="cross"></div>
+      <div class="ctip" id="ctip"></div>
+    </div>
+    <div class="cstats">
+      <div class="cstat"><small>24h High</small><b id="sHigh">671.40</b></div>
+      <div class="cstat"><small>24h Low</small><b id="sLow">622.08</b></div>
+      <div class="cstat"><small>24h Volume</small><b>$1.4M</b></div>
+      <div class="cstat"><small>Liquidity</small><b>$5.9M</b></div>
+    </div>
+  </div>
+
+  <!-- SWAP CARD -->
+  <div class="swap">
+    <div class="swap-top">
+      <div class="stabs"><button class="on">Swap</button><button>Limit</button><button>Send</button></div>
+      <div class="stools">
+        <button class="gear" id="gearBtn" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 13.5a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-2.18-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 008.6 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-2.18 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 8.6a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 002.18.33H9.5a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 2.18V12a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="1.5"/></svg>
+          <span class="slip" id="slipBadge">0.5%</span>
+        </button>
+      </div>
+      <!-- settings popover -->
+      <div class="pop" id="pop">
+        <h4>Max slippage</h4>
+        <div class="slips" id="slips">
+          <button data-s="auto">Auto</button>
+          <button data-s="0.1">0.1%</button>
+          <button data-s="0.5" class="on">0.5%</button>
+          <button data-s="1.0">1.0%</button>
+          <div class="cust"><input id="slipCust" inputmode="decimal" placeholder="Custom" /><span style="color:var(--muted);font-size:13px">%</span></div>
+        </div>
+        <h4>Transaction deadline</h4>
+        <div class="deadline">
+          <span style="font-size:13px;color:var(--white)">Auto-cancel after</span>
+          <div class="dl"><input id="deadline" value="30" inputmode="numeric" /><span>min</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SELL -->
+    <div class="leg">
+      <div class="top"><span class="lab">Sell</span><span class="bal">Balance: <b id="balIn">1,240.00</b></span></div>
+      <div class="leg-row">
+        <input class="amt" id="amtIn" inputmode="decimal" placeholder="0" value="100" />
+        <button class="tokbtn" id="tokInBtn"><span class="tcoin" id="ciIn">A</span><b id="symIn">ALKE</b><span class="caret">▾</span></button>
+      </div>
+      <div class="sub"><span id="usdIn">$42.00</span><span class="max" id="maxBtn">Max</span></div>
+    </div>
+
+    <div class="flip"><button id="flipBtn" aria-label="Switch"><svg viewBox="0 0 24 24" fill="none"><path d="M12 4v16M12 20l5-5M12 20l-5-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+
+    <!-- BUY -->
+    <div class="leg">
+      <div class="top"><span class="lab">Buy</span><span class="bal">Balance: <b id="balOut">812,400</b></span></div>
+      <div class="leg-row">
+        <input class="amt" id="amtOut" placeholder="0" readonly />
+        <button class="tokbtn" id="tokOutBtn"><span class="tcoin" id="ciOut">₦</span><b id="symOut">cNGN</b><span class="caret">▾</span></button>
+      </div>
+      <div class="sub"><span id="usdOut">$42.00</span><span></span></div>
+    </div>
+
+    <!-- DETAILS -->
+    <div class="details">
+      <div class="det-row" id="detToggle">
+        <span class="l"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="opacity:.6"><path d="M8 7l4-4 4 4M16 17l-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="rateMini">1 ALKE = 646.15 cNGN</span></span>
+        <span class="r"><span id="feeMini">Fee $0.001</span><span class="ex" id="ex">▾</span></span>
+      </div>
+      <div class="det-body" id="detBody">
+        <div class="det-line"><span class="k">Price impact</span><span class="v good" id="dImpact">0.02%</span></div>
+        <div class="det-line"><span class="k">Min. received <span style="color:var(--muted-2)" id="dSlipNote">(0.5% slippage)</span></span><span class="v" id="dMin">643.05 cNGN</span></div>
+        <div class="det-line"><span class="k">Network fee</span><span class="v" id="dFee">~0.0021 ALKE · $0.001</span></div>
+        <div class="det-line"><span class="k">Route</span><span class="v"><span class="route-chips" id="dRoute"></span></span></div>
+      </div>
+    </div>
+
+    <button class="action" id="action">Swap</button>
+  </div>
+</div>
+
+<!-- TOKEN MODAL -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="row1"><h3>Select a token</h3><button class="x" id="modalX">✕</button></div>
+      <div class="search"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m20 20-3-3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><input id="tsearch" placeholder="Search name or paste address" autocomplete="off" /></div>
+      <div class="popular" id="popular"></div>
+    </div>
+    <div class="tlist" id="tlist"></div>
+  </div>
+</div>
+
+<script>
+  const TOKENS={
+    ALKE:{sym:"ALKE",name:"Alkecoin",glyph:"A",color:"linear-gradient(135deg,#8B5CF6,#a78bfa)",price:0.42,bal:1240},
+    cNGN:{sym:"cNGN",name:"Naira stable",glyph:"₦",color:"linear-gradient(135deg,#0a7d3c,#10b95a)",price:0.00065,bal:812400},
+    cGHS:{sym:"cGHS",name:"Cedi stable",glyph:"₵",color:"linear-gradient(135deg,#C9381F,#FF5A3C)",price:0.067,bal:3150},
+    cKES:{sym:"cKES",name:"Shilling stable",glyph:"K",color:"linear-gradient(135deg,#b8161d,#e63946)",price:0.0077,bal:54200},
+    cZAR:{sym:"cZAR",name:"Rand stable",glyph:"R",color:"linear-gradient(135deg,#0b6b3a,#F7B53B)",price:0.055,bal:4920},
+    cXOF:{sym:"cXOF",name:"CFA franc stable",glyph:"F",color:"linear-gradient(135deg,#1d6f42,#34a263)",price:0.00167,bal:0},
+    cEGP:{sym:"cEGP",name:"Egyptian pound stable",glyph:"£",color:"linear-gradient(135deg,#b5901f,#e0b73a)",price:0.0204,bal:0},
+    USDC:{sym:"USDC",name:"USD Coin",glyph:"$",color:"linear-gradient(135deg,#2775CA,#4a93e8)",price:1.00,bal:500},
+    USDT:{sym:"USDT",name:"Tether",glyph:"₮",color:"linear-gradient(135deg,#26A17B,#3fc497)",price:1.00,bal:500},
+    cTZS:{sym:"cTZS",name:"Tanzanian shilling stable",glyph:"T",color:"linear-gradient(135deg,#0a5a8a,#1a87c4)",price:0.00039,bal:0}
+  };
+  const POPULAR=["ALKE","cNGN","USDC","cGHS","cKES"];
+  let S={from:"ALKE",to:"cNGN",connected:true,slip:0.5,range:"1D",pts:[]};
+  const $=id=>document.getElementById(id);
+  const fmt=(n,d)=>n.toLocaleString("en-US",{maximumFractionDigits:d!=null?d:(n<1?6:2),minimumFractionDigits:d!=null?d:2});
+
+  /* ---------- seeded chart ---------- */
+  function rng(seed){let s=seed%2147483647;if(s<=0)s+=2147483646;return ()=>(s=s*16807%2147483647)/2147483647;}
+  function genPts(seed,n,vol,trend){
+    const r=rng(seed);let v=100,a=[];
+    for(let i=0;i<n;i++){v+= (r()-0.5)*vol + trend; a.push(v);}
+    const mn=Math.min(...a),mx=Math.max(...a);
+    return a.map(x=>(x-mn)/(mx-mn||1)); // 0..1 normalized
+  }
+  function drawChart(){
+    const f=TOKENS[S.from],t=TOKENS[S.to];
+    const rate=f.price/t.price;
+    const cfg={"1H":[60,2,0.02],"1D":[80,3,0.04],"1W":[90,5,0.06],"1M":[110,8,0.03],"1Y":[140,12,0.18]}[S.range];
+    const seed=(S.from.charCodeAt(0)*31+S.to.charCodeAt(1)+S.range.length*7+cfg[0]);
+    const norm=genPts(seed,cfg[0],cfg[1],cfg[2]);
+    const up=norm[norm.length-1]>=norm[0];
+    const W=600,H=240,pad=14;
+    const pts=norm.map((y,i)=>({x:pad+i*(W-2*pad)/(norm.length-1),y:H-pad-y*(H-2*pad)}));
+    S.pts=pts; S.norm=norm; S.up=up;
+    let d="M"+pts.map(p=>p.x.toFixed(1)+","+p.y.toFixed(1)).join(" L");
+    let area=d+` L${W-pad},${H} L${pad},${H} Z`;
+    const col=up?getCss("--green"):getCss("--down");
+    $("chart").innerHTML=`
+      <defs>
+        <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="${col}" stop-opacity="0.22"/>
+          <stop offset="1" stop-color="${col}" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d="${area}" fill="url(#fill)"/>
+      <path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      <circle cx="${pts[pts.length-1].x}" cy="${pts[pts.length-1].y}" r="3.5" fill="${col}"/>`;
+    // header
+    const lo=rate*0.962, hi=rate*1.04, chg=(up?1:-1)*(2+ (seed%40)/10);
+    $("bigPx").innerHTML=`${fmt(rate)} <small>$${fmt(f.price,4)}</small>`;
+    $("bigChg").className="chg "+(up?"up":"dn");
+    $("bigChg").innerHTML=`${up?"▲":"▼"} ${Math.abs(chg).toFixed(2)}% &nbsp;<span style="color:var(--muted-2)">24h</span>`;
+    $("sHigh").textContent=fmt(hi); $("sLow").textContent=fmt(lo);
+  }
+  function getCss(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+
+  /* chart hover */
+  const chartWrap=document.querySelector(".chart-wrap");
+  chartWrap.addEventListener("mousemove",e=>{
+    if(!S.pts.length)return;
+    const svg=$("chart"),rect=svg.getBoundingClientRect();
+    const rx=(e.clientX-rect.left)/rect.width*600;
+    let near=S.pts.reduce((a,b)=>Math.abs(b.x-rx)<Math.abs(a.x-rx)?b:a);
+    const px=near.x/600*rect.width, py=near.y/240*rect.height;
+    const cross=$("cross"),tip=$("ctip");
+    cross.style.display="block";cross.style.left=px+"px";
+    const f=TOKENS[S.from],t=TOKENS[S.to],rate=f.price/t.price;
+    const idx=S.pts.indexOf(near);
+    const val=rate*(0.95+S.norm[idx]*0.1);
+    tip.style.display="block";tip.style.left=Math.min(Math.max(px,40),rect.width-40)+"px";
+    tip.textContent=`${fmt(val)} ${t.sym}`;
+  });
+  chartWrap.addEventListener("mouseleave",()=>{$("cross").style.display="none";$("ctip").style.display="none";});
+
+  /* ranges */
+  $("ranges").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
+    [...$("ranges").children].forEach(x=>x.classList.remove("on"));b.classList.add("on");S.range=b.dataset.r;drawChart();});
+
+  /* ---------- core render ---------- */
+  function paint(el,t){el.textContent=t.glyph;el.style.background=t.color;}
+  function routeFor(a,b){
+    const direct=["USDC","USDT","ALKE"];
+    if(direct.includes(a)||direct.includes(b))return [a,b];
+    return [a,"USDC",b];
+  }
+  function render(){
+    const f=TOKENS[S.from],t=TOKENS[S.to];
+    paint($("ciIn"),f);$("symIn").textContent=f.sym;
+    paint($("ciOut"),t);$("symOut").textContent=t.sym;
+    $("balIn").textContent=fmt(f.bal,f.bal<1?2:2);
+    $("balOut").textContent=fmt(t.bal,2);
+    // pair header
+    paint($("pcA"),f);paint($("pcB"),t);
+    $("pairName").innerHTML=`${f.sym} / ${t.sym} <span class="caret">▾</span>`;
+    $("pairSub").textContent=`${f.name} · ${t.name}`;
+    const rate=f.price/t.price;
+    $("rateMini").textContent=`1 ${f.sym} = ${fmt(rate)} ${t.sym}`;
+    // route chips
+    const rt=routeFor(S.from,S.to);
+    $("dRoute").innerHTML=rt.map((s,i)=>{const tk=TOKENS[s];
+      return `${i?'<span class="arr">→</span>':''}<span class="rc"><span class="tcoin" style="width:18px;height:18px;font-size:9px;background:${tk.color}">${tk.glyph}</span>${s}</span>`;}).join("");
+    drawChart();
+    compute();
+  }
+  function compute(){
+    const f=TOKENS[S.from],t=TOKENS[S.to];
+    const v=parseFloat(($("amtIn").value||"").replace(/,/g,""))||0;
+    const gross=v*(f.price/t.price);
+    const out=gross*0.997;
+    $("amtOut").value=v?fmt(out):"";
+    $("usdIn").textContent=`$${fmt(v*f.price)}`;
+    $("usdOut").textContent=`$${fmt(out*t.price)}`;
+    // details
+    const vUsd=v*f.price;
+    const impact=Math.min(0.9,(vUsd/280000)*100);
+    $("dImpact").textContent=impact<0.01&&v?"<0.01%":(impact.toFixed(2)+"%");
+    $("dImpact").className="v "+(impact<0.5?"good":"");
+    const slip=S.slip==="auto"?0.5:parseFloat(S.slip);
+    const minR=out*(1-slip/100);
+    $("dMin").textContent=`${fmt(minR)} ${t.sym}`;
+    $("dSlipNote").textContent=`(${S.slip==="auto"?"auto":slip+"%"} slippage)`;
+    const gasUsd=0.001+vUsd*0.000002;
+    $("dFee").textContent=`~0.0021 ALKE · $${gasUsd.toFixed(3)}`;
+    $("feeMini").textContent=`Fee $${gasUsd.toFixed(3)}`;
+    // action button state
+    const a=$("action");a.className="action";
+    if(!S.connected){a.textContent="Connect wallet";return;}
+    if(!v){a.textContent="Enter an amount";a.classList.add("idle");return;}
+    if(v>f.bal){a.textContent=`Insufficient ${f.sym} balance`;a.classList.add("warn");return;}
+    a.textContent=`Swap ${f.sym} for ${t.sym}`;
+  }
+  function flip(){[S.from,S.to]=[S.to,S.from];render();}
+
+  $("amtIn").addEventListener("input",compute);
+  $("flipBtn").onclick=flip;
+  $("maxBtn").onclick=()=>{$("amtIn").value=TOKENS[S.from].bal;compute();};
+
+  /* details expand */
+  $("detToggle").onclick=()=>{$("detBody").classList.toggle("open");$("ex").style.transform=$("detBody").classList.contains("open")?"rotate(180deg)":"";};
+
+  /* settings popover */
+  $("gearBtn").onclick=e=>{e.stopPropagation();$("pop").classList.toggle("open");};
+  $("pop").onclick=e=>e.stopPropagation();
+  document.addEventListener("click",()=>$("pop").classList.remove("open"));
+  $("slips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
+    [...$("slips").querySelectorAll("button")].forEach(x=>x.classList.remove("on"));b.classList.add("on");
+    S.slip=b.dataset.s;$("slipCust").value="";updateSlip();});
+  $("slipCust").addEventListener("input",e=>{const val=parseFloat(e.target.value);
+    [...$("slips").querySelectorAll("button")].forEach(x=>x.classList.remove("on"));
+    if(!isNaN(val)){S.slip=String(val);}updateSlip();});
+  function updateSlip(){const s=S.slip==="auto"?"Auto":(S.slip+"%");$("slipBadge").textContent=s;compute();}
+
+  /* TOKEN MODAL */
+  let pickSide="in";
+  function openModal(side){pickSide=side;$("overlay").classList.add("open");$("tsearch").value="";renderList("");setTimeout(()=>$("tsearch").focus(),50);}
+  function closeModal(){$("overlay").classList.remove("open");}
+  $("tokInBtn").onclick=()=>openModal("in");
+  $("tokOutBtn").onclick=()=>openModal("out");
+  $("pairSel").onclick=()=>openModal("in");
+  $("modalX").onclick=closeModal;
+  $("overlay").onclick=e=>{if(e.target===$("overlay"))closeModal();};
+  function chooseToken(sym){
+    if(pickSide==="in"){if(sym===S.to)S.to=S.from;S.from=sym;}
+    else{if(sym===S.from)S.from=S.to;S.to=sym;}
+    closeModal();render();
+  }
+  function renderList(q){
+    q=q.toLowerCase();
+    const list=$("tlist");list.innerHTML="";
+    const arr=Object.values(TOKENS)
+      .filter(t=>t.sym.toLowerCase().includes(q)||t.name.toLowerCase().includes(q))
+      .sort((a,b)=>(b.bal*b.price)-(a.bal*a.price));
+    if(!arr.length){list.innerHTML=`<div style="padding:30px;text-align:center;color:var(--muted);font-size:14px">No tokens match “${q}”.</div>`;return;}
+    arr.forEach(t=>{
+      const usd=t.bal*t.price;
+      const it=document.createElement("div");it.className="it";
+      it.innerHTML=`<span class="tcoin" style="background:${t.color}">${t.glyph}</span>
+        <div class="nm"><b>${t.sym}</b><small>${t.name}</small></div>
+        <div class="hold"><b>${t.bal?fmt(t.bal,2):"0"}</b><small>${usd?"$"+fmt(usd):"—"}</small></div>`;
+      it.onclick=()=>chooseToken(t.sym);
+      list.appendChild(it);
+    });
+  }
+  $("tsearch").addEventListener("input",e=>renderList(e.target.value));
+  // popular chips
+  $("popular").innerHTML=POPULAR.map(s=>{const t=TOKENS[s];
+    return `<button class="ptok" data-s="${s}"><span class="tcoin" style="width:22px;height:22px;font-size:10px;background:${t.color}">${t.glyph}</span>${s}</button>`;}).join("");
+  $("popular").addEventListener("click",e=>{const b=e.target.closest(".ptok");if(b)chooseToken(b.dataset.s);});
+
+  /* action */
+  $("action").onclick=()=>{
+    if($("action").classList.contains("idle")||$("action").classList.contains("warn"))return;
+    const v=parseFloat($("amtIn").value)||0;if(!v)return;
+    $("action").textContent="Confirming swap…";
+    setTimeout(()=>{$("action").textContent="✓ Swap submitted";setTimeout(compute,1600);},950);
+  };
+
+  render();
+</script>
+</body>
+</html>

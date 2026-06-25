@@ -41,7 +41,7 @@ const JLF = (import.meta.env.VITE_TOKEN_JLF_ALK as string) ?? ''
 const mAH = (import.meta.env.VITE_TOKEN_mAH_ALK as string) ?? ''
 
 export const TOKENS: Record<TokenKey, TokenInfo> = {
-    MAH: { key: 'MAH', symbol: 'MAH', decimalsHint: 18, address: MAH || undefined },
+    MAH: { key: 'MAH', symbol: 'MAH', decimalsHint: 6, address: MAH || undefined },
     JLF: { key: 'JLF', symbol: 'JLF', decimalsHint: 18, address: JLF || undefined },
     ALKE: { key: 'ALKE', symbol: 'ALKE', decimalsHint: 18, isNative: true, wrapped: WAKE || undefined },
 }

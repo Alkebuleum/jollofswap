@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JollofSwap — Trade across Africa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --base:#0A0A0B;
+    --base-soft:#101011;
+    --surface:#141416;
+    --leg:#0E0E10;
+    --leg-2:#161618;
+    --line:rgba(255,255,255,.07);
+    --line-2:rgba(255,255,255,.045);
+    --red:#FF5A3C;
+    --red-2:#FF7A4D;
+    --gold:#F7B53B;
+    --purple:#8B5CF6;
+    --green:#4ADE80;
+    --white:#FAFAF8;
+    --muted:#8B867E;
+    --muted-2:#5B5853;
+    --r-card:30px;
+    --r-leg:22px;
+    --maxw:1180px;
+    --col:560px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{background:var(--base);color:var(--white);
+    font-family:"DM Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  ::selection{background:rgba(255,90,60,.3)}
+
+  /* single subtle glow — premium restraint */
+  .glow{position:fixed;top:-200px;left:50%;transform:translateX(-50%);width:760px;height:620px;z-index:0;pointer-events:none;
+    background:radial-gradient(ellipse at center,rgba(255,90,60,.16),rgba(247,181,59,.05) 38%,transparent 66%);
+    filter:blur(20px)}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 22px;position:relative;z-index:1}
+  .col{max-width:var(--col);margin:0 auto}
+
+  /* ---------- NAV ---------- */
+  header.nav{position:sticky;top:0;z-index:60;backdrop-filter:blur(16px);
+    background:linear-gradient(to bottom,rgba(10,10,11,.9),rgba(10,10,11,.55));
+    border-bottom:1px solid var(--line-2)}
+  .nav-inner{display:flex;align-items:center;gap:18px;height:66px}
+  .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--white)}
+  .mark{width:32px;height:32px;border-radius:10px;flex:none;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--gold),var(--red) 72%);box-shadow:0 4px 18px rgba(255,90,60,.45)}
+  .mark svg{width:18px;height:18px}
+  .brand b{font-family:"Bricolage Grotesque";font-weight:800;font-size:19px;letter-spacing:-.02em}
+  .brand b i{font-style:normal;color:var(--gold)}
+  nav.links{display:flex;gap:2px;margin-left:6px}
+  nav.links a{color:var(--muted);text-decoration:none;font-weight:600;font-size:14px;padding:8px 13px;border-radius:9px;transition:.16s}
+  nav.links a:hover,nav.links a.active{color:var(--white);background:rgba(255,255,255,.05)}
+  .nav-right{margin-left:auto;display:flex;align-items:center;gap:9px}
+  .icobtn{width:38px;height:38px;border-radius:10px;border:none;background:rgba(255,255,255,.05);color:var(--muted);
+    cursor:pointer;display:grid;place-items:center;transition:.16s}
+  .icobtn:hover{background:rgba(255,255,255,.09);color:var(--white)}
+  .icobtn svg{width:17px;height:17px}
+  .pill{font-family:inherit;font-weight:700;font-size:14px;border:none;border-radius:100px;cursor:pointer;transition:.18s}
+  .pill-red{background:var(--red);color:#fff;padding:10px 19px;box-shadow:0 4px 16px rgba(255,90,60,.34)}
+  .pill-red:hover{background:var(--red-2);transform:translateY(-1px)}
+  .hamb{display:none}
+
+  /* ---------- HERO ---------- */
+  .hero{padding:64px 0 30px;text-align:center}
+  .display{font-family:"Bricolage Grotesque";font-weight:800;letter-spacing:-.045em;
+    font-size:clamp(46px,11vw,88px);line-height:.96}
+  .display .grad{background:linear-gradient(102deg,var(--gold),var(--red) 62%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+
+  /* ---------- SWAP CARD ---------- */
+  .swap{max-width:var(--col);margin:42px auto 0;background:var(--surface);
+    border:1px solid var(--line);border-radius:var(--r-card);padding:8px;
+    box-shadow:0 40px 90px -40px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.04)}
+  .leg{background:var(--leg);border:1px solid transparent;border-radius:var(--r-leg);padding:20px 20px 18px;transition:.18s}
+  .leg:focus-within{border-color:rgba(255,90,60,.32);background:var(--leg-2)}
+  .leg .lab{font-size:15px;color:var(--muted);font-weight:500;margin-bottom:14px}
+  .leg-row{display:flex;align-items:center;gap:14px}
+  .amt{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--white);
+    font-family:"Bricolage Grotesque";font-weight:600;font-size:42px;letter-spacing:-.03em;width:100%;line-height:1}
+  .amt::placeholder{color:#3a3935}
+  .amt:read-only{color:var(--white)}
+  .leg .usd{font-family:"DM Mono";font-size:14px;color:var(--muted-2);margin-top:13px}
+
+  .tok{display:flex;align-items:center;gap:9px;background:rgba(255,255,255,.06);
+    border:1px solid var(--line);border-radius:100px;padding:6px 13px 6px 6px;cursor:pointer;flex:none;
+    transition:.16s;font-family:inherit}
+  .tok:hover{background:rgba(255,255,255,.1)}
+  .coinwrap{position:relative;flex:none}
+  .tcoin{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;
+    font-family:"Bricolage Grotesque";font-weight:800;font-size:13px;color:#fff;letter-spacing:-.02em}
+  .badge{position:absolute;right:-3px;bottom:-3px;width:15px;height:15px;border-radius:50%;
+    background:var(--purple);border:2.5px solid var(--leg);display:grid;place-items:center;font-size:7px;font-weight:800;color:#fff;font-family:"DM Mono"}
+  .leg-2 .badge,.leg-2 .coinwrap .badge{border-color:var(--leg-2)}
+  .tok b{font-weight:700;font-size:16px;color:var(--white)}
+  .tok .caret{color:var(--muted);font-size:10px}
+
+  .flip{display:flex;justify-content:center;height:0;position:relative;z-index:4}
+  .flip button{position:absolute;top:-21px;width:42px;height:42px;border-radius:13px;
+    border:5px solid var(--surface);background:var(--leg-2);color:var(--white);cursor:pointer;
+    display:grid;place-items:center;transition:.28s}
+  .flip button svg{width:17px;height:17px}
+  .flip button:hover{transform:rotate(180deg);color:var(--red);background:#1f1f22}
+
+  /* quick picks in buy leg */
+  .picks{display:flex;align-items:center;gap:8px;margin-top:4px}
+  .pick{width:34px;height:34px;border-radius:50%;cursor:pointer;border:1px solid var(--line);
+    display:grid;place-items:center;font-family:"Bricolage Grotesque";font-weight:800;font-size:13px;color:#fff;transition:.16s;position:relative}
+  .pick:hover{transform:translateY(-2px)}
+  .pick.on{box-shadow:0 0 0 2px var(--red)}
+
+  .rate{display:flex;justify-content:space-between;align-items:center;padding:15px 16px 6px;
+    font-family:"DM Mono";font-size:13px;color:var(--muted)}
+  .rate b{color:var(--white);font-weight:500}
+  .cardbtn{width:100%;margin-top:8px;padding:19px;border-radius:var(--r-leg);font-size:18px;
+    font-family:"Bricolage Grotesque";font-weight:700;letter-spacing:-.01em;color:#fff;border:none;cursor:pointer;transition:.18s;
+    background:linear-gradient(120deg,var(--red),var(--gold) 130%);box-shadow:0 12px 30px rgba(255,90,60,.3)}
+  .cardbtn:hover{transform:translateY(-1px);box-shadow:0 16px 38px rgba(255,90,60,.42)}
+  .cardbtn.idle{background:rgba(255,255,255,.05);color:var(--muted);box-shadow:none;cursor:default}
+  .cardbtn.idle:hover{transform:none}
+  .route{text-align:center;margin-top:14px;font-family:"DM Mono";font-size:11.5px;color:var(--muted-2);letter-spacing:.02em}
+
+  .subcopy{max-width:430px;margin:34px auto 0;text-align:center;font-size:17px;color:var(--muted);line-height:1.5}
+  .subcopy b{color:var(--red-2);font-weight:600}
+
+  /* token menu */
+  .tmenu{position:absolute;z-index:30;background:#1a1a1d;border:1px solid var(--line);border-radius:20px;
+    padding:7px;width:240px;box-shadow:0 30px 60px -16px rgba(0,0,0,.85);display:none}
+  .tmenu.open{display:block}
+  .tmenu .it{display:flex;align-items:center;gap:11px;padding:10px;border-radius:13px;cursor:pointer;transition:.12s}
+  .tmenu .it:hover{background:rgba(255,255,255,.06)}
+  .tmenu .it .nm{display:flex;flex-direction:column}
+  .tmenu .it .nm b{font-size:14.5px;font-weight:700}
+  .tmenu .it .nm small{font-size:12px;color:var(--muted)}
+
+  /* ---------- STATEMENT ---------- */
+  .statement{padding:120px 0 90px;text-align:center}
+  .statement h2{font-family:"Bricolage Grotesque";font-weight:800;letter-spacing:-.045em;
+    font-size:clamp(40px,8.5vw,76px);line-height:.98}
+  .statement h2 .grad{background:linear-gradient(102deg,var(--gold),var(--red) 60%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .statement p{max-width:520px;margin:30px auto 0;font-size:19px;color:var(--muted);line-height:1.55}
+  .statement .ghost{display:inline-flex;align-items:center;gap:9px;margin-top:34px;
+    background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--white);
+    padding:15px 26px;border-radius:100px;font-family:"Bricolage Grotesque";font-weight:700;font-size:17px;cursor:pointer;text-decoration:none;transition:.18s}
+  .statement .ghost:hover{background:rgba(255,255,255,.09);gap:13px}
+
+  /* ---------- STAT STRIP ---------- */
+  .strip{border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2)}
+  .strip-grid{display:grid;grid-template-columns:repeat(4,1fr)}
+  .st{padding:34px 24px;border-right:1px solid var(--line-2)}
+  .st:last-child{border-right:none}
+  .st b{font-family:"Bricolage Grotesque";font-weight:700;font-size:32px;letter-spacing:-.02em;display:block}
+  .st span{font-size:13.5px;color:var(--muted);margin-top:6px;display:block}
+
+  /* ---------- MARKETS ---------- */
+  .section{padding:96px 0}
+  .sh{text-align:center;margin-bottom:42px}
+  .sh .ey{font-family:"DM Mono";font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--gold)}
+  .sh h3{font-family:"Bricolage Grotesque";font-weight:800;font-size:clamp(30px,5vw,46px);letter-spacing:-.035em;margin-top:12px}
+  .sh p{color:var(--muted);margin-top:12px;font-size:16.5px;max-width:480px;margin-left:auto;margin-right:auto}
+  .table{max-width:860px;margin:0 auto;border:1px solid var(--line-2);border-radius:22px;overflow:hidden;background:var(--base-soft)}
+  .trow{display:grid;grid-template-columns:2.3fr 1.2fr 1fr 1.3fr 92px;align-items:center;padding:17px 24px;border-bottom:1px solid var(--line-2);transition:.14s}
+  .trow:last-child{border-bottom:none}
+  .trow.head{font-size:11.5px;color:var(--muted-2);text-transform:uppercase;letter-spacing:.1em;font-weight:600;padding:14px 24px}
+  .trow:not(.head):hover{background:rgba(255,255,255,.025)}
+  .pair{display:flex;align-items:center;gap:13px}
+  .pair-coins{display:flex}
+  .pair-coins .tcoin:nth-child(2){margin-left:-10px;border:2px solid var(--base-soft)}
+  .pair .pn{font-weight:700;font-size:15px}
+  .pair .pn small{display:block;color:var(--muted-2);font-weight:500;font-size:12px}
+  .num{font-family:"DM Mono";font-size:14.5px}
+  .pos{color:var(--green);font-family:"DM Mono";font-size:14px}
+  .neg{color:var(--red);font-family:"DM Mono";font-size:14px}
+  .tradebtn{justify-self:end;background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--white);
+    padding:8px 16px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:.16s}
+  .tradebtn:hover{background:var(--red);border-color:var(--red)}
+
+  /* ---------- ECOSYSTEM ---------- */
+  .eco-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;max-width:980px;margin:0 auto}
+  .ecard{background:var(--base-soft);border:1px solid var(--line-2);border-radius:20px;padding:24px;transition:.2s;cursor:pointer}
+  .ecard:hover{transform:translateY(-3px);border-color:rgba(139,92,246,.45)}
+  .ecard .ico{width:44px;height:44px;border-radius:13px;background:rgba(139,92,246,.14);display:grid;place-items:center;font-size:19px;margin-bottom:16px}
+  .ecard h4{font-family:"Bricolage Grotesque";font-weight:700;font-size:18px}
+  .ecard p{color:var(--muted);font-size:13.5px;margin-top:7px;line-height:1.45}
+  .ecard .t{display:inline-block;margin-top:15px;font-family:"DM Mono";font-size:11px;color:var(--purple);letter-spacing:.04em}
+
+  /* ---------- FOOTER ---------- */
+  footer{border-top:1px solid var(--line-2);padding:54px 0 40px;margin-top:30px}
+  .foot{display:grid;grid-template-columns:1.7fr 1fr 1fr 1fr;gap:30px}
+  .foot .ab{max-width:300px}
+  .foot .ab p{color:var(--muted);font-size:13.5px;margin-top:14px}
+  .fcol h5{font-size:11.5px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted-2);margin-bottom:15px;font-weight:600}
+  .fcol a{display:block;color:var(--muted);text-decoration:none;font-size:14px;margin-bottom:11px;transition:.14s}
+  .fcol a:hover{color:var(--white)}
+  .fbot{display:flex;justify-content:space-between;align-items:center;margin-top:46px;padding-top:24px;border-top:1px solid var(--line-2);flex-wrap:wrap;gap:12px}
+  .fbot span{color:var(--muted-2);font-size:13px}
+  .fbot .tag{font-family:"DM Mono";color:var(--gold);font-size:12.5px;letter-spacing:.03em}
+
+  @media(max-width:880px){
+    nav.links{display:none}
+    .hamb{display:grid}
+    .strip-grid{grid-template-columns:1fr 1fr}
+    .st:nth-child(2){border-right:none}
+    .st{border-bottom:1px solid var(--line-2)}
+    .eco-grid{grid-template-columns:1fr 1fr}
+    .foot{grid-template-columns:1fr 1fr}
+    .trow{grid-template-columns:2fr 1.2fr 92px;padding:15px 18px}
+    .trow .hide-m{display:none}
+  }
+  @media(max-width:560px){
+    .eco-grid{grid-template-columns:1fr}
+    .amt{font-size:38px}
+  }
+  @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+
+<!-- NAV -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#">
+      <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 9h11l-3-3M20 15H9l3 3" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <b>Jollof<i>Swap</i></b>
+    </a>
+    <nav class="links">
+      <a href="#" class="active">Trade</a>
+      <a href="#markets">Pools</a>
+      <a href="#">Earn</a>
+      <a href="#">Bridge</a>
+      <a href="#eco">Ecosystem</a>
+    </nav>
+    <div class="nav-right">
+      <button class="icobtn" aria-label="Search"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="m20 20-3-3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+      <button class="pill pill-red" id="connectBtn">Connect wallet</button>
+      <button class="icobtn hamb" aria-label="Menu"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+    </div>
+  </div>
+</header>
+
+<!-- HERO -->
+<main class="wrap">
+  <section class="hero">
+    <h1 class="display">Swap value,<br><span class="grad">without borders.</span></h1>
+
+    <!-- SWAP CARD -->
+    <div class="swap" id="swapCard">
+      <!-- SELL -->
+      <div class="leg">
+        <div class="lab">Sell</div>
+        <div class="leg-row">
+          <input class="amt" id="amtIn" inputmode="decimal" placeholder="0" value="100" />
+          <button class="tok" id="tokInBtn">
+            <span class="coinwrap"><span class="tcoin" id="ciIn">A</span><span class="badge">A</span></span>
+            <b id="symIn">ALKE</b><span class="caret">▾</span>
+          </button>
+        </div>
+        <div class="usd" id="usdIn">$42.00</div>
+        <div class="tmenu" id="menuIn"></div>
+      </div>
+
+      <div class="flip"><button onclick="flip()" aria-label="Switch"><svg viewBox="0 0 24 24" fill="none"><path d="M12 4v16M12 20l5-5M12 20l-5-5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+
+      <!-- BUY -->
+      <div class="leg leg-2">
+        <div class="lab">Buy</div>
+        <div class="leg-row">
+          <input class="amt" id="amtOut" inputmode="decimal" placeholder="0" readonly />
+          <button class="tok" id="tokOutBtn">
+            <span class="coinwrap"><span class="tcoin" id="ciOut">₦</span><span class="badge">A</span></span>
+            <b id="symOut">cNGN</b><span class="caret">▾</span>
+          </button>
+        </div>
+        <div class="usd" id="usdOut">$42.00</div>
+        <div class="picks" id="picks"></div>
+        <div class="tmenu" id="menuOut"></div>
+      </div>
+
+      <div class="rate"><span id="rateLine">1 ALKE = 646.15 cNGN</span><span>Slippage <b>0.5%</b></span></div>
+      <button class="cardbtn" id="swapBtn">Get started</button>
+      <div class="route">Routed through JollofSwap V2 · Settled on Alkebuleum</div>
+    </div>
+
+    <p class="subcopy">Trade African stablecoins, ALKE, and global assets with <b>zero protocol fees</b> on stablecoin pairs — self-custodial, instant, no middlemen.</p>
+  </section>
+</main>
+
+<!-- STATEMENT -->
+<section class="wrap statement">
+  <h2>Africa's exchange.<br><span class="grad">Built for the continent.</span></h2>
+  <p>JollofSwap delivers deep liquidity, proven security, and self-custodial trading across fifty-five markets — all settled on Alkebuleum, the ledger the continent owns.</p>
+  <a class="ghost" href="#markets">Trade without fees <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+</section>
+
+<!-- STAT STRIP -->
+<section class="strip">
+  <div class="wrap"><div class="strip-grid">
+    <div class="st"><b>$184.6M</b><span>Total value locked</span></div>
+    <div class="st"><b>$23.1M</b><span>24h trading volume</span></div>
+    <div class="st"><b>312</b><span>Active liquidity pools</span></div>
+    <div class="st"><b>55</b><span>Markets across Africa</span></div>
+  </div></div>
+</section>
+
+<!-- MARKETS -->
+<section class="section wrap" id="markets">
+  <div class="sh">
+    <div class="ey">Top markets</div>
+    <h3>The continent's deepest pools</h3>
+    <p>Real liquidity for African currencies, paired against ALKE and global stablecoins.</p>
+  </div>
+  <div class="table" id="marketTable">
+    <div class="trow head"><span>Pair</span><span>Price</span><span class="hide-m">24h</span><span class="hide-m">Volume</span><span></span></div>
+  </div>
+</section>
+
+<!-- ECOSYSTEM -->
+<section class="section wrap" id="eco">
+  <div class="sh"><div class="ey">Part of Alkebuleum</div><h3>One ecosystem, end to end</h3><p>JollofSwap is the marketplace layer of a sovereign African network.</p></div>
+  <div class="eco-grid">
+    <div class="ecard"><div class="ico">🪪</div><h4>AfPass</h4><p>Portable digital identity that travels with you across every African market.</p><span class="t">Identity →</span></div>
+    <div class="ecard"><div class="ico">🔐</div><h4>Amvault</h4><p>Self-custodial wallet, connected to JollofSwap in a single tap.</p><span class="t">Wallet →</span></div>
+    <div class="ecard"><div class="ico">📜</div><h4>DRIS</h4><p>Verify documents and records on-chain — the trust layer beneath every trade.</p><span class="t">Records →</span></div>
+    <div class="ecard"><div class="ico">✦</div><h4>Nuru AI</h4><p>Route and execute trades in plain language across the whole ecosystem.</p><span class="t">Assistant →</span></div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer><div class="wrap">
+  <div class="foot">
+    <div class="ab">
+      <a class="brand" href="#"><span class="mark"><svg viewBox="0 0 24 24" fill="none"><path d="M4 9h11l-3-3M20 15H9l3 3" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><b>Jollof<i style="color:var(--gold)">Swap</i></b></a>
+      <p>The Pan-African decentralized exchange. Open liquidity, settled on Alkebuleum.</p>
+    </div>
+    <div class="fcol"><h5>Protocol</h5><a href="#">Swap</a><a href="#">Liquidity pools</a><a href="#">Bridge</a><a href="#">Analytics</a></div>
+    <div class="fcol"><h5>Build</h5><a href="#">Documentation</a><a href="#">SDK</a><a href="#">Contracts</a><a href="#">Audits</a></div>
+    <div class="fcol"><h5>Ecosystem</h5><a href="#">Alkebuleum</a><a href="#">Amvault</a><a href="#">AfPass</a><a href="#">Governance</a></div>
+  </div>
+  <div class="fbot"><span>© 2026 JollofSwap · A product of the Alkebuleum network</span><span class="tag">A Ledger of Trust, Built by Africa</span></div>
+</div></footer>
+
+<script>
+  const TOKENS={
+    ALKE:{sym:"ALKE",name:"Alkecoin",glyph:"A",color:"linear-gradient(135deg,#8B5CF6,#a78bfa)",price:0.42},
+    cNGN:{sym:"cNGN",name:"Naira stable",glyph:"₦",color:"linear-gradient(135deg,#0a7d3c,#10b95a)",price:0.00065},
+    cGHS:{sym:"cGHS",name:"Cedi stable",glyph:"₵",color:"linear-gradient(135deg,#C9381F,#FF5A3C)",price:0.067},
+    cKES:{sym:"cKES",name:"Shilling stable",glyph:"K",color:"linear-gradient(135deg,#b8161d,#e63946)",price:0.0077},
+    cZAR:{sym:"cZAR",name:"Rand stable",glyph:"R",color:"linear-gradient(135deg,#0b6b3a,#F7B53B)",price:0.055},
+    USDC:{sym:"USDC",name:"USD Coin",glyph:"$",color:"linear-gradient(135deg,#2775CA,#4a93e8)",price:1.00},
+    USDT:{sym:"USDT",name:"Tether",glyph:"₮",color:"linear-gradient(135deg,#26A17B,#3fc497)",price:1.00}
+  };
+  let state={from:"ALKE",to:"cNGN",connected:false};
+  const $=id=>document.getElementById(id);
+  const fmt=n=>n.toLocaleString("en-US",{maximumFractionDigits:n<1?6:2,minimumFractionDigits:2});
+
+  function paint(el,t){el.textContent=t.glyph;el.style.background=t.color;}
+  function render(){
+    const f=TOKENS[state.from],t=TOKENS[state.to];
+    $("symIn").textContent=f.sym;paint($("ciIn"),f);
+    $("symOut").textContent=t.sym;paint($("ciOut"),t);
+    $("rateLine").textContent=`1 ${f.sym} = ${fmt(f.price/t.price)} ${t.sym}`;
+    [...document.querySelectorAll(".pick")].forEach(p=>p.classList.toggle("on",p.dataset.sym===state.to));
+    if(!state.connected)$("swapBtn").textContent="Get started";
+    compute();
+  }
+  function compute(){
+    const f=TOKENS[state.from],t=TOKENS[state.to];
+    const v=parseFloat(($("amtIn").value||"").replace(/,/g,""))||0;
+    const out=v*(f.price/t.price)*0.997;
+    $("amtOut").value=v?fmt(out):"";
+    $("usdIn").textContent=`$${fmt(v*f.price)}`;
+    $("usdOut").textContent=`$${fmt(out*t.price)}`;
+    if(state.connected){$("swapBtn").textContent=v?`Swap ${fmt(v)} ${f.sym}`:"Enter an amount";$("swapBtn").classList.toggle("idle",!v);}
+  }
+  function flip(){[state.from,state.to]=[state.to,state.from];render();}
+
+  function buildMenu(el,side){
+    el.innerHTML="";
+    Object.values(TOKENS).forEach(t=>{
+      const r=document.createElement("div");r.className="it";
+      r.innerHTML=`<span class="coinwrap"><span class="tcoin" style="background:${t.color}">${t.glyph}</span></span><span class="nm"><b>${t.sym}</b><small>${t.name}</small></span>`;
+      r.onclick=()=>{if(side==="in"){if(t.sym===state.to)state.to=state.from;state.from=t.sym;}else{if(t.sym===state.from)state.from=state.to;state.to=t.sym;}closeMenus();render();};
+      el.appendChild(r);
+    });
+  }
+  function closeMenus(){$("menuIn").classList.remove("open");$("menuOut").classList.remove("open");}
+  function pos(btn,menu){menu.style.top=(btn.offsetTop+btn.offsetHeight+8)+"px";menu.style.right="20px";menu.style.left="auto";}
+  $("tokInBtn").onclick=e=>{e.stopPropagation();const m=$("menuIn"),o=m.classList.contains("open");closeMenus();if(!o){pos($("tokInBtn"),m);m.classList.add("open");}};
+  $("tokOutBtn").onclick=e=>{e.stopPropagation();const m=$("menuOut"),o=m.classList.contains("open");closeMenus();if(!o){pos($("tokOutBtn"),m);m.classList.add("open");}};
+  document.addEventListener("click",closeMenus);
+  $("amtIn").addEventListener("input",compute);
+
+  // quick picks (buy leg)
+  const picksEl=$("picks");
+  ["cNGN","cGHS","cKES","USDC"].forEach(s=>{
+    const t=TOKENS[s];const b=document.createElement("button");b.className="pick";b.dataset.sym=s;
+    b.style.background=t.color;b.textContent=t.glyph;
+    b.onclick=()=>{if(s===state.from)state.from=state.to;state.to=s;render();};
+    picksEl.appendChild(b);
+  });
+
+  $("connectBtn").onclick=()=>{
+    state.connected=!state.connected;
+    if(state.connected){$("connectBtn").textContent="0x7A4…3Fc2";$("connectBtn").style.background="rgba(74,222,128,.14)";$("connectBtn").style.color="var(--green)";$("connectBtn").style.boxShadow="none";}
+    else{$("connectBtn").className="pill pill-red";$("connectBtn").style.cssText="";$("connectBtn").textContent="Connect wallet";}
+    render();
+  };
+  $("swapBtn").onclick=()=>{
+    if(!state.connected){$("connectBtn").click();return;}
+    const v=parseFloat($("amtIn").value)||0;if(!v)return;
+    $("swapBtn").textContent="Confirming…";
+    setTimeout(()=>{$("swapBtn").textContent="✓ Swap submitted";setTimeout(render,1500);},900);
+  };
+
+  // markets
+  const MARKETS=[
+    {a:"ALKE",b:"USDC",price:"0.4201",chg:4.2,vol:"5.8M"},
+    {a:"cNGN",b:"USDC",price:"0.00065",chg:-0.1,vol:"4.2M"},
+    {a:"cGHS",b:"cNGN",price:"103.07",chg:1.8,vol:"2.9M"},
+    {a:"cKES",b:"USDT",price:"0.00770",chg:0.4,vol:"2.1M"},
+    {a:"cZAR",b:"ALKE",price:"0.1309",chg:-2.3,vol:"1.7M"},
+    {a:"ALKE",b:"cNGN",price:"646.15",chg:3.9,vol:"1.4M"}
+  ];
+  const cs=s=>{const t=TOKENS[s];return `<span class="tcoin" style="background:${t.color};width:30px;height:30px;font-size:12px">${t.glyph}</span>`;};
+  const tbl=$("marketTable");
+  MARKETS.forEach(m=>{
+    const cls=m.chg>=0?"pos":"neg",sign=m.chg>=0?"▲":"▼";
+    const row=document.createElement("div");row.className="trow";
+    row.innerHTML=`<div class="pair"><div class="pair-coins">${cs(m.a)}${cs(m.b)}</div><div class="pn">${m.a}/${m.b}<small>${TOKENS[m.a].name}</small></div></div>
+      <div class="num">${m.price}</div><div class="${cls} hide-m">${sign} ${Math.abs(m.chg)}%</div><div class="num hide-m">$${m.vol}</div>
+      <button class="tradebtn" onclick="document.getElementById('swapCard').scrollIntoView({behavior:'smooth'})">Trade</button>`;
+    tbl.appendChild(row);
+  });
+
+  buildMenu($("menuIn"),"in");buildMenu($("menuOut"),"out");
+  render();
+</script>
+</body>
+</html>

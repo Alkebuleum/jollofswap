@@ -213,7 +213,7 @@ export default function ConnectWalletModal() {
               {/* Step 2 — show QR */}
               {connectId && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-                  <div style={{ borderRadius: 14, background: '#fff', padding: 14, border: '1px solid var(--line)' }}>
+                  <div style={{ borderRadius: 14, background: '#fff', padding: 14, border: '1px solid var(--line)', lineHeight: 0 }}>
                     <QRCodeSVG value={qrValue} size={200} bgColor="#ffffff" fgColor="#0A0A0B" level="M" />
                   </div>
                   <p style={{ fontSize: 12.5, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>

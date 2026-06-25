@@ -92,6 +92,7 @@ const MIN_SWAP_RESERVE_HUMAN = '0.001' // per side (token units). tune later.
 // Bridge ABIs (for auto-bridge in onSwap)
 const ERC20_WRITE_IFACE = new ethers.Interface([
   'function approve(address spender, uint256 amount) returns (bool)',
+  'function transfer(address to, uint256 amount) returns (bool)',
   'function decimals() view returns (uint8)',
   'function balanceOf(address) view returns (uint256)',
 ])

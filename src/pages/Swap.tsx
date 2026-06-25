@@ -401,7 +401,8 @@ export default function Swap() {
 
   // Combined USD balance (USDC on Polygon + MAH on Alkebuleum in USD terms)
   const [usdcBalNum, setUsdcBalNum] = useState<number>(0)
-  const [mahForUsdNum, setMahForUsdNum] = useState<number>(0) // MAH balance (in MAH units)
+  const [mahForUsdNum, setMahForUsdNum] = useState<number>(0)   // aaWallet MAH on Alkebuleum
+  const [signerMahNum, setSignerMahNum] = useState<number>(0)   // signer EOA MAH on Alkebuleum
   const [totalUsdNum, setTotalUsdNum] = useState<number>(0)
   const [loadingUsdBal, setLoadingUsdBal] = useState(false)
   const [usdBalInfoOpen, setUsdBalInfoOpen] = useState(false)
@@ -677,14 +678,23 @@ export default function Swap() {
           setToBal('—')
           return
         }
-        // Alkebuleum balances read from AA wallet when available
+        // Alkebuleum balances: sum AA wallet + signer for each token (mirrors Nuru wallet)
         const alkAddress = aaWallet ?? address
+        const signerAlk = polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
+          ? polyAddress : null
+        const getCombined = async (token: ReturnType<typeof getToken>) => {
+          if (!token) return 0n
+          const aa = await getBalance(alkAddress, token, provider).catch(() => 0n)
+          if (!signerAlk) return aa
+          const sig = await getBalance(signerAlk, token, provider).catch(() => 0n)
+          return aa + sig
+        }
 
         // In USDC mode "from" is virtual — only load the "to" token balance here
         if (from === 'USDC') {
           const B = getToken(to)
           if (!B) { setToBal('—'); return }
-          const b2 = await getBalance(alkAddress, B, provider)
+          const b2 = await getCombined(B)
           const d2 = await readDecimals(B, provider)
           if (!alive) return
           setToBal(fmtNum(ethers.formatUnits(b2, d2)))
@@ -700,10 +710,7 @@ export default function Swap() {
           return
         }
 
-        const [b1, b2] = await Promise.all([
-          getBalance(alkAddress, A, provider),
-          getBalance(alkAddress, B, provider),
-        ])
+        const [b1, b2] = await Promise.all([getCombined(A), getCombined(B)])
 
         const d1 = await readDecimals(A, provider)
         const d2 = await readDecimals(B, provider)
@@ -761,41 +768,42 @@ export default function Swap() {
           } catch { return 0 }
         })()
 
-        // MAH on Alkebuleum — sum AA wallet + signer (like Nuru wallet does)
+        // MAH on Alkebuleum — fetch aaWallet and signer separately, sum for display
         const alkAddress = aaWallet ?? address
         const signerAlkAddr = polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
           ? polyAddress : null
-        const mahNum = await (async () => {
-          try {
-            const dec: number = Number(await provider.call({
+        let aaMahNum = 0
+        let signerMahComputed = 0
+        try {
+          const dec: number = Number(await provider.call({
+            to: MAH_TOKEN_ALK,
+            data: ERC20_WRITE_IFACE.encodeFunctionData('decimals', []),
+          }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
+          const aaRaw: bigint = BigInt(await provider.call({
+            to: MAH_TOKEN_ALK,
+            data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [alkAddress]),
+          }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0]))
+          aaMahNum = Number(ethers.formatUnits(aaRaw, dec))
+          if (signerAlkAddr) {
+            const signerRaw = await provider.call({
               to: MAH_TOKEN_ALK,
-              data: ERC20_WRITE_IFACE.encodeFunctionData('decimals', []),
-            }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
-            const aaRaw: bigint = BigInt(await provider.call({
-              to: MAH_TOKEN_ALK,
-              data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [alkAddress]),
-            }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0]))
-            let signerRaw = 0n
-            if (signerAlkAddr) {
-              signerRaw = await provider.call({
-                to: MAH_TOKEN_ALK,
-                data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [signerAlkAddr]),
-              }).then(d => BigInt(ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0])).catch(() => 0n)
-              signerMahRef.current = signerRaw > 0n ? { raw: signerRaw, dec } : null
-            } else {
-              signerMahRef.current = null
-            }
-            return Number(ethers.formatUnits(aaRaw + signerRaw, dec))
-          } catch { return 0 }
-        })()
+              data: ERC20_WRITE_IFACE.encodeFunctionData('balanceOf', [signerAlkAddr]),
+            }).then(d => BigInt(ERC20_WRITE_IFACE.decodeFunctionResult('balanceOf', d)[0])).catch(() => 0n)
+            signerMahComputed = Number(ethers.formatUnits(signerRaw, dec))
+            signerMahRef.current = signerRaw > 0n ? { raw: signerRaw, dec } : null
+          } else {
+            signerMahRef.current = null
+          }
+        } catch { /* leave both at 0 */ }
 
         const polRaw = await polyProvider.getBalance(polyAddress).catch(() => 0n)
         const polFmt = Number(ethers.formatEther(polRaw))
 
         if (!alive) return
         setUsdcBalNum(usdcNum)
-        setMahForUsdNum(mahNum)
-        setTotalUsdNum(usdcNum + mahNum / MAH_PER_USDC)
+        setMahForUsdNum(aaMahNum)                            // aaWallet only — used for swap math
+        setSignerMahNum(signerMahComputed)                   // signer only — added to display + QR-path swaps
+        setTotalUsdNum(usdcNum + (aaMahNum + signerMahComputed) / MAH_PER_USDC)
         setPolBal(polFmt.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 }))
       } catch (e) {
         console.warn('[USD bal]', e)
@@ -834,7 +842,8 @@ export default function Swap() {
         if (from === 'USDC') {
           const usdAmt = Number(amtStr)
           const mahNeeded = usdAmt * MAH_PER_USDC
-          const mahFromExisting = Math.min(mahForUsdNum, mahNeeded)
+          // Use combined aaWallet + signer MAH for quote accuracy
+          const mahFromExisting = Math.min(mahForUsdNum + signerMahNum, mahNeeded)
           const usdcToBridge = Math.max(0, (mahNeeded - mahFromExisting) / MAH_PER_USDC)
           const bridgeFee = usdcToBridge > 0
             ? Math.min(BRIDGE_FEE_MAX_USD, Math.max(BRIDGE_FEE_MIN_USD, usdcToBridge * BRIDGE_FEE_BPS / 10000))
@@ -1010,7 +1019,10 @@ export default function Swap() {
         // Alkebuleum recipient: AA wallet if available, else EOA
         const alkRecipient = aaWallet ?? address
 
-        const mahAvail = mahForUsdNum
+        const injectedEthSwap = typeof window !== 'undefined' ? (window as any).ethereum : null
+        const isNuroBrowserSwap = injectedEthSwap?._isNuruWallet === true
+        // In QR path, signer MAH will be deposited to aaWallet before the swap
+        const mahAvail = mahForUsdNum + (!isNuroBrowserSwap ? signerMahNum : 0)
         const mahNeeded = amtUsd * MAH_PER_USDC
         const mahFromExisting = Math.min(mahAvail, mahNeeded)
         const usdcToBridge = Math.max(0, (mahNeeded - mahFromExisting) / MAH_PER_USDC)
@@ -1025,7 +1037,8 @@ export default function Swap() {
         setSwapDialogOpen(true)
         dialogOpened = true
 
-        let mahAfterBridge = mahAvail
+        // mahAfterBridge tracks aaWallet-only MAH; signer portion added after auto-deposit
+        let mahAfterBridge = mahForUsdNum
 
         // ── Bridge step (only when USDC is needed) ───────────────────────
         if (usdcToBridge > 0.001) {
@@ -1110,14 +1123,11 @@ export default function Swap() {
         }
 
         // ── Auto-deposit: sweep signer MAH into aaWallet (QR path only) ─────
-        // Mirrors Nuru wallet behaviour: combined balance is displayed, but swaps
-        // always execute from the aaWallet. The signer's MAH is swept first.
+        // Mirrors Nuru wallet: combined balance is shown, but swaps execute from aaWallet.
         // Skipped in Nuru browser mode — window.ethereum already routes through aaWallet.
-        const injectedEth = typeof window !== 'undefined' ? (window as any).ethereum : null
-        const isNuroBrowser = injectedEth?._isNuruWallet === true
         const signerMahSnap = signerMahRef.current
         if (
-          !isNuroBrowser &&
+          !isNuroBrowserSwap &&
           polyAddress &&
           polyAddress.toLowerCase() !== alkRecipient.toLowerCase() &&
           signerMahSnap &&
@@ -1131,13 +1141,12 @@ export default function Swap() {
               { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: true },
               'Consolidate wallet',
             )
-            // After deposit, aaWallet has the full combined balance
-            mahAfterBridge += Number(ethers.formatUnits(signerMahSnap.raw, signerMahSnap.dec))
+            // Deposit succeeded: aaWallet now holds aaWallet + signer MAH
+            mahAfterBridge = mahForUsdNum + Number(ethers.formatUnits(signerMahSnap.raw, signerMahSnap.dec))
             signerMahRef.current = null
           } catch (e) {
-            // Non-fatal: proceed with aaWallet balance only if deposit fails
+            // Non-fatal: proceed with aaWallet-only balance
             console.warn('[Jollof] Signer MAH deposit failed, continuing with aaWallet balance only:', e)
-            mahAfterBridge -= Number(ethers.formatUnits(signerMahSnap.raw, signerMahSnap.dec))
           }
         }
 
@@ -1215,6 +1224,42 @@ export default function Swap() {
 
       // Use AA wallet for Alkebuleum allowance checks and swap recipient
       const alkAddress = aaWallet ?? address
+      const signerAlkDirect = polyAddress && polyAddress.toLowerCase() !== alkAddress.toLowerCase()
+        ? polyAddress : null
+
+      // ── Auto-deposit: sweep signer's from-token into aaWallet before swap ──
+      // Mirrors Nuru wallet: ERC-20 → full sweep; native ALKE → keep 0.5 ALKE gas buffer.
+      // Skipped in Nuru browser mode (window.ethereum already routes through aaWallet).
+      const injEthDirect = typeof window !== 'undefined' ? (window as any).ethereum : null
+      const isNuroBrowserDirect = injEthDirect?._isNuruWallet === true
+      if (!isNuroBrowserDirect && signerAlkDirect) {
+        if (fromToken.isNative) {
+          const ALKE_GAS_BUFFER = ethers.parseEther('0.5')
+          const signerAlkeBal = await provider.getBalance(signerAlkDirect).catch(() => 0n)
+          const depositable = signerAlkeBal > ALKE_GAS_BUFFER ? signerAlkeBal - ALKE_GAS_BUFFER : 0n
+          if (depositable > 0n) {
+            try {
+              await sessionSendTransactions(
+                { chainId: ALK_CHAIN_ID, txs: [{ to: alkAddress, data: '0x', value: depositable.toString(), gas: 21_000 }], failFast: false },
+                { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: true },
+                'Consolidate wallet',
+              )
+            } catch (e) { console.warn('[Jollof] Signer ALKE deposit failed:', e) }
+          }
+        } else {
+          const signerTokenBal = await getBalance(signerAlkDirect, fromToken, provider).catch(() => 0n)
+          if (signerTokenBal > 0n) {
+            try {
+              const transferData = ERC20_WRITE_IFACE.encodeFunctionData('transfer', [alkAddress, signerTokenBal])
+              await sessionSendTransactions(
+                { chainId: ALK_CHAIN_ID, txs: [{ to: fromToken.address, data: transferData, value: 0, gas: 80_000 }], failFast: false },
+                { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: true },
+                'Consolidate wallet',
+              )
+            } catch (e) { console.warn('[Jollof] Signer token deposit failed:', e) }
+          }
+        }
+      }
 
       const txs: any[] = []
       if (!fromToken.isNative) {

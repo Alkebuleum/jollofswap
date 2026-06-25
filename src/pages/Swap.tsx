@@ -1125,10 +1125,8 @@ export default function Swap() {
 
         // ── Auto-deposit: sweep signer MAH into aaWallet (QR path only) ─────
         // Mirrors Nuru wallet: combined balance is shown, but swaps execute from aaWallet.
-        // Skipped in Nuru browser mode — window.ethereum already routes through aaWallet.
         const signerMahSnap = signerMahRef.current
         if (
-          !isNuroBrowserSwap &&
           polyAddress &&
           polyAddress.toLowerCase() !== alkRecipient.toLowerCase() &&
           signerMahSnap &&
@@ -1151,15 +1149,10 @@ export default function Swap() {
           }
         }
 
-        // After all deposits: verify aaWallet has enough MAH to cover the swap.
-        // In browser mode, consolidation was skipped — signer MAH couldn't be moved automatically.
+        // After all deposits: verify aaWallet has enough MAH to cover the swap
         if (mahAfterBridge < netMah - 0.001) {
-          const signerHas = signerMahNum > 0.001
-          const aaAddr = (aaWallet ?? address) || ''
           throw new Error(
-            signerHas && isNuroBrowserSwap
-              ? `Your MAH is not yet in your spendable account. In the Nuru app, send MAH to your account address: ${aaAddr.slice(0, 8)}…${aaAddr.slice(-6)}`
-              : `Not enough MAH in your account. Have ${mahAfterBridge.toFixed(2)} MAH, need ${netMah.toFixed(2)} MAH.`
+            `Not enough MAH in your account. Have ${mahAfterBridge.toFixed(2)} MAH, need ${netMah.toFixed(2)} MAH.`
           )
         }
 
@@ -1243,9 +1236,7 @@ export default function Swap() {
       // ── Auto-deposit: sweep signer's from-token into aaWallet before swap ──
       // Mirrors Nuru wallet: ERC-20 → full sweep; native ALKE → keep 0.5 ALKE gas buffer.
       // Skipped in Nuru browser mode (window.ethereum already routes through aaWallet).
-      const injEthDirect = typeof window !== 'undefined' ? (window as any).ethereum : null
-      const isNuroBrowserDirect = injEthDirect?._isNuruWallet === true
-      if (!isNuroBrowserDirect && signerAlkDirect) {
+      if (signerAlkDirect) {
         if (fromToken.isNative) {
           const ALKE_GAS_BUFFER = ethers.parseEther('0.5')
           const signerAlkeBal = await provider.getBalance(signerAlkDirect).catch(() => 0n)

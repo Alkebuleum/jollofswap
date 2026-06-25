@@ -124,7 +124,7 @@ async function runPolyTopupIfNeeded(
 // browser already wraps Alkebuleum txs through the AA wallet's execute() internally
 // (dapp_browser_tab.dart line 498). Double-wrapping would cause execute(execute(...)).
 
-async function nuroBrowserSendTransactions(txPayload: any): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
+async function nuroBrowserSendTransactions(txPayload: any, skipAaWrap = false): Promise<{ ok: boolean; txHash: string; error?: string }[]> {
   const injEth = (window as any).ethereum
   const txList: any[] = txPayload.txs ?? []
 
@@ -134,6 +134,10 @@ async function nuroBrowserSendTransactions(txPayload: any): Promise<{ ok: boolea
   const rpcUrl      = isPolygon ? POLY_RPC : ALK_RPC
   const rpcChainId  = isPolygon ? POLY_CHAIN_ID : ALK_CHAIN_ID
   const rpcProvider = new ethers.JsonRpcProvider(rpcUrl, rpcChainId, { staticNetwork: true })
+
+  // When skipAaWrap is set, include from: signerAddress so the tx is sent directly
+  // from the signer EOA rather than being wrapped by Nuru in aaWallet.execute().
+  const directSigner = skipAaWrap ? (useWcStore.getState().signer ?? null) : null
 
   // Switch chain in the WebView if needed before sending
   if (reqChainId != null) {
@@ -164,6 +168,7 @@ async function nuroBrowserSendTransactions(txPayload: any): Promise<{ ok: boolea
       data:  tx.data ?? '0x',
       value: toHex(toHexValue(tx.value)),
     }
+    if (directSigner) txParams.from = directSigner
     const gasLimit = tx.gas ?? tx.gasLimit
     if (gasLimit != null) txParams.gas = toHex(BigInt(gasLimit))
     if (tx.gasPrice != null) {
@@ -387,13 +392,14 @@ export function useSignerSession() {
 
     if (wcConnected && isNuroBrowser) {
       // Inside Nuru dApp browser — use window.ethereum directly (native approval sheets).
-      // Skip aaExecuteTransactions: the browser already wraps Alkebuleum txs through AA wallet.
-      // skipAaWrap is ignored here — browser path always routes through window.ethereum.
+      // When skipAaWrap is true, include from: signerAddress so Nuru sends from the EOA
+      // directly instead of wrapping in aaWallet.execute() (used for signer → aaWallet deposits).
       console.log('[Jollof] sendTransactions via Nuru browser →', {
         txCount: txPayload?.txs?.length ?? 0,
         chainId: txPayload?.chainId,
+        skipAaWrap: opts.skipAaWrap ?? false,
       })
-      const results = await nuroBrowserSendTransactions(txPayload)
+      const results = await nuroBrowserSendTransactions(txPayload, opts.skipAaWrap ?? false)
       console.log('[Jollof] sendTransactions via Nuru browser ← ok', results.map(r => r.txHash))
       return results
     }

@@ -1123,8 +1123,9 @@ export default function Swap() {
           return
         }
 
-        // ── Auto-deposit: sweep signer MAH into aaWallet (QR path only) ─────
-        // Mirrors Nuru wallet: combined balance is shown, but swaps execute from aaWallet.
+        // ── Auto-deposit: sweep signer MAH into aaWallet before swap ────────
+        // Combined balance is shown, but swaps execute from aaWallet. skipAaWrap sends
+        // the deposit directly from the signer EOA (from: signerAddress in browser mode).
         const signerMahSnap = signerMahRef.current
         if (
           polyAddress &&

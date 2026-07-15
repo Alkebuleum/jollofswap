@@ -986,7 +986,14 @@ export default function Swap() {
       })
       const data = await res.json().catch(() => null)
       if (!data?.ok || !data?.onrampUrl) throw new Error(data?.error || 'Could not create Coinbase onramp session.')
-      window.location.href = data.onrampUrl
+      // Open as a new browsing context (not an in-place same-tab navigation).
+      // Coinbase's onramp flow includes a Google OAuth step that Google blocks
+      // inside embedded/WebView browsers (e.g. Nuru's in-app dApp browser) —
+      // window.open() gives a native WebView shell the hook it needs
+      // (onCreateWindow / createWebViewWith) to hand this off to the system
+      // browser or a Custom Tab instead of loading it inline.
+      const win = window.open(data.onrampUrl, '_blank', 'noopener,noreferrer')
+      if (!win) window.location.href = data.onrampUrl // popup blocked — fall back
     } catch (e: any) {
       setDepositErr(e?.message || 'Could not open Coinbase. Please try again.')
     } finally {

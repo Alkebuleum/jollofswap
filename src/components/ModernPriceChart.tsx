@@ -243,10 +243,13 @@ export default function ModernPriceChart({
             </div>
 
             {/* ── Chart canvas ── */}
-            <div style={{ position: 'relative', flex: 1, minHeight: 220, overflow: 'hidden' }}>
+            <div style={{ position: 'relative', flex: 1, minHeight: 220, overflow: 'hidden', touchAction: 'pan-y' }}>
                 <div
                     ref={hostRef}
-                    style={{ position: 'absolute', inset: 0 }}
+                    // Let vertical touch-drags scroll the page natively instead of being
+                    // captured by the chart's own pan/zoom handlers; horizontal drags
+                    // still pan the chart's time axis.
+                    style={{ position: 'absolute', inset: 0, touchAction: 'pan-y' }}
                 />
 
                 {noData && (

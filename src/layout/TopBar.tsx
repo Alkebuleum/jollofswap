@@ -46,17 +46,27 @@ export default function TopBar() {
   const showNav = !PRELAUNCH || isAllowedTester(ain)
 
   // Resolve AIN
+  const prevAddrRef = useRef<string | undefined>(undefined)
   useEffect(() => {
     let cancelled = false
+    const prevAddr = prevAddrRef.current
+    prevAddrRef.current = addr
     async function resolveAIN() {
-      setAin(null)
-      if (!walletConnected || !addr) return
+      if (!walletConnected || !addr) { setAin(null); return }
+      // Switched to a different wallet/account without a full disconnect —
+      // clear the previous wallet's AIN before (re)resolving the new one,
+      // so a stale admin/owner identity can't linger onto a different wallet.
+      if (prevAddr && prevAddr !== addr) setAin(null)
       const sessionAny = session as any
       const fromSession = sessionAny?.ain ?? sessionAny?.AIN ?? null
       if (fromSession != null) {
         if (!cancelled) setAin(String(fromSession).trim().toUpperCase())
         return
       }
+      // No session-provided AIN (e.g. injected Nuru wallet flow, which resolves
+      // ain separately in AppLayout via nuru_getIdentity()). Without a registry
+      // to check on-chain, leave whatever ain is already set alone instead of
+      // clobbering it back to null.
       if (!AIN_REGISTRY) return
       setAinLoading(true)
       try {
@@ -71,7 +81,7 @@ export default function TopBar() {
             if (n > 0n) { found = n.toString(); break }
           } catch { /* try next */ }
         }
-        if (!cancelled) setAin(found ? found.trim().toUpperCase() : null)
+        if (!cancelled && found) setAin(found.trim().toUpperCase())
       } finally {
         if (!cancelled) setAinLoading(false)
       }

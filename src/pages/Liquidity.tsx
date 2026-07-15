@@ -1,5 +1,5 @@
 // src/pages/Liquidity.tsx
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
 import { collection, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore'
 import { db } from '../services/firebase'
@@ -13,8 +13,6 @@ import {
   ALK_RPC,
   ROUTER,
   TOKENS,
-  TokenKey,
-  enabledTokenKeys,
   clampAmountStr,
   fmtNum,
   readDecimals,
@@ -30,6 +28,7 @@ import {
   erc20Iface,
 } from '../lib/jollofAmm'
 import { routerIface } from '../lib/jollofAmm'
+import { useTokenRegistry } from '../lib/tokenRegistry'
 import { ArrowDownUp } from 'lucide-react'
 import { readHideBalances, readSlippageBps, writeSlippageBps, PREF } from '../lib/prefs'
 import { useWalletMetaStore } from '../store/walletMetaStore'
@@ -187,12 +186,51 @@ export default function Liquidity() {
   const openConnectModal = useConnectModalStore(s => s.openModal)
 
   const provider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
-  const enabled = useMemo(() => enabledTokenKeys(), [])
-  const defaultA = enabled.includes('MAH') ? ('MAH' as TokenKey) : enabled[0]
-  const defaultB = enabled.includes('ALKE') ? ('ALKE' as TokenKey) : enabled[1] ?? enabled[0]
 
-  const [tokenA, setTokenA] = useState<TokenKey>(defaultA)
-  const [tokenB, setTokenB] = useState<TokenKey>(defaultB)
+  const { tokens: regTokens } = useTokenRegistry()
+  const tokenOptions = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of regTokens || []) {
+      const sym = (t.symbol ?? '').trim().toUpperCase()
+      if (sym) set.add(sym)
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b))
+  }, [regTokens])
+  const bySymbol = useMemo(() => {
+    const m: Record<string, any> = {}
+    for (const t of regTokens || []) {
+      const sym = (t.symbol ?? '').trim().toUpperCase()
+      if (!sym) continue
+      // regTokens is newest-first; keep the first (newest) entry on a symbol collision.
+      if (m[sym]) continue
+      m[sym] = {
+        address: t.address,
+        isNative: !!t.isNative || (t.address || '').toLowerCase() === ethers.ZeroAddress,
+        symbol: sym,
+        name: t.name,
+        decimals: t.decimals,
+        logoUrl: t.logoUrl,
+      }
+    }
+    return m
+  }, [regTokens])
+  function getToken(sym: string) {
+    return bySymbol[sym] ?? (TOKENS as any)[sym] ?? null
+  }
+  function TokenIcon({ sym, style }: { sym: string; style?: CSSProperties }) {
+    const logo = getToken(sym)?.logoUrl
+    return (
+      <span className="jlf-tcoin" style={{ background: logo ? '#fff' : tColor(sym), overflow: 'hidden', ...style }}>
+        {logo ? <img src={logo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : tGlyph(sym)}
+      </span>
+    )
+  }
+
+  const defaultA = tokenOptions.includes('MAH') ? 'MAH' : tokenOptions[0] ?? 'MAH'
+  const defaultB = tokenOptions.includes('ALKE') ? 'ALKE' : tokenOptions[1] ?? tokenOptions[0] ?? 'ALKE'
+
+  const [tokenA, setTokenA] = useState<string>('MAH')
+  const [tokenB, setTokenB] = useState<string>('ALKE')
   const [amtA, setAmtA] = useState('100')
   const [amtB, setAmtB] = useState('1')
   const didUserEditRef = useRef(false)
@@ -236,16 +274,15 @@ export default function Liquidity() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const settingsRef = useRef<HTMLDivElement>(null)
 
-  const tokenOptions = enabled
-
-  function tokenKeyFromParam(v: string | null): TokenKey | null {
+  function tokenKeyFromParam(v: string | null): string | null {
     if (!v) return null
     const s = v.trim().toUpperCase()
-    return (enabled as string[]).includes(s) ? (s as TokenKey) : null
+    return tokenOptions.includes(s) ? s : null
   }
 
   useEffect(() => {
     if (didInitRouteRef.current) return
+    if (tokenOptions.length === 0) return
     didInitRouteRef.current = true
     const st: any = (location as any).state
     const stA = tokenKeyFromParam(st?.tokenA ?? st?.a ?? null)
@@ -254,11 +291,11 @@ export default function Liquidity() {
     const qB = tokenKeyFromParam(sp.get('b') ?? sp.get('tokenB'))
     let nextA = stA || qA || defaultA
     let nextB = stB || qB || defaultB
-    if (nextA === nextB) nextB = ((enabled as string[]).find((x) => x !== nextA) as TokenKey) ?? nextB
+    if (nextA === nextB) nextB = tokenOptions.find((x) => x !== nextA) ?? nextB
     setTokenA(nextA)
     setTokenB(nextB)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [tokenOptions.length])
 
   useEffect(() => {
     let alive = true
@@ -322,8 +359,10 @@ export default function Liquidity() {
 
   async function refreshBalances() {
     if (!address) { setBalA('—'); setBalANum(0); setBalB('—'); setBalBNum(0); return }
-    const [b1, b2] = await Promise.all([getBalance(address, TOKENS[tokenA], provider), getBalance(address, TOKENS[tokenB], provider)])
-    const [d1, d2] = await Promise.all([readDecimals(TOKENS[tokenA], provider), readDecimals(TOKENS[tokenB], provider)])
+    const A = getToken(tokenA); const B = getToken(tokenB)
+    if (!A || !B) { setBalA('—'); setBalANum(0); setBalB('—'); setBalBNum(0); return }
+    const [b1, b2] = await Promise.all([getBalance(address, A, provider), getBalance(address, B, provider)])
+    const [d1, d2] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
     const rawA = ethers.formatUnits(b1, d1)
     const rawB = ethers.formatUnits(b2, d2)
     setBalA(fmtNum(rawA)); setBalANum(Number(rawA))
@@ -345,7 +384,8 @@ export default function Liquidity() {
     setReserveAUi('—'); setReserveBUi('—'); setUnderAUi('—'); setUnderBUi('—')
     setRawReserveA(0n); setRawReserveB(0n); setPoolHasReserves(false); setRatioAtoB('—'); setRatioBtoA('—')
     if (!accountAddress || tokenA === tokenB) return
-    const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
+    const A = getToken(tokenA); const B = getToken(tokenB)
+    if (!A || !B) return
     // Reset signer reconcile state
     setSignerLpBalRaw(0n); setSignerUnderAUi('—'); setSignerUnderBUi('—')
     try {
@@ -431,10 +471,12 @@ export default function Liquidity() {
   // Fees / P&L
   useEffect(() => {
     if (!address || !pairAddr || pairAddr === '—') { setFeesPnlUi('—'); setFeesPnlNote(null); return }
+    const tokA = getToken(tokenA); const tokB = getToken(tokenB)
+    if (!tokA || !tokB) { setFeesPnlUi('—'); setFeesPnlNote(null); return }
     const D = 1_000_000n; const LP_FEE_PPM = 2_500n
     const bn = (x: any) => { try { return BigInt(x ?? 0) } catch { return 0n } }
     const lower = (x: any) => String(x ?? '').toLowerCase()
-    const aAddr = tokenAddressForPath(TOKENS[tokenA]).toLowerCase(); const bAddr = tokenAddressForPath(TOKENS[tokenB]).toLowerCase()
+    const aAddr = tokenAddressForPath(tokA).toLowerCase(); const bAddr = tokenAddressForPath(tokB).toLowerCase()
     const pairKey = `${ALK_CHAIN_ID}_${pairAddr.toLowerCase()}`; const userKey = address.toLowerCase()
     const map01toAB = (token0: string, token1: string, v0: bigint, v1: bigint) => {
       const t0 = lower(token0); const t1 = lower(token1); const a = lower(aAddr); const b = lower(bAddr)
@@ -497,7 +539,8 @@ export default function Liquidity() {
       if (!bStr || Number(bStr) <= 0) throw new Error('Enter a valid Amount B.')
       if (balANum > 0 && Number(aStr) > balANum) throw new Error(`Insufficient ${tokenA} balance. You have ${balA} ${tokenA}.`)
       if (balBNum > 0 && Number(bStr) > balBNum) throw new Error(`Insufficient ${tokenB} balance. You have ${balB} ${tokenB}.`)
-      const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
+      const A = getToken(tokenA); const B = getToken(tokenB)
+      if (!A || !B) throw new Error('Token registry is still loading or one of the selected tokens is no longer available. Try re-selecting your tokens.')
       const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
       const amountA = ethers.parseUnits(aStr, decA); const amountB = ethers.parseUnits(bStr, decB)
       const plan = await planAddLiquidity({ tokenA: A, tokenB: B, amountADesired: amountA, amountBDesired: amountB, slippageBps, provider })
@@ -584,7 +627,8 @@ export default function Liquidity() {
       if (tokenA === tokenB) throw new Error('Select different tokens.')
       if (!pairAddr || pairAddr === '—') throw new Error('No pair found for this token selection.')
       if (removePct <= 0) throw new Error('Pick a remove percentage.')
-      const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
+      const A = getToken(tokenA); const B = getToken(tokenB)
+      if (!A || !B) throw new Error('Token registry is still loading or one of the selected tokens is no longer available. Try re-selecting your tokens.')
       const pos = await getLpPosition({ owner: accountAddress, tokenA: A, tokenB: B })
       const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
       if (!pair) throw new Error('No pool exists yet for this pair.')
@@ -636,7 +680,8 @@ export default function Liquidity() {
     if (!address || !pairAddr || pairAddr === '—' || signerLpBalRaw <= 0n || lpSupplyRaw <= 0n) return
     setErr(null); setInfo(null); setReconcileBusy(true)
     try {
-      const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
+      const A = getToken(tokenA); const B = getToken(tokenB)
+      if (!A || !B) throw new Error('Token registry is still loading or one of the selected tokens is no longer available. Try re-selecting your tokens.')
       const pairC = new ethers.Contract(pairAddr, PAIR_ABI, provider)
       const [t0, , reserves] = await Promise.all([pairC.token0(), pairC.token1(), pairC.getReserves()])
       const r0 = reserves[0] as bigint; const r1 = reserves[1] as bigint
@@ -670,7 +715,8 @@ export default function Liquidity() {
       if (!walletConnected || !address) throw new Error('Connect your wallet to continue.')
       if (!isAdmin) throw new Error('Admin only.')
       if (!pairAddr || pairAddr === '—') throw new Error('No pair found.')
-      const A = TOKENS[tokenA]; const B = TOKENS[tokenB]
+      const A = getToken(tokenA); const B = getToken(tokenB)
+      if (!A || !B) throw new Error('Token registry is still loading or one of the selected tokens is no longer available. Try re-selecting your tokens.')
       const [decA, decB] = await Promise.all([readDecimals(A, provider), readDecimals(B, provider)])
       const aStr = clampAmountStr(repairA.trim()); const bStr = clampAmountStr(repairB.trim())
       const donateA = aStr ? ethers.parseUnits(aStr, decA) : 0n; const donateB = bStr ? ethers.parseUnits(bStr, decB) : 0n
@@ -764,8 +810,8 @@ export default function Liquidity() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>
               <div style={{ fontSize: 11.5, color: 'var(--muted-2)', textTransform: 'uppercase', letterSpacing: '0.07em', fontWeight: 600 }}>Your LP position</div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <span className="jlf-tcoin" style={{ background: tColor(tokenA), width: 26, height: 26, fontSize: 11, borderRadius: '50%', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700 }}>{tGlyph(tokenA)}</span>
-                <span className="jlf-tcoin" style={{ background: tColor(tokenB), width: 26, height: 26, fontSize: 11, borderRadius: '50%', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700, marginLeft: -10 }}>{tGlyph(tokenB)}</span>
+                <TokenIcon sym={tokenA} style={{ width: 26, height: 26, fontSize: 11, borderRadius: '50%', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700 }} />
+                <TokenIcon sym={tokenB} style={{ width: 26, height: 26, fontSize: 11, borderRadius: '50%', display: 'grid', placeItems: 'center', color: '#fff', fontWeight: 700, marginLeft: -10 }} />
               </div>
             </div>
 
@@ -923,7 +969,7 @@ export default function Liquidity() {
                     inputMode="decimal"
                   />
                   <button className="jlf-tokbtn" onClick={() => { setTokenSearch(''); setTokenModalFor('A') }}>
-                    <span className="jlf-tcoin" style={{ background: tColor(tokenA), width: 26, height: 26, fontSize: 11 }}>{tGlyph(tokenA)}</span>
+                    <TokenIcon sym={tokenA} style={{ width: 26, height: 26, fontSize: 11 }} />
                     <b>{tokenA}</b>
                     <span className="caret">▾</span>
                   </button>
@@ -965,7 +1011,7 @@ export default function Liquidity() {
                     inputMode="decimal"
                   />
                   <button className="jlf-tokbtn" onClick={() => { setTokenSearch(''); setTokenModalFor('B') }}>
-                    <span className="jlf-tcoin" style={{ background: tColor(tokenB), width: 26, height: 26, fontSize: 11 }}>{tGlyph(tokenB)}</span>
+                    <TokenIcon sym={tokenB} style={{ width: 26, height: 26, fontSize: 11 }} />
                     <b>{tokenB}</b>
                     <span className="caret">▾</span>
                   </button>
@@ -1178,11 +1224,11 @@ export default function Liquidity() {
             <div className="jlf-popular">
               {tokenOptions.slice(0, 5).map(sym => (
                 <button key={sym} className="jlf-ptok" onClick={() => {
-                  if (tokenModalFor === 'A') { if (sym === tokenB) { setTokenA(sym as TokenKey); setTokenB(tokenA) } else setTokenA(sym as TokenKey) }
-                  else { if (sym === tokenA) { setTokenB(sym as TokenKey); setTokenA(tokenB) } else setTokenB(sym as TokenKey) }
+                  if (tokenModalFor === 'A') { if (sym === tokenB) { setTokenA(sym); setTokenB(tokenA) } else setTokenA(sym) }
+                  else { if (sym === tokenA) { setTokenB(sym); setTokenA(tokenB) } else setTokenB(sym) }
                   setTokenModalFor(null)
                 }}>
-                  <span className="jlf-tcoin" style={{ background: tColor(sym), width: 22, height: 22, fontSize: 10 }}>{tGlyph(sym)}</span>
+                  <TokenIcon sym={sym} style={{ width: 22, height: 22, fontSize: 10 }} />
                   {sym}
                 </button>
               ))}
@@ -1193,11 +1239,11 @@ export default function Liquidity() {
               .filter(sym => !tokenSearch || sym.toLowerCase().includes(tokenSearch.toLowerCase()))
               .map(sym => (
                 <div key={sym} className="it" onClick={() => {
-                  if (tokenModalFor === 'A') { if (sym === tokenB) { setTokenA(sym as TokenKey); setTokenB(tokenA) } else setTokenA(sym as TokenKey) }
-                  else { if (sym === tokenA) { setTokenB(sym as TokenKey); setTokenA(tokenB) } else setTokenB(sym as TokenKey) }
+                  if (tokenModalFor === 'A') { if (sym === tokenB) { setTokenA(sym); setTokenB(tokenA) } else setTokenA(sym) }
+                  else { if (sym === tokenA) { setTokenB(sym); setTokenA(tokenB) } else setTokenB(sym) }
                   setTokenModalFor(null)
                 }}>
-                  <span className="jlf-tcoin" style={{ background: tColor(sym), flexShrink: 0 }}>{tGlyph(sym)}</span>
+                  <TokenIcon sym={sym} style={{ flexShrink: 0 }} />
                   <span className="nm"><b>{sym}</b></span>
                   <span className="hold">
                     <b>{sym === tokenA ? balADisplay : sym === tokenB ? balBDisplay : '—'}</b>

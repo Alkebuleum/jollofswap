@@ -369,12 +369,17 @@ export default function Swap() {
   const bySymbol = useMemo(() => {
     const m: Record<string, any> = {}
     for (const t of regTokens || []) {
-      m[t.symbol] = {
+      const sym = (t.symbol ?? '').trim().toUpperCase()
+      if (!sym) continue
+      // regTokens is newest-first; keep the first (newest) entry on a symbol collision.
+      if (m[sym]) continue
+      m[sym] = {
         address: t.address,
         isNative: !!t.isNative || (t.address || '').toLowerCase() === ethers.ZeroAddress,
-        symbol: t.symbol,
+        symbol: sym,
         name: t.name,
         decimals: t.decimals,
+        logoUrl: t.logoUrl,
       }
     }
     return m
@@ -1402,6 +1407,15 @@ export default function Swap() {
     return m[s] || s.slice(0, 1)
   }
 
+  function TokenIcon({ sym, style }: { sym: string; style?: React.CSSProperties }) {
+    const logo = sym === 'USDC' ? null : getToken(sym)?.logoUrl
+    return (
+      <span className="jlf-tcoin" style={{ background: logo ? '#fff' : tokenColor(sym), overflow: 'hidden', ...style }}>
+        {logo ? <img src={logo} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} /> : tokenGlyph(sym)}
+      </span>
+    )
+  }
+
   return (
     <>
       <div className="jlf-app">
@@ -1487,9 +1501,7 @@ export default function Swap() {
                 className="jlf-tokbtn"
                 onClick={() => { setTokenSearch(''); setTokenModalFor('from') }}
               >
-                <span className="jlf-tcoin" style={{ background: tokenColor(isUsdcMode ? 'USDC' : from), width: 26, height: 26, fontSize: 11 }}>
-                  {tokenGlyph(isUsdcMode ? 'USDC' : from)}
-                </span>
+                <TokenIcon sym={isUsdcMode ? 'USDC' : from} style={{ width: 26, height: 26, fontSize: 11 }} />
                 <b>{isUsdcMode ? 'USD' : from}</b>
                 <span className="caret">▾</span>
               </button>
@@ -1539,9 +1551,7 @@ export default function Swap() {
                 className="jlf-tokbtn"
                 onClick={() => { setTokenSearch(''); setTokenModalFor('to') }}
               >
-                <span className="jlf-tcoin" style={{ background: tokenColor(to), width: 26, height: 26, fontSize: 11 }}>
-                  {tokenGlyph(to)}
-                </span>
+                <TokenIcon sym={to} style={{ width: 26, height: 26, fontSize: 11 }} />
                 <b>{to}</b>
                 <span className="caret">▾</span>
               </button>
@@ -1736,9 +1746,7 @@ export default function Swap() {
                     setTokenModalFor(null)
                   }}
                 >
-                  <span className="jlf-tcoin" style={{ background: tokenColor(sym), width: 22, height: 22, fontSize: 10 }}>
-                    {tokenGlyph(sym)}
-                  </span>
+                  <TokenIcon sym={sym} style={{ width: 22, height: 22, fontSize: 10 }} />
                   {sym === 'USDC' ? 'USD' : sym}
                 </button>
               ))}
@@ -1768,9 +1776,7 @@ export default function Swap() {
                     setTokenModalFor(null)
                   }}
                 >
-                  <span className="jlf-tcoin" style={{ background: tokenColor(sym), flexShrink: 0 }}>
-                    {tokenGlyph(sym)}
-                  </span>
+                  <TokenIcon sym={sym} style={{ flexShrink: 0 }} />
                   <span className="nm">
                     <b>{sym === 'USDC' ? 'USD' : sym}</b>
                     <small>{name}</small>
@@ -1942,7 +1948,10 @@ function SwapProgressModal({
     return `Swapping ${details.fromSym} → ${details.toSym}`
   }
   function headerSub() {
-    if (isDone) return `$${details.amountIn} → ~${details.estimatedOut} ${details.toSym}`
+    if (isDone) {
+      const fromLabel = details.fromSym === 'USD' ? `$${details.amountIn}` : `${details.amountIn} ${details.fromSym}`
+      return `${fromLabel} → ~${details.estimatedOut} ${details.toSym}`
+    }
     if (isError) return 'See details below.'
     if (isUsdFlow) {
       if (phase === 'waiting' || phase === 'bridging') return 'amvault will ask you to sign — approve the bridge transaction.'
@@ -1959,7 +1968,7 @@ function SwapProgressModal({
         {/* Header */}
         <div
           className={[
-            'px-5 py-4',
+            'px-4 py-3',
             isDone
               ? 'bg-green-50 dark:bg-green-950/30'
               : isError
@@ -1983,10 +1992,45 @@ function SwapProgressModal({
           </div>
         </div>
 
-        <div className="flex-1 space-y-4 overflow-y-auto p-5">
+        <div className="flex-1 space-y-3 overflow-y-auto p-4">
 
-          {/* Step list */}
-          {!isError && (
+          {/* Step list — full stepper only for the multi-signature USD bridge+swap
+              flow, where each step is a real distinct action. A plain swap is a
+              single transaction, so it gets a compact one-line status instead. */}
+          {!isError && !isUsdFlow && (
+            <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+              <div className={[
+                'relative grid h-8 w-8 shrink-0 place-items-center rounded-full text-sm font-bold',
+                isDone ? 'bg-green-500 text-white' : 'bg-orange-500 text-white',
+              ].join(' ')}>
+                {!isDone && <span className="absolute inset-0 animate-ping rounded-full bg-orange-400 opacity-40" />}
+                {isDone ? (
+                  <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M3 8l3.5 3.5L13 5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 16 16" className="h-4 w-4 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="8" cy="8" r="6" strokeOpacity="0.25" />
+                    <path d="M8 2a6 6 0 0 1 6 6" strokeLinecap="round" />
+                  </svg>
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className={[
+                  'text-sm font-semibold',
+                  isDone ? 'text-green-700 dark:text-green-400' : 'text-orange-700 dark:text-orange-400',
+                ].join(' ')}>
+                  {isDone ? 'Swap complete' : 'Confirming on-chain…'}
+                </div>
+                {details.txHash && (
+                  <div className="mt-0.5 font-mono text-xs text-slate-500 dark:text-slate-400">
+                    {details.txHash.slice(0, 10)}…{details.txHash.slice(-6)}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {!isError && isUsdFlow && (
             <div>
               {steps.map((step, i) => (
                 <div key={i} className="flex gap-3">
@@ -2028,7 +2072,7 @@ function SwapProgressModal({
                     )}
                   </div>
 
-                  <div className="min-w-0 pb-5">
+                  <div className="min-w-0 pb-3">
                     <div
                       className={[
                         'text-sm font-semibold',
@@ -2061,8 +2105,8 @@ function SwapProgressModal({
           )}
 
           {/* Live balances card */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950/40">
-            <div className="mb-3 flex items-center gap-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+            <div className="mb-2 flex items-center gap-2">
               <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 {isDone ? 'Updated balances' : 'Live balances'}
               </div>
@@ -2077,9 +2121,9 @@ function SwapProgressModal({
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2">
               {/* From token */}
-              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <div className="rounded-lg border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900">
                 <div className="text-xs text-slate-500 dark:text-slate-400">{details.fromSym}</div>
                 <div className={[
                   'mt-1 text-lg font-bold tabular-nums',
@@ -2095,7 +2139,7 @@ function SwapProgressModal({
               </div>
 
               {/* To token */}
-              <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <div className="rounded-lg border border-slate-200 bg-white p-2.5 dark:border-slate-700 dark:bg-slate-900">
                 <div className="text-xs text-slate-500 dark:text-slate-400">{details.toSym}</div>
                 <div className={[
                   'mt-1 text-lg font-bold tabular-nums',
@@ -2120,12 +2164,6 @@ function SwapProgressModal({
             >
               {isDone ? 'Close' : 'Dismiss'}
             </button>
-          )}
-
-          {isActive && (
-            <div className="text-center text-xs text-slate-400 dark:text-slate-600">
-              Alkebuleum transactions typically confirm in under 30 seconds.
-            </div>
           )}
         </div>
       </div>

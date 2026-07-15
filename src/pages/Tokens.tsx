@@ -3,8 +3,12 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers, Interface } from 'ethers'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useSignerSession } from '../hooks/useSignerSession'
-import { collection, limit, onSnapshot, orderBy, query } from 'firebase/firestore'
-import { db } from '../services/firebase'
+import { collection, doc, limit, onSnapshot, orderBy, query, updateDoc } from 'firebase/firestore'
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth'
+import { auth, db, signInAdmin } from '../services/firebase'
+import { ensureFirebaseGuest } from '../services/firebaseGuest'
+import { useWalletMetaStore } from '../store/walletMetaStore'
+import { isAdminAin } from '../lib/admin'
 import { Link } from 'react-router-dom'
 
 const ALK_CHAIN_ID = Number(import.meta.env.VITE_ALK_CHAIN_ID ?? 237422)
@@ -19,12 +23,18 @@ const REGISTRY_FEE_AKE = Number(import.meta.env.VITE_REGISTRY_FEE_AKE ?? 2000)
 const REGISTRY_MIN_CONFS = Number(import.meta.env.VITE_REGISTRY_MIN_CONFS ?? 2)
 const ALK_GAS_PRICE_GWEI = Number(import.meta.env.VITE_ALK_GAS_PRICE_GWEI ?? 0)
 const ENABLE_TOKEN_CREATE = String(import.meta.env.VITE_ENABLE_TOKEN_CREATE ?? '0') === '1'
+// The app signs everyone into this shared low-privilege account for routine
+// Firestore access (see services/firebaseGuest.ts). onAuthStateChanged fires
+// for that session too, so "some Firebase user is signed in" alone can't be
+// treated as "the admin is signed in" — it must be a different account.
+const GUEST_EMAIL = ((import.meta.env.VITE_FB_GUEST_EMAIL as string) ?? '').trim().toLowerCase()
 
 type TokenRow = {
+  id?: string
   chainId: number; address: string; addressLower?: string
   symbol: string; name: string; decimals: number
   description?: string; logoUrl?: string; website?: string
-  status?: string; creator?: string; owner?: string
+  status?: string; creator?: string; owner?: string; ownerAin?: string
   createTxHash?: string; createdAtMs?: number; isNative?: boolean
 }
 
@@ -34,8 +44,12 @@ function shortAddr(a?: string) { return a ? `${a.slice(0, 6)}…${a.slice(-4)}` 
 function clampAmountStr(v: string) { return v.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1') }
 function upperSym(v: string) { return v.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 11) }
 function safeTrim(v: string) { return (v ?? '').trim() }
-function normalizeUrl(v: string) { const s = safeTrim(v); if (!s) return ''; return /^https?:\/\//i.test(s) ? s : `https://${s}` }
-function isMaybeUrl(v: string) { const s = safeTrim(v); if (!s) return true; try { const u = new URL(normalizeUrl(s)); return u.protocol === 'https:' || u.protocol === 'http:' } catch { return false } }
+// A single leading slash is a root-relative local asset path (e.g. /mahlogo.png)
+// and is left as-is. Two or more is a protocol-relative URL (e.g. //evil.com,
+// which browsers resolve to https://evil.com) — reject it outright rather than
+// let it slip through as "valid" on the Website field.
+function normalizeUrl(v: string) { const s = safeTrim(v); if (!s) return ''; if (s.startsWith('//')) return ''; if (s.startsWith('/')) return s; return /^https?:\/\//i.test(s) ? s : `https://${s}` }
+function isMaybeUrl(v: string) { const s = safeTrim(v); if (!s) return true; if (s.startsWith('//')) return false; if (s.startsWith('/')) return true; try { const u = new URL(normalizeUrl(s)); return u.protocol === 'https:' || u.protocol === 'http:' } catch { return false } }
 function fmtInt(n: number) { return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : String(n) }
 function hexValue(v: any): string { if (v == null) return '0x0'; if (typeof v === 'bigint') return ethers.toBeHex(v); if (typeof v === 'number') return ethers.toBeHex(BigInt(v)); if (typeof v === 'string') return v; return '0x0' }
 
@@ -112,12 +126,110 @@ export default function Tokens() {
 
   const factoryReady = useMemo(() => Boolean(TOKEN_FACTORY_ALK && ethers.isAddress(TOKEN_FACTORY_ALK)), [])
 
+  // ── Admin gating ─────────────────────────────────────────────────────────
+  // Seeing admin-only controls requires an allowlisted wallet AIN; actually
+  // saving as admin requires signing in with the separate Firebase admin
+  // account below. A token's owner (connected wallet's AIN matches the
+  // token's ownerAin) can also edit their own token, authenticated via the
+  // shared guest Firebase account already used elsewhere in the app.
+  const { ain } = useWalletMetaStore()
+  const isAdminWallet = useMemo(() => isAdminAin(ain), [ain])
+  const [fbUser, setFbUser] = useState<User | null>(null)
+  useEffect(() => onAuthStateChanged(auth, setFbUser), [])
+  // fbUser alone isn't proof of an admin login — the shared guest account
+  // (signed into automatically by wallet-connect/swap/etc.) satisfies it too.
+  // Require the signed-in email to be something other than that guest account.
+  const isRealAdminLogin = !!fbUser && !!fbUser.email && fbUser.email.trim().toLowerCase() !== GUEST_EMAIL
+  const isAdminSession = isAdminWallet && isRealAdminLogin
+  function isOwnerOf(t: TokenRow) {
+    return !!ain && !!t.ownerAin && ain.trim().toUpperCase() === t.ownerAin.trim().toUpperCase()
+  }
+  function canEditToken(t: TokenRow) { return isAdminSession || isOwnerOf(t) }
+
+  const [adminLoginOpen, setAdminLoginOpen] = useState(false)
+  const [adminEmail, setAdminEmail] = useState('')
+  const [adminPassword, setAdminPassword] = useState('')
+  const [adminLoginBusy, setAdminLoginBusy] = useState(false)
+  const [adminLoginErr, setAdminLoginErr] = useState<string | null>(null)
+
+  async function onAdminLogin() {
+    setAdminLoginErr(null)
+    if (!safeTrim(adminEmail) || !adminPassword) { setAdminLoginErr('Enter email and password.'); return }
+    try {
+      setAdminLoginBusy(true)
+      await signInAdmin(safeTrim(adminEmail), adminPassword)
+      setAdminLoginOpen(false); setAdminPassword('')
+    } catch (e: any) {
+      setAdminLoginErr(e?.message || 'Sign-in failed.')
+    } finally { setAdminLoginBusy(false) }
+  }
+
+  async function onAdminSignOut() { await signOut(auth) }
+
+  // ── Edit token modal ─────────────────────────────────────────────────────
+  const [editRow, setEditRow] = useState<TokenRow | null>(null)
+  const [eName, setEName] = useState('')
+  const [eDesc, setEDesc] = useState('')
+  const [eWebsite, setEWebsite] = useState('')
+  const [eStatus, setEStatus] = useState('')
+  const [eLogoUrl, setELogoUrl] = useState('')
+  const [eOwnerAin, setEOwnerAin] = useState('')
+  const [eBusy, setEBusy] = useState(false)
+  const [eErr, setEErr] = useState<string | null>(null)
+
+  // Only admin can set an owner AIN, and only while it's still empty —
+  // once claimed, nobody (including admin) can reassign it from here.
+  const ownerAinEditable = !!editRow && isAdminSession && !editRow.ownerAin
+  // Status (verification) stays admin-only; owners editing their own token
+  // can't self-verify.
+  const statusEditable = isAdminSession
+
+  function openEdit(t: TokenRow) {
+    setEditRow(t)
+    setEName(t.name || '')
+    setEDesc(t.description || '')
+    setEWebsite(t.website || '')
+    setEStatus(t.status || 'Registered')
+    setELogoUrl(t.logoUrl || '')
+    setEOwnerAin(t.ownerAin || '')
+    setEErr(null)
+  }
+  function closeEdit() { setEditRow(null) }
+
+  async function onSaveEdit() {
+    if (!editRow?.id) { setEErr('Missing token id.'); return }
+    if (!canEditToken(editRow)) { setEErr('You do not have permission to edit this token.'); return }
+    const name = safeTrim(eName)
+    if (name.length < 2) { setEErr('Name too short.'); return }
+    if (!isMaybeUrl(eWebsite)) { setEErr('Website URL invalid.'); return }
+    if (!isMaybeUrl(eLogoUrl)) { setEErr('Logo URL invalid.'); return }
+    try {
+      setEBusy(true); setEErr(null)
+      if (!auth.currentUser) await ensureFirebaseGuest()
+      const patch: Record<string, any> = {
+        name,
+        description: safeTrim(eDesc),
+        website: normalizeUrl(eWebsite),
+        logoUrl: normalizeUrl(eLogoUrl),
+        updatedAtMs: Date.now(),
+      }
+      if (statusEditable) patch.status = safeTrim(eStatus) || 'Registered'
+      if (ownerAinEditable && safeTrim(eOwnerAin)) patch.ownerAin = safeTrim(eOwnerAin).toUpperCase()
+      await updateDoc(doc(db, 'tokens', editRow.id), patch)
+      closeEdit()
+    } catch (e: any) {
+      setEErr(e?.message || 'Save failed.')
+    } finally {
+      setEBusy(false)
+    }
+  }
+
   useEffect(() => {
     setLoading(true); setLoadErr(null)
     const q = query(collection(db, 'tokens'), orderBy('createdAtMs', 'desc'), limit(300))
     const unsub = onSnapshot(q, (snap) => {
       const rows: TokenRow[] = []
-      snap.forEach((d) => rows.push(d.data() as TokenRow))
+      snap.forEach((d) => rows.push({ ...(d.data() as TokenRow), id: d.id }))
       setTokens(rows.filter((r) => r.chainId === ALK_CHAIN_ID))
       setLoading(false)
     }, (e) => { setLoadErr(e?.message || 'Failed to load tokens'); setLoading(false) })
@@ -174,7 +286,8 @@ export default function Tokens() {
   }
 
   async function callRegApi(payTx: string) {
-    const body = { paymentTxHash: payTx, tokenAddress: ethers.getAddress(safeTrim(rAddress)), ownerWallet: ethers.getAddress(address!), token: { name: safeTrim(rName), symbol: upperSym(safeTrim(rSymbol)), decimals: 18, description: safeTrim(rDesc), logoUrl: normalizeUrl(rLogoUrl), website: normalizeUrl(rWebsite) } }
+    // ownerAin is best-effort — the backend may not yet persist this field.
+    const body = { paymentTxHash: payTx, tokenAddress: ethers.getAddress(safeTrim(rAddress)), ownerWallet: ethers.getAddress(address!), token: { name: safeTrim(rName), symbol: upperSym(safeTrim(rSymbol)), decimals: 18, description: safeTrim(rDesc), logoUrl: normalizeUrl(rLogoUrl), website: normalizeUrl(rWebsite), ownerAin: ain ? ain.trim().toUpperCase() : null } }
     const res = await fetch(`${FAUCET_API.replace(/\/$/, '')}/tokens/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     return { res, data: await res.json().catch(() => null) }
   }
@@ -243,7 +356,25 @@ export default function Tokens() {
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {isAdminWallet && (
+              isRealAdminLogin ? (
+                <button
+                  onClick={onAdminSignOut}
+                  title={fbUser?.email ?? undefined}
+                  style={{ height: 42, padding: '0 16px', borderRadius: 12, border: '1px solid rgba(54,211,153,.3)', background: 'rgba(54,211,153,.08)', color: 'var(--green)', fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: '"Bricolage Grotesque"' }}
+                >
+                  Admin ✓ Sign out
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setAdminLoginErr(null); setAdminLoginOpen(true) }}
+                  style={{ height: 42, padding: '0 16px', borderRadius: 12, border: '1px solid rgba(247,181,59,.3)', background: 'rgba(247,181,59,.08)', color: 'var(--gold)', fontWeight: 600, fontSize: 13, cursor: 'pointer', fontFamily: '"Bricolage Grotesque"' }}
+                >
+                  Admin sign-in
+                </button>
+              )
+            )}
             <button
               onClick={openReg}
               style={{ height: 42, padding: '0 18px', borderRadius: 12, border: '1px solid var(--line)', background: 'rgba(255,255,255,.04)', color: 'var(--white)', fontWeight: 600, fontSize: 14, cursor: 'pointer', fontFamily: '"Bricolage Grotesque"', transition: '.14s' }}
@@ -357,6 +488,8 @@ export default function Tokens() {
               expanded={expandedAddr === t.address}
               onToggle={() => setExpandedAddr(expandedAddr === t.address ? null : t.address)}
               isNew={isNew(t.createdAtMs)}
+              canEdit={canEditToken(t)}
+              onEdit={() => openEdit(t)}
             />
           ))}
         </div>
@@ -436,15 +569,87 @@ export default function Tokens() {
           </div>
         </TokModal>
       )}
+
+      {/* ─────────── ADMIN SIGN-IN MODAL ─────────── */}
+      {adminLoginOpen && (
+        <TokModal onClose={() => setAdminLoginOpen(false)} title="Admin sign-in" subtitle="Required to save changes to the token directory">
+          <DField label="Email">
+            <DInput type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="admin@example.com" autoComplete="username" />
+          </DField>
+          <DField label="Password">
+            <DInput type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" />
+          </DField>
+          {adminLoginErr && <MsgBox color="red">{adminLoginErr}</MsgBox>}
+          <button onClick={onAdminLogin} disabled={adminLoginBusy} className="jlf-action" style={{ marginTop: 6, opacity: adminLoginBusy ? .45 : 1, cursor: adminLoginBusy ? 'not-allowed' : 'pointer' }}>
+            {adminLoginBusy ? 'Signing in…' : 'Sign in'}
+          </button>
+        </TokModal>
+      )}
+
+      {/* ─────────── EDIT TOKEN MODAL (admin or matching owner AIN) ─────────── */}
+      {editRow && (
+        <TokModal onClose={closeEdit} title={`Edit ${editRow.symbol}`} subtitle={isAdminSession ? 'Admin — changes are visible to all users immediately' : 'Owner — changes are visible to all users immediately'}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', background: eLogoUrl ? '#fff' : symGrad(editRow.symbol), display: 'grid', placeItems: 'center', border: '1px solid rgba(255,255,255,.07)' }}>
+              {eLogoUrl
+                ? <img src={eLogoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                : <span style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 800, fontSize: 18, color: '#fff' }}>{editRow.symbol.slice(0, 2)}</span>}
+            </div>
+            <div style={{ flex: 1 }}>
+              <DField label="Logo URL">
+                <DInput value={eLogoUrl} onChange={(e) => setELogoUrl(e.target.value)} placeholder="https://.../logo.png" />
+              </DField>
+            </div>
+          </div>
+          <DField label="Name">
+            <DInput value={eName} onChange={(e) => setEName(e.target.value)} placeholder="Token name" />
+          </DField>
+          <DField label="Description">
+            <textarea value={eDesc} onChange={(e) => setEDesc(e.target.value)} className="jlf-dark-input" style={{ minHeight: 76, resize: 'vertical' }} placeholder="What is this token for?" />
+          </DField>
+          <DField label="Website">
+            <DInput value={eWebsite} onChange={(e) => setEWebsite(e.target.value)} placeholder="https://..." />
+          </DField>
+          <DField label="Status">
+            {statusEditable ? (
+              <select value={eStatus} onChange={(e) => setEStatus(e.target.value)} className="jlf-dark-input">
+                <option value="Registered">Registered</option>
+                <option value="verified">Verified</option>
+                <option value="flagged">Flagged</option>
+              </select>
+            ) : (
+              <DInput value={eStatus} readOnly style={{ opacity: .5, cursor: 'not-allowed' }} />
+            )}
+          </DField>
+          <DField label="Owner AIN">
+            {ownerAinEditable ? (
+              <>
+                <DInput value={eOwnerAin} onChange={(e) => setEOwnerAin(e.target.value.toUpperCase())} placeholder="e.g. AA00000113" style={{ fontFamily: '"DM Mono"', fontSize: 12 }} />
+                <div style={{ marginTop: 5, fontSize: 11.5, color: 'var(--muted-2)' }}>Unclaimed — set once to hand this token to its owner's wallet.</div>
+              </>
+            ) : (
+              <>
+                <DInput value={eOwnerAin || '—'} readOnly style={{ opacity: .5, cursor: 'not-allowed', fontFamily: '"DM Mono"', fontSize: 12 }} />
+                {editRow.ownerAin && <div style={{ marginTop: 5, fontSize: 11.5, color: 'var(--muted-2)' }}>Already claimed — can't be reassigned here.</div>}
+              </>
+            )}
+          </DField>
+          {eErr && <MsgBox color="red">{eErr}</MsgBox>}
+          <button onClick={onSaveEdit} disabled={eBusy} className="jlf-action" style={{ marginTop: 6, opacity: eBusy ? .45 : 1, cursor: eBusy ? 'not-allowed' : 'pointer' }}>
+            {eBusy ? 'Saving…' : 'Save changes'}
+          </button>
+        </TokModal>
+      )}
     </>
   )
 }
 
 /* ── Table row ─────────────────────────────────────────────────────────────── */
 
-function TokenTableRow({ t, index, explorerBase, symGrad, isLast, expanded, onToggle, isNew: isNewToken }: {
+function TokenTableRow({ t, index, explorerBase, symGrad, isLast, expanded, onToggle, isNew: isNewToken, canEdit, onEdit }: {
   t: TokenRow; index: number; explorerBase: string; symGrad: (s: string) => string
   isLast: boolean; expanded: boolean; onToggle: () => void; isNew: boolean
+  canEdit: boolean; onEdit: () => void
 }) {
   const [copied, setCopied] = useState(false)
   const isNative = !!t.isNative || (t.address || '').toLowerCase() === ZERO_ADDR
@@ -472,9 +677,9 @@ function TokenTableRow({ t, index, explorerBase, symGrad, isLast, expanded, onTo
 
         {/* Token identity */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-          <div style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', background: symGrad(sym), display: 'grid', placeItems: 'center', border: '1px solid rgba(255,255,255,.07)' }}>
+          <div style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, overflow: 'hidden', background: t.logoUrl ? '#fff' : symGrad(sym), display: 'grid', placeItems: 'center', border: '1px solid rgba(255,255,255,.07)' }}>
             {t.logoUrl
-              ? <img src={t.logoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              ? <img src={t.logoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
               : <span style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 800, fontSize: 13, color: '#fff' }}>{sym.slice(0, 2)}</span>}
           </div>
           <div style={{ minWidth: 0 }}>
@@ -508,6 +713,9 @@ function TokenTableRow({ t, index, explorerBase, symGrad, isLast, expanded, onTo
 
         {/* Actions */}
         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
+          {canEdit && (
+            <button onClick={onEdit} title="Edit token" style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid rgba(247,181,59,.3)', background: 'rgba(247,181,59,.08)', color: 'var(--gold)', display: 'grid', placeItems: 'center', cursor: 'pointer', fontSize: 13 }}>✎</button>
+          )}
           <Link to={swapUrl} style={{ height: 30, padding: '0 12px', borderRadius: 8, background: 'var(--red)', color: '#fff', fontWeight: 700, fontSize: 12.5, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>Swap</Link>
           {!isNative && explorerBase && (
             <a href={`${explorerBase.replace(/\/$/, '')}/address/${t.address}`} target="_blank" rel="noreferrer" style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid var(--line)', background: 'rgba(255,255,255,.03)', color: 'var(--muted)', display: 'grid', placeItems: 'center', textDecoration: 'none', fontSize: 13 }} title="View on explorer">↗</a>
@@ -549,6 +757,12 @@ function TokenTableRow({ t, index, explorerBase, symGrad, isLast, expanded, onTo
                 </span>
               </Detail>
             )}
+            {/* Owner AIN */}
+            {t.ownerAin && (
+              <Detail label="Owner">
+                <span style={{ fontFamily: '"DM Mono"', fontSize: 12, color: 'var(--muted)' }}>{t.ownerAin}</span>
+              </Detail>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
@@ -560,6 +774,11 @@ function TokenTableRow({ t, index, explorerBase, symGrad, isLast, expanded, onTo
             )}
             {!isNative && explorerBase && (
               <a href={`${explorerBase.replace(/\/$/, '')}/address/${t.address}`} target="_blank" rel="noreferrer" style={{ ...ghostBtn, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' } as any}>Explorer ↗</a>
+            )}
+            {canEdit && (
+              <button onClick={onEdit} style={{ ...ghostBtn, borderColor: 'rgba(247,181,59,.3)', background: 'rgba(247,181,59,.08)', color: 'var(--gold)' }}>
+                Edit token
+              </button>
             )}
           </div>
         </div>

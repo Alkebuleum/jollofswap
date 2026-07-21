@@ -32,6 +32,13 @@ const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137)
 const POLY_RPC = (import.meta.env.VITE_POLY_RPC as string) ?? 'https://polygon-bor-rpc.publicnode.com'
 const FAUCET_API = (import.meta.env.VITE_FAUCET_API as string) ?? 'https://faucet.alkebuleum.com/api'
 
+// BNB Chain (ALKE bridge burn-to-release direction only — see src/lib/bridge/).
+// Kept as local constants here (not imported from lib/bridge/config) so this
+// shared tx-sending hook stays decoupled from the bridge feature folder.
+const BSC_CHAIN_ID = Number(import.meta.env.VITE_BSC_CHAIN_ID ?? 56)
+const BSC_RPC = (import.meta.env.VITE_BSC_RPC as string) ?? 'https://bsc-dataseed.binance.org'
+const BSC_GAS_PRICE_WEI = 3_000_000_000n // 3 gwei fallback; getFeeData() covers the normal case
+
 const MIN_POL_WEI = ethers.parseEther('0.1')
 
 const WARN_POLL_MS = 15_000
@@ -131,8 +138,9 @@ async function nuroBrowserSendTransactions(txPayload: any, skipAaWrap = false): 
   const reqChainId: number | undefined =
     typeof txPayload.chainId === 'number' ? txPayload.chainId : undefined
   const isPolygon   = reqChainId === POLY_CHAIN_ID
-  const rpcUrl      = isPolygon ? POLY_RPC : ALK_RPC
-  const rpcChainId  = isPolygon ? POLY_CHAIN_ID : ALK_CHAIN_ID
+  const isBsc       = reqChainId === BSC_CHAIN_ID
+  const rpcUrl      = isPolygon ? POLY_RPC : isBsc ? BSC_RPC : ALK_RPC
+  const rpcChainId  = isPolygon ? POLY_CHAIN_ID : isBsc ? BSC_CHAIN_ID : ALK_CHAIN_ID
   const rpcProvider = new ethers.JsonRpcProvider(rpcUrl, rpcChainId, { staticNetwork: true })
 
   // When skipAaWrap is set, include from: signerAddress so the tx is sent directly
@@ -216,9 +224,10 @@ async function wcSendTransactions(txPayload: any, label = 'Transaction', skipAaW
     typeof txPayload.chainId === 'number' ? txPayload.chainId : undefined
 
   const isPolygon    = reqChainId === POLY_CHAIN_ID
+  const isBsc        = reqChainId === BSC_CHAIN_ID
   const isAlkebuleum = reqChainId === ALK_CHAIN_ID
-  const rpcUrl       = isPolygon ? POLY_RPC : ALK_RPC
-  const rpcChainId   = isPolygon ? POLY_CHAIN_ID : ALK_CHAIN_ID
+  const rpcUrl       = isPolygon ? POLY_RPC : isBsc ? BSC_RPC : ALK_RPC
+  const rpcChainId   = isPolygon ? POLY_CHAIN_ID : isBsc ? BSC_CHAIN_ID : ALK_CHAIN_ID
   const rpcProvider  = new ethers.JsonRpcProvider(rpcUrl, rpcChainId, { staticNetwork: true })
 
   // The EOA that actually signs. Falls back to connectedAddr (aaWallet) for injected wallet case.
@@ -277,7 +286,7 @@ async function wcSendTransactions(txPayload: any, label = 'Transaction', skipAaW
     async function getChainGasPrice(): Promise<bigint> {
       if (cachedGasPrice == null) {
         const feeData = await rpcProvider.getFeeData().catch(() => null)
-        cachedGasPrice = feeData?.gasPrice ?? (isPolygon ? 30_000_000_000n : GAS_PRICE_WEI)
+        cachedGasPrice = feeData?.gasPrice ?? (isPolygon ? 30_000_000_000n : isBsc ? BSC_GAS_PRICE_WEI : GAS_PRICE_WEI)
       }
       return cachedGasPrice!
     }

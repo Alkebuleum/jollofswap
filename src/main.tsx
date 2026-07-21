@@ -8,6 +8,7 @@ import Home from './pages/Home'
 import P2PBuy from './pages/P2PBuy'
 import P2PSell from './pages/P2PSell'
 import Swap from './pages/Swap'
+import Bridge from './pages/Bridge'
 import Liquidity from './pages/Liquidity'
 import Farms from './pages/Farms'
 import Tokens from './pages/Tokens'
@@ -33,6 +34,7 @@ const router = createBrowserRouter([
       { path: 'p2p/buy', element: <AuthGate><P2PBuy /></AuthGate> },
       { path: 'p2p/sell', element: <AuthGate><P2PSell /></AuthGate> },
       { path: 'swap', element: <Swap /> },
+      { path: 'bridge', element: <Bridge /> },
       { path: 'liquidity', element: <Liquidity /> },
       { path: 'farms', element: <Farms /> },
       { path: 'tokens', element: <Tokens /> },

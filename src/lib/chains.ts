@@ -15,6 +15,14 @@ export const CHAIN = {
         nativeCurrency: { name: "ALKE", symbol: "ALKE", decimals: 18 },
         blockExplorerUrls: ["https://explorer.alkebuleum.com"], // change if needed
     },
+    BSC: {
+        chainId: 56,
+        hex: "0x38",
+        name: "BNB Chain",
+        rpcUrls: [(import.meta.env.VITE_BSC_RPC as string) || "https://bsc-dataseed.binance.org"],
+        nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+        blockExplorerUrls: [(import.meta.env.VITE_BSC_EXPLORER as string) || "https://bscscan.com"],
+    },
 } as const;
 
 export async function switchOrAddChain(targetHex: string, params: any) {

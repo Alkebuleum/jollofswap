@@ -128,6 +128,7 @@ export default function TopBar() {
   const navItems = [
     ...(!FLAGS.V1_HIDE_P2P ? [{ to: '/p2p/buy', label: 'P2P Buy' }, { to: '/p2p/sell', label: 'P2P Sell' }] : []),
     { to: '/swap', label: 'Swap' },
+    { to: '/bridge', label: 'Bridge' },
     { to: '/liquidity', label: 'Pool' },
     { to: '/tokens', label: 'Explore' },
   ]

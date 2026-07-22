@@ -15,7 +15,7 @@ import { useBridgeContractState, isBridgePaused } from '../../hooks/bridge/useBr
 import { useBridgeTransaction } from '../../hooks/bridge/useBridgeTransaction'
 import { useBridgeStatus } from '../../hooks/bridge/useBridgeStatus'
 import { readActiveBridgeTx, clearActiveBridgeTx } from '../../lib/bridge/persistence'
-import { parseAlkeAmount, formatAlkeAmount, validateAmount, AMOUNT_VALIDATION_MESSAGES } from '../../lib/bridge/amount'
+import { parseAlkeAmount, formatAlkeAmount, formatAlkeAmountCommas, validateAmount, AMOUNT_VALIDATION_MESSAGES } from '../../lib/bridge/amount'
 import type { BridgeDirection } from '../../lib/bridge/config'
 import { isOperatorAttention, isTerminalSuccess } from '../../lib/bridge/api'
 import BridgeAmountInput from './BridgeAmountInput'
@@ -82,6 +82,7 @@ export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }
 
   const amountRaw = useMemo(() => parseAlkeAmount(amount), [amount])
   const sourceBalanceRaw = direction === 'lock-to-mint' ? balances.nativeAlkeRaw : balances.bnbAlkeRaw
+  const destinationBalanceRaw = direction === 'lock-to-mint' ? balances.bnbAlkeRaw : balances.nativeAlkeRaw
   const destination = advancedDest && useAdvancedDest ? advancedDest : address ?? ''
 
   const paused = isBridgePaused(contractState)
@@ -156,6 +157,7 @@ export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }
         role="To"
         network={destinationNetwork(direction)}
         amountDisplay={amount || '0'}
+        balanceDisplay={destinationBalanceRaw != null ? formatAlkeAmountCommas(destinationBalanceRaw) : undefined}
         readOnly
       />
 
@@ -192,6 +194,7 @@ export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }
         destinationNetwork={destinationNetwork(direction)}
         destinationAmountDisplay={amount || '0'}
         requiredGasAsset={direction === 'lock-to-mint' ? 'ALKE (Alkebuleum)' : 'BNB (BNB Chain)'}
+        gasBalanceRaw={direction === 'burn-to-release' ? balances.bnbGasRaw : null}
       />
 
       <button

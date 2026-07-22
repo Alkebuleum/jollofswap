@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ethers } from 'ethers'
 import { NETWORK_LABEL } from './BridgeDirectionSelector'
 import { formatAlkeAmountCommas } from '../../lib/bridge/amount'
 import { ALKE_BRIDGE_MIN_RAW, ALKE_BRIDGE_MAX_PER_TX_RAW, ALKE_BRIDGE_DAILY_LIMIT_RAW } from '../../lib/bridge/config'
@@ -8,11 +9,13 @@ export default function BridgeSummary({
   destinationNetwork,
   destinationAmountDisplay,
   requiredGasAsset,
+  gasBalanceRaw,
 }: {
   sourceNetwork: 'alkebuleum' | 'bsc'
   destinationNetwork: 'alkebuleum' | 'bsc'
   destinationAmountDisplay: string
   requiredGasAsset: string
+  gasBalanceRaw?: bigint | null
 }) {
   const [open, setOpen] = useState(false)
 
@@ -31,7 +34,13 @@ export default function BridgeSummary({
           <div className="jlf-det-line"><span className="k">Source network</span><span>{NETWORK_LABEL[sourceNetwork]}</span></div>
           <div className="jlf-det-line"><span className="k">Destination network</span><span>{NETWORK_LABEL[destinationNetwork]}</span></div>
           <div className="jlf-det-line"><span className="k">You receive</span><span>{destinationAmountDisplay} ALKE</span></div>
-          <div className="jlf-det-line"><span className="k">Required gas</span><span>{requiredGasAsset}</span></div>
+          <div className="jlf-det-line">
+            <span className="k">Required gas</span>
+            <span>
+              {requiredGasAsset}
+              {gasBalanceRaw != null ? ` — balance: ${Number(ethers.formatEther(gasBalanceRaw)).toLocaleString('en-US', { maximumFractionDigits: 5 })} BNB` : ''}
+            </span>
+          </div>
           <div className="jlf-det-line"><span className="k">Minimum</span><span>{formatAlkeAmountCommas(ALKE_BRIDGE_MIN_RAW)} ALKE</span></div>
           <div className="jlf-det-line"><span className="k">Maximum per transaction</span><span>{formatAlkeAmountCommas(ALKE_BRIDGE_MAX_PER_TX_RAW)} ALKE</span></div>
           <div className="jlf-det-line"><span className="k">Daily bridge limit</span><span>{formatAlkeAmountCommas(ALKE_BRIDGE_DAILY_LIMIT_RAW)} ALKE</span></div>

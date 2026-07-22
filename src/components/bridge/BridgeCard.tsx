@@ -189,6 +189,17 @@ export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }
         </label>
       )}
 
+      {isConnected && address && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)', wordBreak: 'break-all' }}>
+          Bridging address: <span style={{ fontFamily: 'DM Mono', color: 'var(--white)' }}>{address}</span>
+          {direction === 'burn-to-release' && (balances.bnbGasRaw ?? 0n) === 0n && (
+            <div style={{ marginTop: 4, color: 'var(--red)' }}>
+              Send a small amount of BNB (e.g. 0.005 BNB) to this address on BNB Chain to cover gas.
+            </div>
+          )}
+        </div>
+      )}
+
       <BridgeSummary
         sourceNetwork={sourceNetwork(direction)}
         destinationNetwork={destinationNetwork(direction)}

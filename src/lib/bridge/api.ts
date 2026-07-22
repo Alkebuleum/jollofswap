@@ -65,6 +65,70 @@ export async function fetchAlkeBridgeHistory(wallet: string, limit = 20): Promis
   return body.transactions ?? []
 }
 
+// ── BNB → Alkebuleum burn registration ───────────────────────────────────
+//
+// The backend independently verifies the transaction, production contract,
+// chain, receipt status, sender, and ALKEBurnedForAlkebuleum event — the
+// frontend sends only the source tx hash and never trusts/derives any of
+// those fields itself.
+
+export type RegisterAlkeBurnResult = {
+  registered: boolean
+  inserted: boolean
+  transaction: BridgeTransactionStatus
+}
+
+// Permanent validation failures the backend returns as `error` — retrying
+// these can never succeed, so callers must stop and surface them instead of
+// backing off.
+const NON_RETRYABLE_REGISTRATION_ERRORS = new Set([
+  'invalid_transaction_hash',
+  'transaction_reverted',
+  'wrong_destination_contract',
+  'burn_event_not_found',
+  'unexpected_burn_event_count',
+  'burner_mismatch',
+  'invalid_burn_amount',
+  'wrong_rpc_chain',
+])
+
+export function isNonRetryableRegistrationError(code: string | null | undefined): boolean {
+  return !!code && NON_RETRYABLE_REGISTRATION_ERRORS.has(code)
+}
+
+export class BridgeRegistrationError extends Error {
+  code?: string
+  status?: number
+  constructor(message: string, code?: string, status?: number) {
+    super(message)
+    this.name = 'BridgeRegistrationError'
+    this.code = code
+    this.status = status
+  }
+}
+
+export async function registerAlkeBurn(sourceTransactionHash: string): Promise<RegisterAlkeBurnResult> {
+  const response = await fetch(`${BRIDGE_API}/v1/alke-bridge/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sourceTransactionHash }),
+  })
+
+  const body = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    throw new BridgeRegistrationError(
+      body?.message || body?.error || 'Unable to register the BNB burn',
+      body?.error,
+      response.status,
+    )
+  }
+
+  // Both 201 (inserted: true) and 200 (inserted: false, already known to the
+  // backend) are success — never treat inserted:false as an error.
+  return body
+}
+
 // ── Polling state classification (ALKEBRIDGE.md §10/§11) ────────────────
 
 const TERMINAL_SUCCESS_STATES = new Set(['COMPLETED'])

@@ -16,6 +16,10 @@ export type StoredBridgeTransaction = {
   amountRaw: string
   destinationAddress: string
   submittedAt: number
+  // Only meaningful for burn-to-release (BNB → Alkebuleum). Absent/false
+  // means the backend hasn't confirmed POST /register yet, so a reload must
+  // resume retrying registration rather than asking the user to burn again.
+  registrationComplete?: boolean
 }
 
 export function readActiveBridgeTx(): StoredBridgeTransaction | null {
@@ -44,4 +48,13 @@ export function clearActiveBridgeTx() {
   } catch {
     // no-op
   }
+}
+
+// Flips registrationComplete on the stored record without disturbing the
+// rest of it — a no-op if the active record has since moved on to a
+// different source tx hash.
+export function markActiveBridgeTxRegistered(sourceTransactionHash: string) {
+  const stored = readActiveBridgeTx()
+  if (!stored || stored.sourceTransactionHash !== sourceTransactionHash) return
+  writeActiveBridgeTx({ ...stored, registrationComplete: true })
 }

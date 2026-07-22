@@ -14,6 +14,7 @@ import { useBridgeBalances } from '../../hooks/bridge/useBridgeBalances'
 import { useBridgeContractState, isBridgePaused } from '../../hooks/bridge/useBridgeContractState'
 import { useBridgeTransaction } from '../../hooks/bridge/useBridgeTransaction'
 import { useBridgeStatus } from '../../hooks/bridge/useBridgeStatus'
+import { useAlkeBurnRegistration } from '../../hooks/bridge/useAlkeBurnRegistration'
 import { readActiveBridgeTx, clearActiveBridgeTx } from '../../lib/bridge/persistence'
 import { parseAlkeAmount, formatAlkeAmount, formatAlkeAmountCommas, validateAmount, AMOUNT_VALIDATION_MESSAGES } from '../../lib/bridge/amount'
 import type { BridgeDirection } from '../../lib/bridge/config'
@@ -54,6 +55,7 @@ export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }
   const activeTxHash = restoredTxHash ?? freshTxHash
   const activeDirection = restoredTxHash ? (restoredDirection ?? direction) : direction
   const status = useBridgeStatus(activeTxHash)
+  const burnRegistration = useAlkeBurnRegistration(activeDirection, activeTxHash)
 
   useEffect(() => {
     if (status.transaction && isTerminalSuccess(status.transaction.state)) {
@@ -63,7 +65,7 @@ export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }
   }, [status.transaction, onCompleted])
 
   function dismissProgress() {
-    if (status.transaction && isOperatorAttention(status.transaction.state)) {
+    if ((status.transaction && isOperatorAttention(status.transaction.state)) || burnRegistration.status === 'fatal') {
       clearActiveBridgeTx()
     }
     setRestoredTxHash(null)
@@ -223,6 +225,8 @@ export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }
           submitError={submitError}
           backendState={status.transaction?.state ?? null}
           awaitingDetection={status.awaitingDetection}
+          registrationStatus={burnRegistration.status}
+          registrationError={burnRegistration.error}
           sourceTransactionHash={activeTxHash}
           destinationTransactionHash={status.transaction?.destinationTransactionHash ?? null}
           onClose={dismissProgress}

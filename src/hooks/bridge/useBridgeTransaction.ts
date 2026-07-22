@@ -74,6 +74,7 @@ export function useBridgeTransaction() {
           amountRaw: amountRaw.toString(),
           destinationAddress,
           submittedAt: Date.now(),
+          registrationComplete: false,
         })
 
         setSourceTransactionHash(result.txHash)

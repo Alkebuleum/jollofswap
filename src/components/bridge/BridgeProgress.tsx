@@ -8,6 +8,7 @@
 import { ALKEBULEUM_EXPLORER, BSC_EXPLORER, type BridgeDirection } from '../../lib/bridge/config'
 import { mapBridgeStateToMessage } from '../../lib/bridge/statusMessages'
 import { isOperatorAttention, isTerminalSuccess } from '../../lib/bridge/api'
+import type { BurnRegistrationStatus } from '../../hooks/bridge/useAlkeBurnRegistration'
 
 function explorerTxUrl(network: 'alkebuleum' | 'bsc', hash: string) {
   const base = network === 'alkebuleum' ? ALKEBULEUM_EXPLORER : BSC_EXPLORER
@@ -24,6 +25,8 @@ export type BridgeProgressProps = {
   submitError: string | null
   backendState: string | null
   awaitingDetection: boolean
+  registrationStatus: BurnRegistrationStatus
+  registrationError: string | null
   sourceTransactionHash: string | null
   destinationTransactionHash: string | null
   onClose: () => void
@@ -35,6 +38,8 @@ export default function BridgeProgress({
   submitError,
   backendState,
   awaitingDetection,
+  registrationStatus,
+  registrationError,
   sourceTransactionHash,
   destinationTransactionHash,
   onClose,
@@ -43,18 +48,23 @@ export default function BridgeProgress({
   const destNet = direction === 'lock-to-mint' ? 'bsc' : 'alkebuleum'
 
   const isError = submitPhase === 'error'
+  const isRegistrationFatal = registrationStatus === 'fatal'
   const isComplete = backendState != null && isTerminalSuccess(backendState)
-  const needsAttention = backendState != null && isOperatorAttention(backendState)
+  const needsAttention = (backendState != null && isOperatorAttention(backendState)) || isRegistrationFatal
 
   const statusLine = isError
     ? submitError ?? 'Bridge transaction failed.'
-    : backendState
-      ? mapBridgeStateToMessage(direction, backendState)
-      : awaitingDetection
-        ? 'Waiting for the bridge worker to detect your transaction…'
-        : submitPhase === 'awaiting-receipt'
-          ? 'Confirm the transaction in your wallet…'
-          : 'Preparing transaction…'
+    : isRegistrationFatal
+      ? registrationError ?? 'The BNB transaction could not be verified by the bridge.'
+      : backendState
+        ? mapBridgeStateToMessage(direction, backendState)
+        : registrationStatus === 'registering'
+          ? 'Verifying BNB burn with the bridge'
+          : awaitingDetection
+            ? 'Waiting for the bridge worker to detect your transaction…'
+            : submitPhase === 'awaiting-receipt'
+              ? 'Confirm the transaction in your wallet…'
+              : 'Preparing transaction…'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">

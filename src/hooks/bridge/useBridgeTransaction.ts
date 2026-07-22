@@ -53,9 +53,13 @@ export function useBridgeTransaction() {
 
         setPhase('awaiting-receipt')
 
+        // Always sign directly from the EOA, not the AA wallet — the bridge
+        // vault/token addresses, allowlist, and balances are all keyed to the
+        // EOA (see useBridgeSignerAddress.ts), so wrapping through
+        // aaWallet.execute() here would send from the wrong address on-chain.
         const results = await sessionSendTransactions(
           { chainId: tx.chainId, txs: [{ to: tx.to, data: tx.data, value: tx.value.toString(), gas: tx.gas }], failFast: true },
-          { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: direction === 'burn-to-release' },
+          { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: true },
           direction === 'lock-to-mint' ? 'Lock ALKE' : 'Burn ALKE',
         )
 

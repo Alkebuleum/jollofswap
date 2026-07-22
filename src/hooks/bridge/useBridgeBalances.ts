@@ -1,11 +1,13 @@
 // src/hooks/bridge/useBridgeBalances.ts
 //
-// Polls the connected wallet's native ALKE (Alkebuleum) and ALKE-on-BNB +
-// BNB gas balances. Independent of swap balance polling (src/pages/Swap.tsx) —
-// separate provider instances, no shared cache.
+// Polls the EOA signer's native ALKE (Alkebuleum) and ALKE-on-BNB + BNB gas
+// balances — not the AA wallet's, since the bridge sends transactions
+// directly from the EOA (see useBridgeSignerAddress.ts). Independent of swap
+// balance polling (src/pages/Swap.tsx) — separate provider instances, no
+// shared cache.
 
 import { useEffect, useRef, useState } from 'react'
-import { useWalletConnection } from '../useWalletConnection'
+import { useBridgeSignerAddress } from './useBridgeSignerAddress'
 import { readNativeAlkeBalance, readBnbAlkeBalance, readBnbGasBalance } from '../../lib/bridge/contracts'
 
 const POLL_MS = 15_000
@@ -18,7 +20,7 @@ export type BridgeBalances = {
 }
 
 export function useBridgeBalances(): BridgeBalances {
-  const { address } = useWalletConnection()
+  const address = useBridgeSignerAddress()
   const [state, setState] = useState<BridgeBalances>({
     nativeAlkeRaw: null,
     bnbAlkeRaw: null,

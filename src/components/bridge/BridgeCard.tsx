@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useConnectModalStore } from '../../store/connectModalStore'
 import { useWalletConnection } from '../../hooks/useWalletConnection'
 import { useBridgeAccess } from '../../hooks/bridge/useBridgeAccess'
+import { useBridgeSignerAddress } from '../../hooks/bridge/useBridgeSignerAddress'
 import { useBridgeBalances } from '../../hooks/bridge/useBridgeBalances'
 import { useBridgeContractState, isBridgePaused } from '../../hooks/bridge/useBridgeContractState'
 import { useBridgeTransaction } from '../../hooks/bridge/useBridgeTransaction'
@@ -25,7 +26,8 @@ import BridgeProgress from './BridgeProgress'
 import { ethers } from 'ethers'
 
 export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }) {
-  const { isConnected, address } = useWalletConnection()
+  const { isConnected } = useWalletConnection()
+  const address = useBridgeSignerAddress() // EOA — the address that actually bridges
   const { openModal } = useConnectModalStore()
   const access = useBridgeAccess()
   const balances = useBridgeBalances()

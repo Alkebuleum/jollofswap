@@ -2,6 +2,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom'
 import React, { useEffect, useRef } from 'react'
 import { useAuth } from 'amvault-connect'
 import TopBar from './TopBar'
+import BuildBadge from '../components/BuildBadge'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useWcStore } from '../store/wcStore'
 import { PRELAUNCH, isAllowedTester } from '../lib/prelaunch'
@@ -112,6 +113,7 @@ export default function AppLayout() {
       <ConnectWalletModal />
       <WcSigningModal />
       <TopBar />
+      <BuildBadge />
 
       <main style={{ flex: 1, position: 'relative', zIndex: 1 }}>
         {awaitingAin ? (

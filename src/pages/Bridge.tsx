@@ -8,9 +8,11 @@
 import BridgeCard from '../components/bridge/BridgeCard'
 import BridgeTransactionHistory from '../components/bridge/BridgeTransactionHistory'
 import { useBridgeAccess } from '../hooks/bridge/useBridgeAccess'
+import { useBridgeHistory } from '../hooks/bridge/useBridgeHistory'
 
 export default function Bridge() {
   const access = useBridgeAccess()
+  const history = useBridgeHistory(20)
 
   return (
     <div className="jlf-app" style={{ display: 'block', maxWidth: 480, margin: '0 auto' }}>
@@ -39,8 +41,8 @@ export default function Bridge() {
         </div>
       )}
 
-      <BridgeCard />
-      <BridgeTransactionHistory />
+      <BridgeCard onCompleted={history.refresh} />
+      <BridgeTransactionHistory transactions={history.transactions} loading={history.loading} error={history.error} />
     </div>
   )
 }

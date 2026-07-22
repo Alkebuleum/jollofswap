@@ -14,7 +14,7 @@ import {
 } from '../../lib/bridge/api'
 
 const FAST_POLL_MS = 3_000
-const SLOW_POLL_MS = 9_000
+const SLOW_POLL_MS = 10_000
 const FAST_WINDOW_MS = 60_000
 
 export type BridgeStatusState = {

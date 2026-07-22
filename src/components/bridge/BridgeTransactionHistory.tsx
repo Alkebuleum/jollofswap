@@ -4,7 +4,7 @@
 // requirement — no crowded tables — so it's consistent everywhere rather
 // than switching layout at a breakpoint).
 
-import { useBridgeHistory } from '../../hooks/bridge/useBridgeHistory'
+import type { BridgeTransactionStatus } from '../../lib/bridge/api'
 import { formatAlkeAmountCommas } from '../../lib/bridge/amount'
 import BridgeStatusBadge from './BridgeStatusBadge'
 import { ALKEBULEUM_EXPLORER, BSC_EXPLORER } from '../../lib/bridge/config'
@@ -18,9 +18,15 @@ function explorerTxUrl(network: 'alkebuleum' | 'bsc', hash: string) {
   return `${base.replace(/\/$/, '')}/tx/${hash}`
 }
 
-export default function BridgeTransactionHistory() {
-  const { transactions, loading, error } = useBridgeHistory(20)
-
+export default function BridgeTransactionHistory({
+  transactions,
+  loading,
+  error,
+}: {
+  transactions: BridgeTransactionStatus[]
+  loading: boolean
+  error: string | null
+}) {
   if (!loading && !error && transactions.length === 0) return null
 
   return (

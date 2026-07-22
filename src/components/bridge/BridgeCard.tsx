@@ -24,7 +24,7 @@ import BridgeSummary from './BridgeSummary'
 import BridgeProgress from './BridgeProgress'
 import { ethers } from 'ethers'
 
-export default function BridgeCard() {
+export default function BridgeCard({ onCompleted }: { onCompleted?: () => void }) {
   const { isConnected, address } = useWalletConnection()
   const { openModal } = useConnectModalStore()
   const access = useBridgeAccess()
@@ -56,8 +56,9 @@ export default function BridgeCard() {
   useEffect(() => {
     if (status.transaction && isTerminalSuccess(status.transaction.state)) {
       clearActiveBridgeTx()
+      onCompleted?.()
     }
-  }, [status.transaction])
+  }, [status.transaction, onCompleted])
 
   function dismissProgress() {
     if (status.transaction && isOperatorAttention(status.transaction.state)) {

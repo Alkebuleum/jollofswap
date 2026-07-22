@@ -13,6 +13,7 @@ import { wcDisconnect } from '../lib/wcProvider'
 import { clearConnection } from '../lib/nuruConnect'
 import { useWcStore } from '../store/wcStore'
 import { useConnectModalStore } from '../store/connectModalStore'
+import { BUILD_INFO, buildTimeLabel } from '../components/BuildBadge'
 
 const ALK_RPC = (import.meta.env.VITE_ALK_RPC as string) ?? 'https://rpc.alkebuleum.com'
 const AIN_REGISTRY = (import.meta.env.VITE_AIN_REGISTRY as string) ?? ''
@@ -271,6 +272,18 @@ export default function TopBar() {
                 </button>
               </div>
             )}
+            <div
+              title={`Build ${BUILD_INFO.commit} · ${BUILD_INFO.builtAt || 'local dev'}`}
+              style={{
+                margin: '10px 20px 4px',
+                fontSize: 11,
+                fontFamily: 'DM Mono, monospace',
+                color: 'var(--muted-2)',
+                opacity: 0.6,
+              }}
+            >
+              {BUILD_INFO.commit} · {buildTimeLabel()}
+            </div>
           </nav>
         </div>
       )}

@@ -1,13 +1,19 @@
 // src/components/BuildBadge.tsx
 //
-// Tiny build fingerprint pinned to a corner so a stale cached/deployed
-// bundle is obvious at a glance instead of silently showing old behavior.
-// Commit hash + build time are baked in by vite.config.ts's `define`.
+// Build fingerprint so a stale cached/deployed bundle is obvious at a
+// glance instead of silently showing old behavior. Commit hash + build
+// time are baked in by vite.config.ts's `define`.
+//
+// Exposed two ways: a fixed corner tag for normal desktop/mobile web, and
+// buildLabel()/BUILD_INFO for embedding inline (e.g. in TopBar's mobile
+// nav drawer) — `position: fixed` overlays are unreliable inside some
+// in-app/embedded browsers (e.g. Nuru), so anything that must be visible
+// there needs to render in normal document flow instead.
 
-const BUILD_INFO = typeof __BUILD_INFO__ !== 'undefined' ? __BUILD_INFO__ : { commit: 'dev', builtAt: '' }
+export const BUILD_INFO = typeof __BUILD_INFO__ !== 'undefined' ? __BUILD_INFO__ : { commit: 'dev', builtAt: '' }
 
-export default function BuildBadge() {
-  const timeLabel = BUILD_INFO.builtAt
+export function buildTimeLabel() {
+  return BUILD_INFO.builtAt
     ? new Date(BUILD_INFO.builtAt).toLocaleString(undefined, {
         month: 'short',
         day: 'numeric',
@@ -15,7 +21,9 @@ export default function BuildBadge() {
         minute: '2-digit',
       })
     : 'local dev'
+}
 
+export default function BuildBadge() {
   return (
     <div
       title={`Build ${BUILD_INFO.commit} · ${BUILD_INFO.builtAt || 'local dev'}`}
@@ -32,7 +40,7 @@ export default function BuildBadge() {
         userSelect: 'none',
       }}
     >
-      {BUILD_INFO.commit} · {timeLabel}
+      {BUILD_INFO.commit} · {buildTimeLabel()}
     </div>
   )
 }

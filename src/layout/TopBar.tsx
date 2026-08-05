@@ -54,6 +54,13 @@ export default function TopBar() {
     prevAddrRef.current = addr
     async function resolveAIN() {
       if (!walletConnected || !addr) { setAin(null); return }
+      // The injected Nuru browser flow (AppLayout.tsx) resolves and owns AIN
+      // itself via nuru_getIdentity()/nuruIdentityChanged — it connects in two
+      // steps (EOA placeholder, then the real aaWallet address once identity
+      // resolves), and treating that second address change as an account
+      // switch here would immediately null out the AIN AppLayout just set.
+      const injEth = typeof window !== 'undefined' ? (window as any).ethereum : null
+      if (injEth?._isNuruWallet) return
       // Switched to a different wallet/account without a full disconnect —
       // clear the previous wallet's AIN before (re)resolving the new one,
       // so a stale admin/owner identity can't linger onto a different wallet.

@@ -31,7 +31,7 @@ export function useBridgeAccess() {
     disabledReason: !isConnected
       ? null
       : !isAuthorized
-        ? 'This wallet is not authorized for Foundation bridge operations.'
+        ? 'This wallet is not authorized for bridge operations.'
         : null,
   }
 }

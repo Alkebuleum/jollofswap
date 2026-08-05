@@ -37,7 +37,7 @@ export type AmountValidationError =
 export const AMOUNT_VALIDATION_MESSAGES: Record<AmountValidationError, string> = {
   below_minimum: `Minimum bridge amount is ${formatAlkeAmountCommas(ALKE_BRIDGE_MIN_RAW)} ALKE.`,
   above_max_per_tx: `Maximum bridge amount is ${formatAlkeAmountCommas(ALKE_BRIDGE_MAX_PER_TX_RAW)} ALKE per transaction.`,
-  daily_limit_reached: 'The Foundation daily bridge limit has been reached.',
+  daily_limit_reached: 'The daily bridge limit has been reached.',
   insufficient_balance: 'Insufficient ALKE balance.',
 }
 

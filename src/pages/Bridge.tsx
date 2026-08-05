@@ -1,6 +1,6 @@
 // src/pages/Bridge.tsx
 //
-// Foundation ALKE Bridge page. Separate from the swap engine — no swap,
+// Alke Bridge page. Separate from the swap engine — no swap,
 // liquidity, pricing, slippage, or token-routing logic is imported here
 // (ALKEBRIDGE.md's top-level requirement). Not wrapped in <AuthGate> —
 // unauthorized wallets may view the page, only the submit action is gated.
@@ -18,7 +18,7 @@ export default function Bridge() {
     <div className="jlf-app" style={{ display: 'block', maxWidth: 480, margin: '0 auto' }}>
       <div style={{ textAlign: 'center', margin: '18px 0 22px' }}>
         <h1 style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 700, fontSize: 22, color: 'var(--white)', margin: 0 }}>
-          Foundation ALKE Bridge
+          Alke Bridge
         </h1>
         <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 6 }}>
           Transfer ALKE between Alkebuleum and BNB Chain.
@@ -37,7 +37,7 @@ export default function Bridge() {
             fontSize: 13,
           }}
         >
-          This wallet is not authorized for Foundation bridge operations.
+          This wallet is not authorized for bridge operations.
         </div>
       )}
 

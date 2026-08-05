@@ -96,6 +96,26 @@ export function isNonRetryableRegistrationError(code: string | null | undefined)
   return !!code && NON_RETRYABLE_REGISTRATION_ERRORS.has(code)
 }
 
+// HTTP-level retry policy for /v1/alke-bridge/register, per the frontend
+// burn-registration spec: retry network failures and 429/500/502/503/504
+// with backoff; HTTP 400 (malformed request/hash) always stops retrying and
+// surfaces the backend's message. Anything else (including the specific
+// permanent validation codes above, whatever status they arrive with)
+// defaults to non-retryable so the UI doesn't hang forever on a condition
+// retrying can't fix.
+const RETRYABLE_HTTP_STATUSES = new Set([429, 500, 502, 503, 504])
+
+export function isRetryableRegistrationError(e: unknown): boolean {
+  if (e instanceof BridgeRegistrationError) {
+    if (isNonRetryableRegistrationError(e.code)) return false
+    if (e.status === 400) return false
+    if (e.status != null && RETRYABLE_HTTP_STATUSES.has(e.status)) return true
+    return false
+  }
+  // fetch() itself threw (offline, DNS failure, CORS, etc.) — always retryable.
+  return true
+}
+
 export class BridgeRegistrationError extends Error {
   code?: string
   status?: number

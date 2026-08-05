@@ -59,11 +59,13 @@ export default function BridgeProgress({
       : backendState
         ? mapBridgeStateToMessage(direction, backendState)
         : registrationStatus === 'registering'
-          ? 'Verifying BNB burn with the bridge'
+          ? 'Registering your confirmed BNB transaction…'
           : awaitingDetection
             ? 'Waiting for the bridge worker to detect your transaction…'
             : submitPhase === 'awaiting-receipt'
-              ? 'Confirm the transaction in your wallet…'
+              ? direction === 'burn-to-release'
+                ? 'Waiting for wallet confirmation'
+                : 'Confirm the transaction in your wallet…'
               : 'Preparing transaction…'
 
   return (

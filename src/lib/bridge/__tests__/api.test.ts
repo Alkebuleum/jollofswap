@@ -5,6 +5,7 @@ import {
   shouldStopPolling,
   registerAlkeBurn,
   isNonRetryableRegistrationError,
+  isRetryableRegistrationError,
   BridgeRegistrationError,
 } from '../api'
 
@@ -125,5 +126,29 @@ describe('isNonRetryableRegistrationError', () => {
     expect(isNonRetryableRegistrationError('internal_error')).toBe(false)
     expect(isNonRetryableRegistrationError(undefined)).toBe(false)
     expect(isNonRetryableRegistrationError(null)).toBe(false)
+  })
+})
+
+describe('isRetryableRegistrationError', () => {
+  it('retries plain network failures (fetch threw, no response)', () => {
+    expect(isRetryableRegistrationError(new TypeError('Failed to fetch'))).toBe(true)
+  })
+
+  it('retries the spec-listed transient HTTP statuses', () => {
+    for (const status of [429, 500, 502, 503, 504]) {
+      expect(isRetryableRegistrationError(new BridgeRegistrationError('x', 'internal_error', status))).toBe(true)
+    }
+  })
+
+  it('does not retry HTTP 400 — the caller must surface the backend message', () => {
+    expect(isRetryableRegistrationError(new BridgeRegistrationError('Malformed hash.', 'invalid_transaction_hash', 400))).toBe(false)
+  })
+
+  it('does not retry a known permanent validation code regardless of status', () => {
+    expect(isRetryableRegistrationError(new BridgeRegistrationError('No matching burn event.', 'burn_event_not_found', 422))).toBe(false)
+  })
+
+  it('does not retry an unrecognized status/code combination', () => {
+    expect(isRetryableRegistrationError(new BridgeRegistrationError('Nope.', 'weird_new_code', 418))).toBe(false)
   })
 })

@@ -4,19 +4,24 @@
 // restriction only — it does not, and cannot, prevent direct contract calls
 // from a non-allowlisted wallet (ALKEBRIDGE.md §2).
 //
-// Checks both the display address (AA wallet, for Nuru users) and the
-// signing EOA — the allowlist may reasonably contain either, and the two
-// differ for Nuru-connected wallets (see useBridgeSignerAddress.ts).
+// Checks the display address (AA wallet, for Nuru users), the signing EOA,
+// and the wallet's AIN — the allowlist may reasonably contain any of these,
+// and the two addresses differ for Nuru-connected wallets (see
+// useBridgeSignerAddress.ts). AIN support lets the Foundation authorize a
+// Nuru account by its identifier instead of a specific address.
 
 import { useWalletConnection } from '../useWalletConnection'
 import { useBridgeSignerAddress } from './useBridgeSignerAddress'
-import { isAllowedBridgeWallet } from '../../lib/bridge/config'
+import { isAllowedBridgeWallet, isAllowedBridgeAin } from '../../lib/bridge/config'
+import { useWalletMetaStore } from '../../store/walletMetaStore'
 
 export function useBridgeAccess() {
   const { isConnected, address: displayAddress } = useWalletConnection()
   const signerAddress = useBridgeSignerAddress()
+  const { ain } = useWalletMetaStore()
   const isAuthorized =
-    isConnected && (isAllowedBridgeWallet(displayAddress) || isAllowedBridgeWallet(signerAddress))
+    isConnected &&
+    (isAllowedBridgeWallet(displayAddress) || isAllowedBridgeWallet(signerAddress) || isAllowedBridgeAin(ain))
 
   return {
     isConnected,

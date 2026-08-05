@@ -33,27 +33,31 @@ export const ALKE_BRIDGE_DAILY_LIMIT_RAW = BigInt(import.meta.env.VITE_ALKE_BRID
 export const BRIDGE_API = (import.meta.env.VITE_BRIDGE_API as string) || 'https://bridge.jollofswap.com'
 
 // Foundation-only access model — an operational UI restriction, not an
-// on-chain allowlist (ALKEBRIDGE.md §2). Addresses are checksum-normalized
-// so comparisons never depend on case.
-function parseAllowedWallets(raw: string | undefined): string[] {
-  if (!raw) return []
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((addr) => {
-      try {
-        return ethers.getAddress(addr)
-      } catch {
-        return null
-      }
-    })
-    .filter((a): a is string => a !== null)
+// on-chain allowlist (ALKEBRIDGE.md §2). Each comma-separated entry in
+// VITE_ALKE_BRIDGE_ALLOWED_WALLETS is either an EVM address or an AIN
+// (Alkebuleum account identifier, e.g. from a Nuru-connected wallet that
+// has no stable EOA to allowlist) — entries are sorted into the two lists
+// below by whether they parse as a valid address. Addresses are
+// checksum-normalized and AINs are uppercased so comparisons never depend
+// on case.
+function parseAllowedWallets(raw: string | undefined): { addresses: string[]; ains: string[] } {
+  const addresses: string[] = []
+  const ains: string[] = []
+  if (!raw) return { addresses, ains }
+  for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+    try {
+      addresses.push(ethers.getAddress(entry))
+    } catch {
+      ains.push(entry.toUpperCase())
+    }
+  }
+  return { addresses, ains }
 }
 
-export const ALKE_BRIDGE_ALLOWED_WALLETS = parseAllowedWallets(
+const { addresses: ALKE_BRIDGE_ALLOWED_WALLETS, ains: ALKE_BRIDGE_ALLOWED_AINS } = parseAllowedWallets(
   import.meta.env.VITE_ALKE_BRIDGE_ALLOWED_WALLETS as string | undefined
 )
+export { ALKE_BRIDGE_ALLOWED_WALLETS, ALKE_BRIDGE_ALLOWED_AINS }
 
 export function isAllowedBridgeWallet(address: string | null | undefined): boolean {
   if (!address) return false
@@ -63,6 +67,11 @@ export function isAllowedBridgeWallet(address: string | null | undefined): boole
   } catch {
     return false
   }
+}
+
+export function isAllowedBridgeAin(ain: string | null | undefined): boolean {
+  if (!ain) return false
+  return ALKE_BRIDGE_ALLOWED_AINS.includes(String(ain).trim().toUpperCase())
 }
 
 export type BridgeDirection = 'lock-to-mint' | 'burn-to-release'

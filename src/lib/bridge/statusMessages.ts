@@ -20,18 +20,23 @@ const LOCK_TO_MINT_MESSAGES: Record<string, string> = {
   COMPLETED: 'Bridge complete',
 }
 
+// BNB → Alkebuleum copy per the burn-registration frontend spec: states are
+// grouped into fewer, plainer-language messages than the lock-to-mint table.
 const BURN_TO_RELEASE_MESSAGES: Record<string, string> = {
-  BURN_DETECTED: 'Burn detected',
-  BURN_CONFIRMING: 'Waiting for BNB Chain confirmations',
-  BURN_CONFIRMED: 'ALKE burn confirmed',
+  BURN_DETECTED: 'Waiting for BNB confirmations',
+  BURN_CONFIRMING: 'Waiting for BNB confirmations',
+  BURN_CONFIRMED: 'Validating bridge request',
   BURN_VALIDATING: 'Validating bridge request',
-  RELEASE_AUTHORIZATION_PENDING: 'Preparing native ALKE release',
-  RELEASE_READY: 'Release ready',
-  RELEASE_SUBMITTING: 'Submitting release transaction',
-  RELEASE_SUBMITTED: 'Release submitted',
+  RELEASE_AUTHORIZATION_PENDING: 'Preparing ALKE release',
+  RELEASE_READY: 'Preparing ALKE release',
+  RELEASE_SUBMITTING: 'Submitting ALKE release',
+  RELEASE_SUBMITTED: 'Submitting ALKE release',
   RELEASE_CONFIRMING: 'Waiting for Alkebuleum confirmations',
-  RELEASE_CONFIRMED: 'Release confirmed',
-  COMPLETED: 'Bridge complete',
+  RELEASE_CONFIRMED: 'Waiting for Alkebuleum confirmations',
+  COMPLETED: 'Bridge completed',
+  // Not terminal — shouldStopPolling() keeps polling and the burn is never
+  // resubmitted; this just tells the user the retry is automatic.
+  FAILED_RETRYABLE: 'Temporary network issue. Your transaction is safe and will retry automatically.',
 }
 
 export function mapBridgeStateToMessage(direction: 'lock-to-mint' | 'burn-to-release', state: string): string {

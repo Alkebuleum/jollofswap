@@ -12,7 +12,7 @@ import { useBridgeHistory } from '../hooks/bridge/useBridgeHistory'
 
 export default function Bridge() {
   const access = useBridgeAccess()
-  const history = useBridgeHistory(20)
+  const history = useBridgeHistory(50)
 
   return (
     <div className="jlf-app" style={{ display: 'block', maxWidth: 480, margin: '0 auto' }}>

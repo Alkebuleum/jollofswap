@@ -440,6 +440,8 @@ export default function Swap() {
     amountIn: string
     estimatedOut: string
     txHash: string
+    bridgeStatus?: string
+    mintTxHash?: string
   } | null>(null)
   const [preSwapBals, setPreSwapBals] = useState<{ from: string; to: string } | null>(null)
 
@@ -954,14 +956,24 @@ export default function Swap() {
 
 
   async function onDeposit() {
-    if (!address) { setDepositErr('Connect your wallet first so Coinbase can send USDC to your address.'); return }
+    // Coinbase delivers USDC on Polygon, which must ALWAYS land on the signer
+    // EOA (polyAddress) — never the Nuru aaWallet. The aaWallet is a contract
+    // that only exists on Alkebuleum; USDC sent to that address on Polygon
+    // can't be moved, and it isn't where this app reads/bridges USDC from.
+    const depositAddress = polyAddress
+    if (!address || !depositAddress) { setDepositErr('Connect your wallet first so Coinbase can send USDC to your address.'); return }
+    if (aaWallet && depositAddress.toLowerCase() === aaWallet.toLowerCase()) {
+      setDepositErr('Could not find your Key Account address for Polygon. Reconnect your wallet and try again.')
+      return
+    }
     setDepositLoading(true)
     setDepositErr(null)
     try {
       const challengeRes = await fetch('https://auth.alkebuleum.com/v1/siwe/challenge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address, chainId: ALK_CHAIN_ID }),
+        // The signer is what signs this challenge (sessionSignMessage below).
+        body: JSON.stringify({ address: depositAddress, chainId: ALK_CHAIN_ID }),
       })
       const challengeData = await challengeRes.json().catch(() => null)
       if (!challengeData?.challengeId || !challengeData?.message) {
@@ -982,7 +994,7 @@ export default function Swap() {
       const res = await fetch(`${BRIDGE_API}/coinbase/onramp/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${verifyData.token}` },
-        body: JSON.stringify({ walletAddress: address, sourceAmount: '20', returnUrl: 'https://jollofswap.com/swap' }),
+        body: JSON.stringify({ walletAddress: depositAddress, sourceAmount: '20', returnUrl: 'https://jollofswap.com/swap' }),
       })
       const data = await res.json().catch(() => null)
       if (!data?.ok || !data?.onrampUrl) throw new Error(data?.error || 'Could not create Coinbase onramp session.')
@@ -1087,16 +1099,27 @@ export default function Swap() {
           setSwapDialogPhase('minting')
 
           // ── Wait for MAH to arrive on Alkebuleum ─────────────────────
+          // Hand the deposit tx hash to the bridge so it processes it directly
+          // (the backend verifies the Polygon receipt + Deposit event itself —
+          // only the hash is sent). Poll the same endpoint until minted=true;
+          // the MAH balance check below is a fallback if the API is unreachable.
           await (async () => {
             for (let i = 0; i < 150; i++) {
-              await sleep(4000)
+              if (i > 0) await sleep(4000)
               try {
-                const res = await fetch(`${BRIDGE_API}/deposits/${depositHash}?t=${Date.now()}`, { cache: 'no-store' })
+                const res = await fetch(`${BRIDGE_API}/v1/bridge/deposit-tx`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ txHash: depositHash }),
+                  cache: 'no-store',
+                })
                 const data = await res.json().catch(() => null)
-                if (res.ok && data?.ok) {
-                  const deps = Array.isArray(data?.deposits) ? data.deposits : []
-                  const mintHash = data?.mintTxHash || data?.mintedTxHash || deps.find((d: any) => d?.mintTxHash)?.mintTxHash || null
-                  if (mintHash || data?.mintedAt) return
+                if (res.ok && data) {
+                  const dep = data.deposit ?? {}
+                  const mintHash: string | undefined = dep.mintTxHash || dep.mintedTxHash || dep.mahMintTxHash || data.mintTxHash || undefined
+                  const status: string | undefined = dep.minted === true ? 'minted' : (data.status || dep.status || undefined)
+                  setSwapDialogDetails(prev => prev ? { ...prev, bridgeStatus: status, mintTxHash: mintHash ?? prev.mintTxHash } : prev)
+                  if (dep.minted === true) return
                 }
               } catch { /* keep polling */ }
               try {
@@ -1876,7 +1899,7 @@ function SwapProgressModal({
   onClose,
 }: {
   phase: 'waiting' | 'consolidating' | 'bridging' | 'minting' | 'confirming' | 'success' | 'error'
-  details: { fromSym: string; toSym: string; amountIn: string; estimatedOut: string; txHash: string }
+  details: { fromSym: string; toSym: string; amountIn: string; estimatedOut: string; txHash: string; bridgeStatus?: string; mintTxHash?: string }
   preSwapBals: { from: string; to: string } | null
   fromBal: string
   toBal: string
@@ -1887,6 +1910,15 @@ function SwapProgressModal({
   const isError = phase === 'error'
   const isUsdFlow = details.fromSym === 'USD'
   const pastConsolidate = phase === 'bridging' || phase === 'minting' || phase === 'confirming' || isDone
+
+  // Status reported by POST /v1/bridge/deposit-tx while waiting for the MAH mint
+  const mintLabel = details.mintTxHash ? `MAH mint tx ${details.mintTxHash.slice(0, 10)}…${details.mintTxHash.slice(-6)}` : undefined
+  function bridgeStatusText() {
+    if (details.bridgeStatus === 'minted') return mintLabel ?? 'MAH minted.'
+    if (details.bridgeStatus === 'confirmed') return 'Deposit confirmed. Minting is processing.'
+    if (details.bridgeStatus === 'seen') return 'Deposit found. Waiting for confirmations.'
+    return 'Usually takes 1–3 minutes…'
+  }
 
   // Steps for USD smart-route flow (bridge + swap) — signatures required
   const usdSteps: Array<{ label: string; sublabel?: string; done: boolean; active: boolean }> = [
@@ -1904,7 +1936,7 @@ function SwapProgressModal({
     },
     {
       label: 'Funds arriving on Alkebuleum',
-      sublabel: phase === 'minting' ? 'Usually takes 1–3 minutes…' : undefined,
+      sublabel: phase === 'minting' ? bridgeStatusText() : mintLabel,
       done: phase === 'confirming' || isDone,
       active: phase === 'minting',
     },
@@ -1962,7 +1994,10 @@ function SwapProgressModal({
     if (isError) return 'See details below.'
     if (isUsdFlow) {
       if (phase === 'waiting' || phase === 'bridging') return 'amvault will ask you to sign — approve the bridge transaction.'
-      if (phase === 'minting') return 'Waiting for USDC to arrive as MAH (usually 1–3 min)…'
+      if (phase === 'minting') {
+        if (details.bridgeStatus === 'seen' || details.bridgeStatus === 'confirmed') return bridgeStatusText()
+        return 'Waiting for USDC to arrive as MAH (usually 1–3 min)…'
+      }
       if (phase === 'confirming') return 'amvault will open again for the swap — sign in to approve it.'
     }
     return 'Waiting for confirmation…'

@@ -7,8 +7,11 @@ import { execSync } from 'node:child_process'
 // silently showing old behavior.
 function readBuildInfo() {
   try {
-    const commit = execSync('git rev-parse --short HEAD').toString().trim()
-    return { commit, builtAt: new Date().toISOString() }
+    const head = execSync('git rev-parse --short HEAD').toString().trim()
+    // Building before committing src/ bakes in the *previous* commit's hash,
+    // so mark it — otherwise the badge points at code the bundle doesn't match.
+    const dirty = execSync('git status --porcelain -- src').toString().trim() !== ''
+    return { commit: dirty ? `${head}+dirty` : head, builtAt: new Date().toISOString() }
   } catch {
     return { commit: 'unknown', builtAt: new Date().toISOString() }
   }

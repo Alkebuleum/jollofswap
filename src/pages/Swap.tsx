@@ -5,6 +5,8 @@ import { useWalletConnection } from '../hooks/useWalletConnection'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { ArrowDownUp, Info, X, CircleDollarSign } from 'lucide-react'
 import { logAmmEventsFromReceipt } from '../lib/ammEventLogger'
+import { isStaleBuild } from '../lib/staleBuild'
+import { BUILD_INFO } from '../components/BuildBadge'
 import { db } from '../services/firebase'
 import { ensureFirebaseGuest } from '../services/firebaseGuest'
 import { collection, onSnapshot, orderBy, query, where, limit, getDocs } from 'firebase/firestore'
@@ -1071,6 +1073,15 @@ export default function Swap() {
             throw new Error(`Not enough USDC. Need $${usdcToBridge.toFixed(2)}, have $${usdcBalNum.toFixed(2)}.`)
           }
 
+          // Never deposit from an outdated bundle: older builds don't feed the
+          // tx hash to the bridge, so the deposit can sit unminted. Nothing has
+          // been signed yet, so reloading here is safe.
+          if (await isStaleBuild()) {
+            console.warn('[bridge] stale build detected, reloading', BUILD_INFO)
+            window.location.reload()
+            throw new Error('A newer version of JollofSwap is available. Reloading — please try again.')
+          }
+
           setSwapDialogPhase('bridging')
           startFlow(isBridgeOnly ? 'bridge' : 'bridge+swap')
 
@@ -1094,6 +1105,7 @@ export default function Swap() {
           if (bridgeFail) throw new Error(bridgeFail.error || 'Bridge transaction failed')
           const depositHash = bridgeResults[bridgeResults.length - 1]?.txHash
           if (!depositHash) throw new Error('No bridge transaction hash returned')
+          console.info('[bridge] deposit tx hash from wallet', depositHash, BUILD_INFO)
 
           setSwapDialogDetails(prev => prev ? { ...prev, txHash: depositHash } : prev)
           setSwapDialogPhase('minting')
@@ -1104,8 +1116,13 @@ export default function Swap() {
           // only the hash is sent). Poll the same endpoint until minted=true;
           // the MAH balance check below is a fallback if the API is unreachable.
           await (async () => {
+            let lastStatus: string | undefined
             for (let i = 0; i < 150; i++) {
               if (i > 0) await sleep(4000)
+              // First call submits the hash to the bridge queue; repeats are status polls.
+              const verb = i === 0 ? 'submit' : 'poll'
+              if (i === 0) console.info('[bridge] POST /v1/bridge/deposit-tx started', depositHash)
+              if (i === 1) console.info('[bridge] polling started', depositHash)
               try {
                 const res = await fetch(`${BRIDGE_API}/v1/bridge/deposit-tx`, {
                   method: 'POST',
@@ -1114,14 +1131,24 @@ export default function Swap() {
                   cache: 'no-store',
                 })
                 const data = await res.json().catch(() => null)
+                // Log every submit, then every response with a status change or error
+                if (i === 0 || !res.ok) console.info(`[bridge] ${verb} response`, res.status, data)
                 if (res.ok && data) {
                   const dep = data.deposit ?? {}
-                  const mintHash: string | undefined = dep.mintTxHash || dep.mintedTxHash || dep.mahMintTxHash || data.mintTxHash || undefined
-                  const status: string | undefined = dep.minted === true ? 'minted' : (data.status || dep.status || undefined)
+                  const mintHash: string | undefined =
+                    dep.mintTxHash || dep.mintedTxHash || dep.mahMintTxHash ||
+                    data.mintTxHash || data.mintedTxHash || data.mahMintTxHash || undefined
+                  const minted = dep.minted === true || data.status === 'minted'
+                  const status: string | undefined = minted ? 'minted' : (data.status || dep.status || undefined)
+                  if (i > 0 && status !== lastStatus) console.info('[bridge] status', status, data)
+                  lastStatus = status
                   setSwapDialogDetails(prev => prev ? { ...prev, bridgeStatus: status, mintTxHash: mintHash ?? prev.mintTxHash } : prev)
-                  if (dep.minted === true) return
+                  if (minted) {
+                    console.info('[bridge] minted=true detected', { depositHash, mintTxHash: mintHash })
+                    return
+                  }
                 }
-              } catch { /* keep polling */ }
+              } catch (e) { console.warn(`[bridge] ${verb} request failed`, e) }
               try {
                 const raw: bigint = BigInt(await provider.call({
                   to: MAH_TOKEN_ALK,
@@ -1133,7 +1160,11 @@ export default function Swap() {
                 }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
                 const nowMah = Number(ethers.formatUnits(raw, dec))
                 // Compare against aaWallet-only baseline so signer MAH doesn't inflate threshold
-                if (nowMah > mahForUsdNum + 0.1) { mahAfterBridge = nowMah; return }
+                if (nowMah > mahForUsdNum + 0.1) {
+                  console.info('[bridge] MAH balance increase detected (fallback)', { depositHash, nowMah })
+                  mahAfterBridge = nowMah
+                  return
+                }
               } catch { /* keep polling */ }
             }
           })()

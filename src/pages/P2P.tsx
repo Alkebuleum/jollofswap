@@ -3,11 +3,13 @@
 // P2P market on the same MAH escrow Nuru's P2P tab uses: escrow balance,
 // trust scores, the open market, your orders and order details (Phase 1),
 // plus trading (Phase 2): add/reclaim MAH, sell offers, buy requests and
-// every order action. Disputes are still opened/handled in Nuru (Phase 3);
-// push alerts + dispute chat stay in Nuru for good.
+// every order action, and disputes (Phase 3): open one, follow its status
+// and the arbiter's ruling. Push alerts + dispute chat stay in Nuru ("Reply
+// in Nuru" deep-links into the app). /p2p?order=<id> opens that order.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { X, RefreshCw, ShieldCheck, Key, Wallet } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { X, RefreshCw, ShieldCheck, Key, Wallet, Scale, MessageCircle } from 'lucide-react'
 import {
   AmountModal,
   ConfirmModal,
@@ -17,7 +19,14 @@ import {
   TextPromptModal,
 } from '../components/p2p/P2PModals'
 import { availableActions, useP2PActions, type OrderAction } from '../lib/p2p/useP2PActions'
-import { needsSetup, P2P_CONSENT_KEY, type TrustReadiness } from '../lib/p2p/p2pTx'
+import {
+  needsSetup,
+  nuruDisputeChatLink,
+  P2P_CONSENT_KEY,
+  watchDispute,
+  type DisputeCase,
+  type TrustReadiness,
+} from '../lib/p2p/p2pTx'
 import { canTradeP2P } from '../lib/p2p/config'
 import { FLAGS } from '../lib/flags'
 import { useWalletConnection } from '../hooks/useWalletConnection'
@@ -27,6 +36,7 @@ import { useConnectModalStore } from '../store/connectModalStore'
 import {
   fetchEscrowBalances,
   fetchOpenOrders,
+  fetchOrderById,
   fetchTrustScores,
   fetchUserOrders,
   fiatHuman,
@@ -126,6 +136,22 @@ export default function P2P() {
     return () => window.clearInterval(id)
   }, [load])
 
+  // /p2p?order=<id> (Nuru notification taps) — open that order once.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepOrder = searchParams.get('order')
+  useEffect(() => {
+    if (!deepOrder || !/^\d+$/.test(deepOrder)) return
+    let alive = true
+    fetchOrderById(BigInt(deepOrder)).then((o) => {
+      if (!alive) return
+      if (o) setSelected(o)
+      else setError(`Order #${deepOrder} was not found.`)
+      const next = new URLSearchParams(searchParams); next.delete('order')
+      setSearchParams(next, { replace: true })
+    })
+    return () => { alive = false }
+  }, [deepOrder]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const visibleMine = useMemo(
     () => (mine ?? []).filter((o) => showClosed || !isClosed(o)),
     [mine, showClosed],
@@ -146,6 +172,7 @@ export default function P2P() {
     | { kind: 'setup'; trust: TrustReadiness; then: () => void }
     | { kind: 'accept'; order: P2POrder }
     | { kind: 'markPaid'; order: P2POrder }
+    | { kind: 'dispute'; order: P2POrder }
     | { kind: 'confirm'; order: P2POrder; action: 'commit' | 'release' | 'cancel' | 'expire' }
   const [dialog, setDialog] = useState<Dialog | null>(null)
   // Trading rollout gate (FLAGS.P2P_TRADING_OPEN / VITE_P2P_TRADING_AINS).
@@ -211,9 +238,8 @@ export default function P2P() {
       })
       case 'markPaid': return setDialog({ kind: 'markPaid', order: o })
       case 'release': case 'cancel': case 'expire': return setDialog({ kind: 'confirm', order: o, action: a })
-      case 'dispute': case 'viewDispute':
-        setError('Disputes are handled in the Nuru app for now — open P2P there to open or follow a dispute.')
-        setSelected(null)
+      case 'dispute': return setDialog({ kind: 'dispute', order: o })
+      case 'viewDispute': window.location.href = nuruDisputeChatLink(o.id.toString()); return
     }
   }
 
@@ -384,6 +410,16 @@ export default function P2P() {
           label="Payment receipt / transaction reference" placeholder="e.g. MoMo ref TXN123456, sent 14:05"
           required={false} confirmLabel="Mark as paid" busy={actions.busy} onClose={closeDialog}
           onSubmit={async (v) => { if (await actions.markPaid(dialog.order, v)) closeDialog() }}
+        />
+      )}
+      {dialog?.kind === 'dispute' && (
+        <TextPromptModal
+          title="Open dispute"
+          intro={<>Order #{dialog.order.id.toString()} · {fmtNum(mahHuman(dialog.order.mahAmount))} MAH. Only open a dispute if the other party has not fulfilled their obligation — an arbiter reviews the evidence and issues a binding on-chain ruling. Unfounded disputes may affect your trust score.</>}
+          label="Evidence / reason"
+          placeholder="e.g. Payment was sent 6 hours ago (ref: TXN123) but the seller has not released MAH"
+          required confirmLabel="Open dispute" busy={actions.busy} onClose={closeDialog}
+          onSubmit={async (v) => { if (await actions.openDispute(dialog.order, v)) closeDialog() }}
         />
       )}
       {dialog?.kind === 'confirm' && (() => {
@@ -573,6 +609,8 @@ function OrderDetail({ order: o, myAddresses, canTrade, connected, busy, onActio
           </>
         )}
 
+        {iAmParty && <DisputeSection order={o} />}
+
         {acts.length > 0 && (
           <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
             {acts.map((a) => (
@@ -593,6 +631,64 @@ function OrderDetail({ order: o, myAddresses, canTrade, connected, busy, onActio
               : 'Connect your wallet to trade on this order.'}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+/** Dispute status, the arbiter's ruling and the thread (read-only) for a
+ *  party to the order. Replying happens in Nuru's dispute chat. */
+function DisputeSection({ order: o }: { order: P2POrder }) {
+  const [d, setD] = useState<DisputeCase | null | undefined>(undefined)
+  useEffect(() => watchDispute(o.id.toString(), setD), [o.id])
+  if (d === undefined && o.status !== 4) return null
+  if (d === null && o.status !== 4) return null
+
+  const resolved = d?.status === 'resolved'
+  const ruling = d?.messages.slice().reverse().find((m) => m.isRuling)
+  const outcome = d?.resolutionOutcome ?? ruling?.rulingOutcome
+  const roleLabel = (m: { senderRole: string }) =>
+    m.senderRole === 'arbitrator' ? 'Arbiter' : m.senderRole === 'buyer' ? 'Buyer' : m.senderRole === 'seller' ? 'Seller' : m.senderRole
+
+  return (
+    <div style={{ marginTop: 18, padding: 14, borderRadius: 14, background: resolved ? 'rgba(54,211,153,.05)' : 'rgba(255,90,60,.05)', border: `1px solid ${resolved ? 'rgba(54,211,153,.2)' : 'rgba(255,90,60,.2)'}` }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8, fontSize: 13, fontWeight: 600, color: resolved ? 'var(--green)' : 'var(--red)' }}>
+        <Scale size={14} /> {resolved ? 'Dispute resolved' : 'Dispute open — awaiting arbiter'}
+      </div>
+
+      {resolved && outcome && (
+        <div style={{ fontSize: 13, color: 'var(--white)', lineHeight: 1.5, marginBottom: 10 }}>
+          Ruling: {outcome === 'buyer' ? 'MAH released to the buyer.' : 'MAH refunded to the seller.'}
+          {ruling?.note ? <div style={{ marginTop: 4, color: 'var(--muted)' }}>{ruling.note}</div> : null}
+        </div>
+      )}
+
+      {d === undefined && <div className="jlf-spin" />}
+      {d === null && (
+        <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>No dispute thread found for this order yet.</div>
+      )}
+      {d && d.messages.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto', marginBottom: 10 }}>
+          {d.messages.map((m, i) => (
+            <div key={i} style={{ padding: '8px 10px', borderRadius: 10, background: 'var(--leg)', border: '1px solid var(--line-2)' }}>
+              <div style={{ fontSize: 11, color: 'var(--muted-2)', marginBottom: 3 }}>
+                {roleLabel(m)} · {m.senderAin} · {m.sentAt ? new Date(m.sentAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--white)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{m.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <a
+        href={nuruDisputeChatLink(o.id.toString())}
+        className="jlf-chip"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none', fontWeight: 600 }}
+      >
+        <MessageCircle size={13} /> Reply in Nuru
+      </a>
+      <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted-2)' }}>
+        Messages with the arbiter happen in the Nuru app's dispute chat.
       </div>
     </div>
   )

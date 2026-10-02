@@ -59,6 +59,14 @@ describe('encoding (must match Nuru + on-chain data)', () => {
     expect(exp[1]).toBe(ethers.keccak256(ethers.toUtf8Bytes('expired:7')))
   })
 
+  it('encodes openDispute with the evidence hash (Nuru default "dispute")', () => {
+    const d = ESCROW.decodeFunctionData('openDispute', tx.openDispute(9n, 'seller never released').data)
+    expect(d[0]).toBe(9n)
+    expect(d[1]).toBe(ethers.keccak256(ethers.toUtf8Bytes('seller never released')))
+    const empty = ESCROW.decodeFunctionData('openDispute', tx.openDispute(9n, '').data)
+    expect(empty[1]).toBe(ethers.keccak256(ethers.toUtf8Bytes('dispute')))
+  })
+
   it('bounds the escrow delegate like Nuru (10,000 MAH, domain 0, ~1 year)', () => {
     const d = new ethers.Interface(CommitmentAbi as any).decodeFunctionData('authorizeCommitmentDelegate', tx.authorizeDelegate(AIN).data)
     expect(d[1]).toBe(P2P_ESCROW)

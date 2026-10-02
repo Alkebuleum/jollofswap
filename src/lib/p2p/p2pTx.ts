@@ -6,7 +6,7 @@
 // transactions and metadata. Orchestration lives in useP2PActions.ts.
 
 import { ethers } from 'ethers'
-import { addDoc, collection, doc, serverTimestamp, setDoc } from 'firebase/firestore'
+import { addDoc, collection, doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from '../../services/firebase'
 import { ensureFirebaseGuest } from '../../services/firebaseGuest'
 import { ALK_CHAIN_ID, ALK_RPC } from '../jollofAmm'
@@ -19,6 +19,7 @@ import { ainToBytes32 } from './ain'
 import {
   CREDITWORTHINESS_REGISTRY,
   P2P_COMMITMENT_REGISTRY,
+  P2P_DISPUTES_COLLECTION,
   P2P_ESCROW,
   P2P_EVENTS_COLLECTION,
   P2P_META_COLLECTION,
@@ -143,6 +144,10 @@ export const tx = {
   release: (orderId: bigint, receiptNote: string): Tx => ({
     to: P2P_ESCROW, value: 0n, gas: GAS.release,
     data: ESCROW.encodeFunctionData('releaseToBuyer', [orderId, keccakText(receiptNote || 'released')]),
+  }),
+  openDispute: (orderId: bigint, evidence: string): Tx => ({
+    to: P2P_ESCROW, value: 0n, gas: GAS.orderAction,
+    data: ESCROW.encodeFunctionData('openDispute', [orderId, keccakText(evidence || 'dispute')]),
   }),
   cancel: (orderId: bigint): Tx => ({
     to: P2P_ESCROW, value: 0n, gas: GAS.orderAction,
@@ -283,6 +288,78 @@ export async function updateReceiptNote(orderId: string, receiptNote: string) {
   await ensureFirebaseGuest()
   await setDoc(doc(db, P2P_META_COLLECTION, orderId), { receiptNote }, { merge: true })
 }
+
+// ── Disputes (p2p_disputes/{orderId} — same doc shape as Nuru) ──────────────
+
+export type DisputeMessage = {
+  senderAin: string
+  senderRole: 'buyer' | 'seller' | 'arbitrator' | string
+  text: string
+  sentAt: number
+  isRuling?: boolean
+  rulingOutcome?: 'buyer' | 'seller'
+  note?: string
+}
+
+export type DisputeCase = {
+  orderId: string
+  buyerAin: string
+  sellerAin: string
+  openedByAin: string
+  status: 'open' | 'resolved' | string
+  resolutionOutcome?: 'buyer' | 'seller'
+  resolvedAt?: number
+  messages: DisputeMessage[]
+}
+
+/** Creates the dispute thread, seeded with the evidence as the first
+ *  message — what Nuru's arbiters and dispute chat read. */
+export async function openDisputeCase(c: {
+  orderId: string; buyerAin: string; sellerAin: string; openedByAin: string; evidence: string
+}): Promise<void> {
+  await ensureFirebaseGuest()
+  const role = c.buyerAin.toUpperCase() === c.openedByAin.toUpperCase() ? 'buyer' : 'seller'
+  await setDoc(doc(db, P2P_DISPUTES_COLLECTION, c.orderId), {
+    orderId: c.orderId,
+    buyerAin: c.buyerAin.toUpperCase(),
+    sellerAin: c.sellerAin.toUpperCase(),
+    openedByAin: c.openedByAin.toUpperCase(),
+    status: 'open',
+    openedAt: serverTimestamp(),
+    messages: [{ senderAin: c.openedByAin.toUpperCase(), senderRole: role, text: c.evidence, sentAt: Date.now() }],
+  })
+}
+
+/** Live view of a dispute thread (null when there is none). */
+export function watchDispute(orderId: string, cb: (d: DisputeCase | null) => void): () => void {
+  let unsub: (() => void) | null = null
+  let stopped = false
+  ensureFirebaseGuest().then(() => {
+    if (stopped) return
+    unsub = onSnapshot(doc(db, P2P_DISPUTES_COLLECTION, orderId), (snap) => {
+      if (!snap.exists()) return cb(null)
+      const d = snap.data() as Record<string, any>
+      const ts = d.resolvedAt
+      cb({
+        orderId,
+        buyerAin: String(d.buyerAin ?? ''),
+        sellerAin: String(d.sellerAin ?? ''),
+        openedByAin: String(d.openedByAin ?? ''),
+        status: String(d.status ?? 'open'),
+        resolutionOutcome: d.resolutionOutcome || undefined,
+        resolvedAt: ts?.toMillis ? ts.toMillis() : undefined,
+        messages: Array.isArray(d.messages)
+          ? [...d.messages].sort((a: any, b: any) => (a?.sentAt ?? 0) - (b?.sentAt ?? 0))
+          : [],
+      })
+    }, () => cb(null))
+  }).catch(() => cb(null))
+  return () => { stopped = true; unsub?.() }
+}
+
+/** Opens the dispute chat in the Nuru app (handled by Nuru's deep links;
+ *  inside Nuru's browser the link is passed straight to the app). */
+export const nuruDisputeChatLink = (orderId: string) => `nuru://p2p/chat?order=${encodeURIComponent(orderId)}`
 
 /**
  * Alerts the counterparty. Nuru's NotificationService watches `p2p_events`

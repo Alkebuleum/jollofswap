@@ -28,6 +28,7 @@ import {
   quoteBuyerBond,
   saveOrderMeta,
   sendP2PEvent,
+  openDisputeCase,
   tx,
   updateAcceptanceMeta,
   updateReceiptNote,
@@ -299,6 +300,22 @@ export function useP2PActions(ctx: P2PContext, onChanged: () => void) {
     return 'MAH released to the buyer ✅'
   })
 
+  /** Either party, on a committed/paid trade: on-chain dispute + the
+   *  Firestore thread Nuru's arbiters work from (same as Nuru). */
+  const openDispute = (o: P2POrder, evidence: string) => run(async () => {
+    const myAin = requireAin()
+    if (!evidence.trim()) throw new Error('Describe the problem — the arbiter decides from this.')
+    await sendOne(tx.openDispute(o.id, evidence), 'Open dispute')
+    const sell = o.orderType === 0
+    const buyerAin = (sell ? o.takerAin : o.makerAin) ?? ''
+    const sellerAin = (sell ? o.makerAin : o.takerAin) ?? ''
+    const warn = await saveMeta(() => openDisputeCase({
+      orderId: o.id.toString(), buyerAin, sellerAin, openedByAin: myAin, evidence: evidence.trim(),
+    }), 'the dispute thread')
+    notify(o, 'disputed')
+    return 'Dispute opened — an arbiter will review your evidence ✅' + warn
+  })
+
   const cancel = (o: P2POrder) => run(async () => {
     await sendOne(tx.cancel(o.id), 'Cancel order')
     notify(o, 'cancel')
@@ -316,7 +333,7 @@ export function useP2PActions(ctx: P2PContext, onChanged: () => void) {
     clearMessages: () => { setInfo(null); setError(null) },
     readiness, setup, depositSources,
     deposit, withdraw, createSellOffer, createBuyRequest,
-    commit, accept, markPaid, release, cancel, expire,
+    commit, accept, markPaid, release, openDispute, cancel, expire,
   }
 }
 

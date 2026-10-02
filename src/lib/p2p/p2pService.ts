@@ -192,6 +192,16 @@ async function fetchOrdersByIds(ids: bigint[]): Promise<P2POrder[]> {
   return raws.map(parseOrder)
 }
 
+/** One order (with metadata), or null if it doesn't exist. */
+export async function fetchOrderById(id: bigint): Promise<P2POrder | null> {
+  try {
+    const [o] = await withMetas(await fetchOrdersByIds([id]))
+    return o && o.id === id ? o : null
+  } catch {
+    return null
+  }
+}
+
 /** Orders where any of [addresses] is maker/taker (both the Nuru Account
  *  and the key, so orders made via either route show). Newest first. */
 export async function fetchUserOrders(addresses: string[]): Promise<P2POrder[]> {

@@ -5,8 +5,6 @@ import { AuthProvider } from 'amvault-connect'
 import './index.css'
 import AppLayout from './layout/AppLayout'
 import Home from './pages/Home'
-import P2PBuy from './pages/P2PBuy'
-import P2PSell from './pages/P2PSell'
 import P2P from './pages/P2P'
 import Swap from './pages/Swap'
 import Bridge from './pages/Bridge'
@@ -32,8 +30,9 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Home /> },
       { path: 'get-alk', element: <Navigate to="/swap?from=USDC&to=MAH" replace /> },
-      { path: 'p2p/buy', element: <AuthGate><P2PBuy /></AuthGate> },
-      { path: 'p2p/sell', element: <AuthGate><P2PSell /></AuthGate> },
+      // Old mock P2P pages (fake merchants) → the real escrow market.
+      { path: 'p2p/buy', element: <Navigate to="/p2p" replace /> },
+      { path: 'p2p/sell', element: <Navigate to="/p2p" replace /> },
       // Browsing works signed-out; account sections prompt to connect.
       { path: 'p2p', element: <P2P /> },
       { path: 'swap', element: <Swap /> },

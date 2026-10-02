@@ -1,0 +1,1203 @@
+[
+ {
+  "type": "function",
+  "name": "DEFAULT_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "P2P_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "ARBITER_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "PAUSER_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "MAX_BPS",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "mahToken",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "bondToken",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "ainRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "commitmentRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "riskPolicyManager",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "feeRecipient",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "platformFeeBps",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "nextOrderId",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "mahBalanceOf",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "mahLockedOf",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "availableMAH",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "user",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "depositMAH",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "withdrawMAH",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "createSellOffer",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "sellerAIN",
+    "type": "bytes32"
+   },
+   {
+    "name": "mahAmount",
+    "type": "uint256"
+   },
+   {
+    "name": "fiatAmountMinor",
+    "type": "uint256"
+   },
+   {
+    "name": "fiatCurrency",
+    "type": "bytes3"
+   },
+   {
+    "name": "rail",
+    "type": "uint8"
+   },
+   {
+    "name": "paymentDetailsHash",
+    "type": "bytes32"
+   },
+   {
+    "name": "referenceHash",
+    "type": "bytes32"
+   },
+   {
+    "name": "paymentWindow",
+    "type": "uint64"
+   },
+   {
+    "name": "disputeWindow",
+    "type": "uint64"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "createBuyRequest",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "buyerAIN",
+    "type": "bytes32"
+   },
+   {
+    "name": "mahAmount",
+    "type": "uint256"
+   },
+   {
+    "name": "fiatAmountMinor",
+    "type": "uint256"
+   },
+   {
+    "name": "fiatCurrency",
+    "type": "bytes3"
+   },
+   {
+    "name": "rail",
+    "type": "uint8"
+   },
+   {
+    "name": "referenceHash",
+    "type": "bytes32"
+   },
+   {
+    "name": "paymentWindow",
+    "type": "uint64"
+   },
+   {
+    "name": "disputeWindow",
+    "type": "uint64"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "commitToSellOffer",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   },
+   {
+    "name": "buyerAIN",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "acceptBuyRequest",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   },
+   {
+    "name": "sellerAIN",
+    "type": "bytes32"
+   },
+   {
+    "name": "paymentDetailsHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "markPaid",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   },
+   {
+    "name": "receiptHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "releaseToBuyer",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   },
+   {
+    "name": "outcomeHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "openDispute",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   },
+   {
+    "name": "evidenceHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "arbiterReleaseToBuyer",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   },
+   {
+    "name": "sellerSeverity",
+    "type": "uint8"
+   },
+   {
+    "name": "outcomeHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "arbiterRefundSeller",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   },
+   {
+    "name": "buyerSeverity",
+    "type": "uint8"
+   },
+   {
+    "name": "outcomeHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "expireUnpaid",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   },
+   {
+    "name": "outcomeHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "cancelOpenOrder",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "getOrder",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "tuple",
+    "components": [
+     {
+      "name": "id",
+      "type": "uint256"
+     },
+     {
+      "name": "orderType",
+      "type": "uint8"
+     },
+     {
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "name": "maker",
+      "type": "address"
+     },
+     {
+      "name": "makerAIN",
+      "type": "bytes32"
+     },
+     {
+      "name": "taker",
+      "type": "address"
+     },
+     {
+      "name": "takerAIN",
+      "type": "bytes32"
+     },
+     {
+      "name": "mahAmount",
+      "type": "uint256"
+     },
+     {
+      "name": "fiatAmountMinor",
+      "type": "uint256"
+     },
+     {
+      "name": "fiatCurrency",
+      "type": "bytes3"
+     },
+     {
+      "name": "rail",
+      "type": "uint8"
+     },
+     {
+      "name": "referenceHash",
+      "type": "bytes32"
+     },
+     {
+      "name": "paymentDetailsHash",
+      "type": "bytes32"
+     },
+     {
+      "name": "receiptHash",
+      "type": "bytes32"
+     },
+     {
+      "name": "createdAt",
+      "type": "uint64"
+     },
+     {
+      "name": "payDeadline",
+      "type": "uint64"
+     },
+     {
+      "name": "disputeDeadline",
+      "type": "uint64"
+     },
+     {
+      "name": "paymentWindow",
+      "type": "uint64"
+     },
+     {
+      "name": "disputeWindow",
+      "type": "uint64"
+     },
+     {
+      "name": "buyerCommitmentId",
+      "type": "uint256"
+     },
+     {
+      "name": "sellerCommitmentId",
+      "type": "uint256"
+     },
+     {
+      "name": "buyerBond",
+      "type": "uint256"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getUserOrderIds",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "user",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256[]"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getAINOrderIds",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256[]"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "buyerOf",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "buyer",
+    "type": "address"
+   },
+   {
+    "name": "buyerAIN",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "sellerOf",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "seller",
+    "type": "address"
+   },
+   {
+    "name": "sellerAIN",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "quoteBuyerBond",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "buyerAIN",
+    "type": "bytes32"
+   },
+   {
+    "name": "rail",
+    "type": "uint8"
+   },
+   {
+    "name": "mahAmount",
+    "type": "uint256"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "setRegistries",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "_ainRegistry",
+    "type": "address"
+   },
+   {
+    "name": "_commitmentRegistry",
+    "type": "address"
+   },
+   {
+    "name": "_riskPolicyManager",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setPlatformFee",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "_platformFeeBps",
+    "type": "uint16"
+   },
+   {
+    "name": "_feeRecipient",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "hasRole",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getRoleAdmin",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "grantRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "revokeRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "renounceRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "callerConfirmation",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "paused",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "pause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "unpause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ },
+ {
+  "type": "event",
+  "name": "MAHDeposited",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "user",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "amount",
+    "type": "uint256",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "MAHWithdrawn",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "user",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "amount",
+    "type": "uint256",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "SellOfferCreated",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "sellerAIN",
+    "type": "bytes32",
+    "indexed": true
+   },
+   {
+    "name": "seller",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "mahAmount",
+    "type": "uint256",
+    "indexed": false
+   },
+   {
+    "name": "fiatAmountMinor",
+    "type": "uint256",
+    "indexed": false
+   },
+   {
+    "name": "fiatCurrency",
+    "type": "bytes3",
+    "indexed": false
+   },
+   {
+    "name": "rail",
+    "type": "uint8",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "BuyRequestCreated",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "buyerAIN",
+    "type": "bytes32",
+    "indexed": true
+   },
+   {
+    "name": "buyer",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "mahAmount",
+    "type": "uint256",
+    "indexed": false
+   },
+   {
+    "name": "fiatAmountMinor",
+    "type": "uint256",
+    "indexed": false
+   },
+   {
+    "name": "fiatCurrency",
+    "type": "bytes3",
+    "indexed": false
+   },
+   {
+    "name": "rail",
+    "type": "uint8",
+    "indexed": false
+   },
+   {
+    "name": "buyerBond",
+    "type": "uint256",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "SellOfferCommitted",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "buyerAIN",
+    "type": "bytes32",
+    "indexed": true
+   },
+   {
+    "name": "buyer",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "buyerBond",
+    "type": "uint256",
+    "indexed": false
+   },
+   {
+    "name": "payDeadline",
+    "type": "uint64",
+    "indexed": false
+   },
+   {
+    "name": "disputeDeadline",
+    "type": "uint64",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "BuyRequestAccepted",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "sellerAIN",
+    "type": "bytes32",
+    "indexed": true
+   },
+   {
+    "name": "seller",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "payDeadline",
+    "type": "uint64",
+    "indexed": false
+   },
+   {
+    "name": "disputeDeadline",
+    "type": "uint64",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "PaymentMarked",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "buyerAIN",
+    "type": "bytes32",
+    "indexed": true
+   },
+   {
+    "name": "buyer",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "receiptHash",
+    "type": "bytes32",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "OrderReleased",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "seller",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "buyer",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "mahAmount",
+    "type": "uint256",
+    "indexed": false
+   },
+   {
+    "name": "feeAmount",
+    "type": "uint256",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "OrderDisputed",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "opener",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "evidenceHash",
+    "type": "bytes32",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "OrderRefunded",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "seller",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "buyer",
+    "type": "address",
+    "indexed": true
+   },
+   {
+    "name": "buyerBondSlashed",
+    "type": "uint256",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "OrderCancelled",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "OrderExpired",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "orderId",
+    "type": "uint256",
+    "indexed": true
+   },
+   {
+    "name": "buyerBondSlashed",
+    "type": "uint256",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "PlatformFeeUpdated",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "platformFeeBps",
+    "type": "uint16",
+    "indexed": false
+   },
+   {
+    "name": "feeRecipient",
+    "type": "address",
+    "indexed": false
+   }
+  ]
+ },
+ {
+  "type": "event",
+  "name": "RegistriesUpdated",
+  "anonymous": false,
+  "inputs": [
+   {
+    "name": "ainRegistry",
+    "type": "address",
+    "indexed": false
+   },
+   {
+    "name": "commitmentRegistry",
+    "type": "address",
+    "indexed": false
+   },
+   {
+    "name": "riskPolicyManager",
+    "type": "address",
+    "indexed": false
+   }
+  ]
+ }
+]

@@ -1,0 +1,852 @@
+[
+ {
+  "type": "function",
+  "name": "REGISTRY_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "COMMITMENT_SOURCE_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "ARBITER_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "PAUSER_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "COMMITMENT_AUTHORIZATION_TYPEHASH",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "DELEGATION_AUTHORIZATION_TYPEHASH",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "nextCommitmentId",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "nonces",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "strictPropagation",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "ainRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "reputationRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "creditworthinessRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "commitmentDelegations",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   },
+   {
+    "name": "",
+    "type": "address"
+   },
+   {
+    "name": "",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "active",
+    "type": "bool"
+   },
+   {
+    "name": "maxValueAtRisk",
+    "type": "uint256"
+   },
+   {
+    "name": "expiresAt",
+    "type": "uint64"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "authorizeCommitmentDelegate",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "delegate",
+    "type": "address"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "maxValueAtRisk",
+    "type": "uint256"
+   },
+   {
+    "name": "expiresAt",
+    "type": "uint64"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "authorizeCommitmentDelegateWithSignature",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "delegate",
+    "type": "address"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "maxValueAtRisk",
+    "type": "uint256"
+   },
+   {
+    "name": "expiresAt",
+    "type": "uint64"
+   },
+   {
+    "name": "signatureDeadline",
+    "type": "uint64"
+   },
+   {
+    "name": "signature",
+    "type": "bytes"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "revokeCommitmentDelegate",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "delegate",
+    "type": "address"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "createCommitmentByUser",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "reporter",
+    "type": "address"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "valueAtRisk",
+    "type": "uint256"
+   },
+   {
+    "name": "referenceHash",
+    "type": "bytes32"
+   },
+   {
+    "name": "deadline",
+    "type": "uint64"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "createCommitmentByDelegate",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "valueAtRisk",
+    "type": "uint256"
+   },
+   {
+    "name": "referenceHash",
+    "type": "bytes32"
+   },
+   {
+    "name": "deadline",
+    "type": "uint64"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "createCommitmentWithSignature",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "reporter",
+    "type": "address"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "valueAtRisk",
+    "type": "uint256"
+   },
+   {
+    "name": "referenceHash",
+    "type": "bytes32"
+   },
+   {
+    "name": "deadline",
+    "type": "uint64"
+   },
+   {
+    "name": "signatureDeadline",
+    "type": "uint64"
+   },
+   {
+    "name": "signature",
+    "type": "bytes"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "markFulfilled",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   },
+   {
+    "name": "outcomeHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "markFailed",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   },
+   {
+    "name": "severity",
+    "type": "uint8"
+   },
+   {
+    "name": "outcomeHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "markDisputed",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   },
+   {
+    "name": "disputeHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "markExcused",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   },
+   {
+    "name": "reasonHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "cancelCommitment",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   },
+   {
+    "name": "reasonHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "expireCommitment",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   },
+   {
+    "name": "severity",
+    "type": "uint8"
+   },
+   {
+    "name": "outcomeHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setStrictPropagation",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "strict",
+    "type": "bool"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setAINRegistry",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "newRegistry",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setReputationRegistry",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "newRegistry",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setCreditworthinessRegistry",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "newRegistry",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "getCommitment",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "commitmentId",
+    "type": "uint256"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "tuple",
+    "components": [
+     {
+      "name": "id",
+      "type": "uint256"
+     },
+     {
+      "name": "ain",
+      "type": "bytes32"
+     },
+     {
+      "name": "committedBy",
+      "type": "address"
+     },
+     {
+      "name": "creator",
+      "type": "address"
+     },
+     {
+      "name": "reporter",
+      "type": "address"
+     },
+     {
+      "name": "domain",
+      "type": "uint8"
+     },
+     {
+      "name": "valueAtRisk",
+      "type": "uint256"
+     },
+     {
+      "name": "referenceHash",
+      "type": "bytes32"
+     },
+     {
+      "name": "outcomeHash",
+      "type": "bytes32"
+     },
+     {
+      "name": "createdAt",
+      "type": "uint64"
+     },
+     {
+      "name": "deadline",
+      "type": "uint64"
+     },
+     {
+      "name": "disputedAt",
+      "type": "uint64"
+     },
+     {
+      "name": "resolvedAt",
+      "type": "uint64"
+     },
+     {
+      "name": "status",
+      "type": "uint8"
+     },
+     {
+      "name": "severity",
+      "type": "uint8"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getCommitmentIds",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256[]"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getCreatorCommitmentIds",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "creator",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256[]"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getReporterCommitmentIds",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "reporter",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256[]"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "commitmentCount",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "ainController",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "isDelegateAuthorized",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "delegate",
+    "type": "address"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "valueAtRisk",
+    "type": "uint256"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "DEFAULT_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "hasRole",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getRoleAdmin",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "grantRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "revokeRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "renounceRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "callerConfirmation",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "paused",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "pause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "unpause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ }
+]

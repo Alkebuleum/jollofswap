@@ -454,6 +454,7 @@ main { padding-bottom: env(safe-area-inset-bottom, 0px); }
   animation: jlf-spin .7s linear infinite;
 }
 @keyframes jlf-spin { to { transform: rotate(360deg); } }
+.jlf-spin-icon { animation: jlf-spin .8s linear infinite; }
 
 /* ── Dark form input (used in modals / token page) ─────────────────────────── */
 .jlf-dark-input {

@@ -1,0 +1,433 @@
+[
+ {
+  "type": "function",
+  "name": "CREDIT_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "ainRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "registerMyCreditProfile",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "COMMITMENT_REGISTRY_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "PAUSER_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "MAX_SCORE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "NEUTRAL_SCORE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "registerIdentity",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "recordFinancialOutcome",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "status",
+    "type": "uint8"
+   },
+   {
+    "name": "severity",
+    "type": "uint8"
+   },
+   {
+    "name": "valueAtRisk",
+    "type": "uint256"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setCreditRestricted",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "restricted",
+    "type": "bool"
+   },
+   {
+    "name": "reasonHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setCreditProfile",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "creditScore",
+    "type": "uint16"
+   },
+   {
+    "name": "totalObligations",
+    "type": "uint256"
+   },
+   {
+    "name": "fulfilledObligations",
+    "type": "uint256"
+   },
+   {
+    "name": "failedObligations",
+    "type": "uint256"
+   },
+   {
+    "name": "totalValueFulfilled",
+    "type": "uint256"
+   },
+   {
+    "name": "totalValueFailed",
+    "type": "uint256"
+   },
+   {
+    "name": "creditRestricted",
+    "type": "bool"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "getCreditProfile",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "tuple",
+    "components": [
+     {
+      "name": "creditScore",
+      "type": "uint16"
+     },
+     {
+      "name": "creditTier",
+      "type": "uint8"
+     },
+     {
+      "name": "totalObligations",
+      "type": "uint256"
+     },
+     {
+      "name": "fulfilledObligations",
+      "type": "uint256"
+     },
+     {
+      "name": "failedObligations",
+      "type": "uint256"
+     },
+     {
+      "name": "totalValueFulfilled",
+      "type": "uint256"
+     },
+     {
+      "name": "totalValueFailed",
+      "type": "uint256"
+     },
+     {
+      "name": "lastUpdatedAt",
+      "type": "uint64"
+     },
+     {
+      "name": "creditRestricted",
+      "type": "bool"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getCreditScore",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getCreditTier",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "isCreditRestricted",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "hasRecord",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "DEFAULT_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "hasRole",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getRoleAdmin",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "grantRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "revokeRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "renounceRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "callerConfirmation",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "paused",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "pause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "unpause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ }
+]

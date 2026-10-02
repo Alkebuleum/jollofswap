@@ -1,0 +1,470 @@
+[
+ {
+  "type": "function",
+  "name": "POLICY_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "PAUSER_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "MAX_BPS",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "reputationRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "creditworthinessRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "domainPolicies",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "baseMaxValue",
+    "type": "uint256"
+   },
+   {
+    "name": "baseBondBps",
+    "type": "uint16"
+   },
+   {
+    "name": "minimumTrustTier",
+    "type": "uint8"
+   },
+   {
+    "name": "minimumCreditTier",
+    "type": "uint8"
+   },
+   {
+    "name": "requiresCreditCheck",
+    "type": "bool"
+   },
+   {
+    "name": "enabled",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "railPolicies",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "maxValue",
+    "type": "uint256"
+   },
+   {
+    "name": "bondPremiumBps",
+    "type": "uint16"
+   },
+   {
+    "name": "enabled",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "canAccessDomain",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getMaxCommitmentValue",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getRequiredBondBps",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getRiskTier",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getMaxP2PTradeAmount",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "rail",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint256"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getRequiredP2PBondBps",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "rail",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "setDomainPolicy",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "policy",
+    "type": "tuple",
+    "components": [
+     {
+      "name": "baseMaxValue",
+      "type": "uint256"
+     },
+     {
+      "name": "baseBondBps",
+      "type": "uint16"
+     },
+     {
+      "name": "minimumTrustTier",
+      "type": "uint8"
+     },
+     {
+      "name": "minimumCreditTier",
+      "type": "uint8"
+     },
+     {
+      "name": "requiresCreditCheck",
+      "type": "bool"
+     },
+     {
+      "name": "enabled",
+      "type": "bool"
+     }
+    ]
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setRailPolicy",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "rail",
+    "type": "uint8"
+   },
+   {
+    "name": "policy",
+    "type": "tuple",
+    "components": [
+     {
+      "name": "maxValue",
+      "type": "uint256"
+     },
+     {
+      "name": "bondPremiumBps",
+      "type": "uint16"
+     },
+     {
+      "name": "enabled",
+      "type": "bool"
+     }
+    ]
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setReputationRegistry",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "newRegistry",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setCreditworthinessRegistry",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "newRegistry",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "DEFAULT_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "hasRole",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getRoleAdmin",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "grantRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "revokeRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "renounceRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "callerConfirmation",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "paused",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "pause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "unpause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ }
+]

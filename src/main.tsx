@@ -7,6 +7,7 @@ import AppLayout from './layout/AppLayout'
 import Home from './pages/Home'
 import P2PBuy from './pages/P2PBuy'
 import P2PSell from './pages/P2PSell'
+import P2P from './pages/P2P'
 import Swap from './pages/Swap'
 import Bridge from './pages/Bridge'
 import Liquidity from './pages/Liquidity'
@@ -33,6 +34,8 @@ const router = createBrowserRouter([
       { path: 'get-alk', element: <Navigate to="/swap?from=USDC&to=MAH" replace /> },
       { path: 'p2p/buy', element: <AuthGate><P2PBuy /></AuthGate> },
       { path: 'p2p/sell', element: <AuthGate><P2PSell /></AuthGate> },
+      // Browsing works signed-out; account sections prompt to connect.
+      { path: 'p2p', element: <P2P /> },
       { path: 'swap', element: <Swap /> },
       { path: 'bridge', element: <Bridge /> },
       { path: 'liquidity', element: <Liquidity /> },

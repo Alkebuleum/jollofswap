@@ -1,0 +1,454 @@
+[
+ {
+  "type": "function",
+  "name": "REGISTRY_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "ainRegistry",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "address"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "registerMyIdentity",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "COMMITMENT_REGISTRY_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "PAUSER_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "MAX_SCORE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "NEUTRAL_SCORE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "registerIdentity",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "recordCommitmentOutcome",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   },
+   {
+    "name": "status",
+    "type": "uint8"
+   },
+   {
+    "name": "severity",
+    "type": "uint8"
+   },
+   {
+    "name": "valueAtRisk",
+    "type": "uint256"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setSuspended",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "suspended",
+    "type": "bool"
+   },
+   {
+    "name": "reasonHash",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "setProfile",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "globalScore",
+    "type": "uint16"
+   },
+   {
+    "name": "financialScore",
+    "type": "uint16"
+   },
+   {
+    "name": "governanceScore",
+    "type": "uint16"
+   },
+   {
+    "name": "serviceScore",
+    "type": "uint16"
+   },
+   {
+    "name": "identityScore",
+    "type": "uint16"
+   },
+   {
+    "name": "disputeScore",
+    "type": "uint16"
+   },
+   {
+    "name": "suspended",
+    "type": "bool"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "getProfile",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "tuple",
+    "components": [
+     {
+      "name": "globalScore",
+      "type": "uint16"
+     },
+     {
+      "name": "financialScore",
+      "type": "uint16"
+     },
+     {
+      "name": "governanceScore",
+      "type": "uint16"
+     },
+     {
+      "name": "serviceScore",
+      "type": "uint16"
+     },
+     {
+      "name": "identityScore",
+      "type": "uint16"
+     },
+     {
+      "name": "disputeScore",
+      "type": "uint16"
+     },
+     {
+      "name": "trustTier",
+      "type": "uint8"
+     },
+     {
+      "name": "suspended",
+      "type": "bool"
+     },
+     {
+      "name": "updatedAt",
+      "type": "uint64"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getGlobalScore",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getDomainScore",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   },
+   {
+    "name": "domain",
+    "type": "uint8"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint16"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getTrustTier",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "uint8"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "isSuspended",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "isRegistered",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "ain",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "DEFAULT_ADMIN_ROLE",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "hasRole",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "getRoleAdmin",
+  "stateMutability": "view",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   }
+  ],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bytes32"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "grantRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "revokeRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "account",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "renounceRole",
+  "stateMutability": "nonpayable",
+  "inputs": [
+   {
+    "name": "role",
+    "type": "bytes32"
+   },
+   {
+    "name": "callerConfirmation",
+    "type": "address"
+   }
+  ],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "paused",
+  "stateMutability": "view",
+  "inputs": [],
+  "outputs": [
+   {
+    "name": "",
+    "type": "bool"
+   }
+  ]
+ },
+ {
+  "type": "function",
+  "name": "pause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ },
+ {
+  "type": "function",
+  "name": "unpause",
+  "stateMutability": "nonpayable",
+  "inputs": [],
+  "outputs": []
+ }
+]

@@ -15,7 +15,6 @@ import ReputationAbi from './abis/ReputationRegistry.json'
 import CreditAbi from './abis/CreditworthinessRegistry.json'
 import { ainToBytes32, bytes32ToAin, canonicalAin } from './ain'
 import {
-  AMID_REGISTRY,
   CREDITWORTHINESS_REGISTRY,
   MAH_DECIMALS,
   OrderStatus,
@@ -89,12 +88,14 @@ function provider(): ethers.JsonRpcProvider {
 const escrow = () => new ethers.Contract(P2P_ESCROW, EscrowAbi as any, provider())
 const reputation = () => new ethers.Contract(REPUTATION_REGISTRY, ReputationAbi as any, provider())
 const credit = () => new ethers.Contract(CREDITWORTHINESS_REGISTRY, CreditAbi as any, provider())
-const registry = () =>
-  new ethers.Contract(
-    AMID_REGISTRY,
-    ['function controllerOf(bytes32 ain) view returns (address)'],
-    provider(),
-  )
+// The AIN registry the ESCROW checks "P2P: not AIN controller" against —
+// read from the escrow so we always agree with it (see config.ts note).
+let _escrowRegistry: Promise<string> | null = null
+async function registry() {
+  if (!_escrowRegistry) _escrowRegistry = escrow().ainRegistry().then(String)
+  const addr = await _escrowRegistry.catch((e) => { _escrowRegistry = null; throw e })
+  return new ethers.Contract(addr, ['function controllerOf(bytes32 ain) view returns (address)'], provider())
+}
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
@@ -150,8 +151,9 @@ function parseOrder(raw: any): P2POrder {
 
 /**
  * The escrow indexes balances/orders by the AIN **controller**, which can be
- * the Nuru Account (AA wallet) or the key — same rule as Nuru's
- * _loadP2PSource. Falls back to the Nuru Account when the controller can't
+ * the Nuru Account (AA wallet) or the key — per the escrow's own
+ * ainRegistry() (unlike Nuru's _loadP2PSource, which reads registry v1.4.0
+ * and can disagree with the escrow). Falls back to the Nuru Account when the controller can't
  * be read or matches neither.
  */
 export async function resolveParticipant(args: {
@@ -164,7 +166,7 @@ export async function resolveParticipant(args: {
   const ain = canonicalAin(args.ain)
   if (!ain) return { address: account, holder: account === key && key ? 'key' : 'unknown', controller: null }
   try {
-    const controller = String(await registry().controllerOf(ainToBytes32(ain))).toLowerCase()
+    const controller = String(await (await registry()).controllerOf(ainToBytes32(ain))).toLowerCase()
     if (key && controller === key.toLowerCase()) return { address: key, holder: 'key', controller }
     if (account && controller === account.toLowerCase()) return { address: account, holder: 'account', controller }
     return { address: account, holder: 'unknown', controller }

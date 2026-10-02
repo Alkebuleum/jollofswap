@@ -1,12 +1,25 @@
 // src/pages/P2P.tsx
 //
-// P2P market — Phase 1 (read-only). The same MAH escrow Nuru's P2P tab uses:
-// escrow balance, trust scores, the open market and your orders, with an
-// order detail view. Trading actions land in Phase 2; until then trades are
-// placed in the Nuru app. Push alerts + dispute chat stay in Nuru.
+// P2P market on the same MAH escrow Nuru's P2P tab uses: escrow balance,
+// trust scores, the open market, your orders and order details (Phase 1),
+// plus trading (Phase 2): add/reclaim MAH, sell offers, buy requests and
+// every order action. Disputes are still opened/handled in Nuru (Phase 3);
+// push alerts + dispute chat stay in Nuru for good.
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { X, RefreshCw, ShieldCheck, Key, Wallet } from 'lucide-react'
+import {
+  AmountModal,
+  ConfirmModal,
+  ConsentModal,
+  OrderFormModal,
+  SetupModal,
+  TextPromptModal,
+} from '../components/p2p/P2PModals'
+import { availableActions, useP2PActions, type OrderAction } from '../lib/p2p/useP2PActions'
+import { needsSetup, P2P_CONSENT_KEY, type TrustReadiness } from '../lib/p2p/p2pTx'
+import { canTradeP2P } from '../lib/p2p/config'
+import { FLAGS } from '../lib/flags'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useWcStore } from '../store/wcStore'
@@ -119,25 +132,126 @@ export default function P2P() {
   )
   const activeCount = (mine ?? []).filter((o) => !isClosed(o)).length
 
+  // ── Trading (Phase 2) ──────────────────────────────────────────────────────
+  const acct = aaWallet && signer && aaWallet.toLowerCase() !== signer.toLowerCase() ? aaWallet : null
+  const actions = useP2PActions(
+    { ain, handle: primaryHandle, participant, aaWallet: acct, myAddresses },
+    () => { setSelected(null); window.setTimeout(() => load(true), 3000) },
+  )
+  type Dialog =
+    | { kind: 'deposit'; max: number; subtitle: string }
+    | { kind: 'withdraw' }
+    | { kind: 'order'; side: 'sell' | 'buy' }
+    | { kind: 'consent'; then: () => void }
+    | { kind: 'setup'; trust: TrustReadiness; then: () => void }
+    | { kind: 'accept'; order: P2POrder }
+    | { kind: 'markPaid'; order: P2POrder }
+    | { kind: 'confirm'; order: P2POrder; action: 'commit' | 'release' | 'cancel' | 'expire' }
+  const [dialog, setDialog] = useState<Dialog | null>(null)
+  // Trading rollout gate (FLAGS.P2P_TRADING_OPEN / VITE_P2P_TRADING_AINS).
+  const tradingEnabled = isConnected && canTradeP2P(ain, FLAGS.P2P_TRADING_OPEN)
+  const closeDialog = () => setDialog(null)
+  const available = balance?.available ?? 0
+
+  const consentGiven = () => {
+    try { return localStorage.getItem(P2P_CONSENT_KEY) === '1' } catch { return false }
+  }
+
+  /** Nuru's _resolveP2PSource: consent → controller → one-time setup → hard blocks. */
+  const ensureReady = async (then: () => void) => {
+    actions.clearMessages()
+    if (!ain) { setError('No identity (AIN) found for this connection.'); return }
+    if (!consentGiven()) {
+      setDialog({ kind: 'consent', then: () => ensureReady(then) })
+      return
+    }
+    if (!participant || participant.holder === 'unknown') {
+      setError("Neither your key nor your Nuru Account is this identity's AIN controller, so it can't trade in the escrow.")
+      return
+    }
+    let t: TrustReadiness
+    try { t = await actions.readiness() } catch (e: any) { setError(e?.message || 'Could not check P2P setup.'); return }
+    if (needsSetup(t)) { setDialog({ kind: 'setup', trust: t, then: () => ensureReady(then) }); return }
+    if (t.reputationSuspended) { setError('Your account has been suspended. Contact support.'); return }
+    if (t.creditRestricted) { setError('Your account has credit restrictions. Contact support.'); return }
+    if (!t.domainAllowed) { setError('P2P is not available for this identity yet.'); return }
+    then()
+  }
+
+  const openDeposit = async () => {
+    actions.clearMessages()
+    try {
+      const { holderBal, accountBal, fromAccount } = await actions.depositSources()
+      const h = mahHuman(holderBal), a = mahHuman(accountBal)
+      setDialog({
+        kind: 'deposit',
+        max: h + (fromAccount ? a : 0),
+        subtitle: fromAccount && a > 0
+          ? `Wallet: ${fmtNum(h)} on your key + ${fmtNum(a)} on your Nuru Account`
+          : `Available in your wallet: ${fmtNum(h)} MAH`,
+      })
+    } catch (e: any) { setError(e?.message || 'Could not read your MAH balance.') }
+  }
+
+  const startSell = () => ensureReady(() => {
+    if (available <= 0) { setError('Add MAH to your P2P balance first — it is locked when a buyer commits.'); openDeposit(); return }
+    setDialog({ kind: 'order', side: 'sell' })
+  })
+  const startBuy = () => ensureReady(() => setDialog({ kind: 'order', side: 'buy' }))
+
+  const onOrderAction = (o: P2POrder, a: OrderAction) => {
+    switch (a) {
+      case 'commit': return ensureReady(() => setDialog({ kind: 'confirm', order: o, action: 'commit' }))
+      case 'accept': return ensureReady(() => {
+        if (available < mahHuman(o.mahAmount)) {
+          setError(`You need at least ${fmtNum(mahHuman(o.mahAmount))} MAH in your P2P balance to accept this.`)
+          openDeposit(); return
+        }
+        setDialog({ kind: 'accept', order: o })
+      })
+      case 'markPaid': return setDialog({ kind: 'markPaid', order: o })
+      case 'release': case 'cancel': case 'expire': return setDialog({ kind: 'confirm', order: o, action: a })
+      case 'dispute': case 'viewDispute':
+        setError('Disputes are handled in the Nuru app for now — open P2P there to open or follow a dispute.')
+        setSelected(null)
+    }
+  }
+
   return (
     <div style={{ maxWidth: 780, margin: '0 auto', padding: '24px 16px 64px' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
         <h1 style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 700, fontSize: 26, margin: 0, color: 'var(--white)' }}>P2P</h1>
-        <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 999, color: 'var(--gold)', background: 'rgba(247,181,59,.1)', border: '1px solid rgba(247,181,59,.25)' }}>
-          Preview · read-only
-        </span>
+        {tradingEnabled && (
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+            <button className="jlf-chip" disabled={actions.busy} onClick={startBuy} style={{ fontWeight: 600 }}>Buy MAH</button>
+            <button className="jlf-chip" disabled={actions.busy} onClick={startSell} style={{ fontWeight: 600 }}>Sell MAH</button>
+          </div>
+        )}
         <button
           onClick={() => load()}
           title="Refresh"
-          style={{ marginLeft: 'auto', background: 'none', border: '1px solid var(--line)', borderRadius: 10, padding: 7, color: 'var(--muted)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
+          style={{ marginLeft: tradingEnabled ? 0 : 'auto', background: 'none', border: '1px solid var(--line)', borderRadius: 10, padding: 7, color: 'var(--muted)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
         >
           <RefreshCw size={14} className={loading ? 'jlf-spin-icon' : undefined} />
         </button>
       </div>
       <p style={{ margin: '0 0 20px', fontSize: 13.5, color: 'var(--muted)', lineHeight: 1.5 }}>
-        Trade MAH for local currency with escrow protection. Trading on JollofSwap is coming soon — for now, place and manage trades in the Nuru app.
+        {tradingEnabled
+          ? 'Trade MAH for local currency or crypto with escrow protection. Alerts and dispute messages arrive in the Nuru app.'
+          : 'Trade MAH for local currency or crypto with escrow protection. Trading here is rolling out — for now, place and manage trades in the Nuru app.'}
       </p>
+
+      {(actions.info || actions.error) && (
+        <div style={{
+          marginBottom: 14, padding: '10px 14px', borderRadius: 14, fontSize: 13, whiteSpace: 'pre-wrap',
+          color: actions.error ? 'var(--red)' : 'var(--green)',
+          background: actions.error ? 'rgba(255,90,60,.08)' : 'rgba(54,211,153,.06)',
+          border: `1px solid ${actions.error ? 'rgba(255,90,60,.22)' : 'rgba(54,211,153,.18)'}`,
+        }}>
+          {actions.error || actions.info}
+        </div>
+      )}
 
       {error && (
         <div style={{ marginBottom: 14, padding: '10px 14px', borderRadius: 14, fontSize: 13, color: 'var(--red)', background: 'rgba(255,90,60,.08)', border: '1px solid rgba(255,90,60,.22)' }}>
@@ -164,6 +278,10 @@ export default function P2P() {
                 <span style={{ fontFamily: '"DM Mono"' }}>{short(participant.address)}</span>
               </div>
             )}
+            {tradingEnabled && <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+              <button className="jlf-chip" disabled={actions.busy || !participant || participant.holder === 'unknown'} onClick={openDeposit}>Add MAH</button>
+              <button className="jlf-chip" disabled={actions.busy || available <= 0} onClick={() => { actions.clearMessages(); setDialog({ kind: 'withdraw' }) }}>Reclaim</button>
+            </div>}
           </div>
 
           <div className="jlf-panel" style={{ padding: 20 }}>
@@ -205,9 +323,86 @@ export default function P2P() {
         <OrderDetail
           order={selected}
           myAddresses={myAddresses}
+          canTrade={tradingEnabled}
+          connected={isConnected}
+          busy={actions.busy}
+          onAction={(a) => onOrderAction(selected, a)}
           onClose={() => setSelected(null)}
         />
       )}
+
+      {dialog?.kind === 'deposit' && (
+        <AmountModal
+          title="Add MAH to P2P" subtitle={dialog.subtitle} max={dialog.max} confirmLabel="Add MAH" busy={actions.busy}
+          onClose={closeDialog} onSubmit={async (n) => { if (await actions.deposit(n)) closeDialog() }}
+        />
+      )}
+      {dialog?.kind === 'withdraw' && (
+        <AmountModal
+          title="Reclaim MAH" subtitle={`Available to reclaim: ${fmtNum(available)} MAH`} max={available} confirmLabel="Reclaim" busy={actions.busy}
+          onClose={closeDialog} onSubmit={async (n) => { if (await actions.withdraw(n)) closeDialog() }}
+        />
+      )}
+      {dialog?.kind === 'order' && (
+        <OrderFormModal
+          side={dialog.side} maxMah={dialog.side === 'sell' ? available : null}
+          defaultCryptoAddress={signer ?? address ?? ''} busy={actions.busy} onClose={closeDialog}
+          onSubmit={async (f) => {
+            const ok = dialog.side === 'sell' ? await actions.createSellOffer(f) : await actions.createBuyRequest(f)
+            if (ok) { closeDialog(); setTab('mine') }
+          }}
+        />
+      )}
+      {dialog?.kind === 'consent' && (
+        <ConsentModal
+          ain={ain ?? ''} onClose={closeDialog}
+          onAccept={() => {
+            try { localStorage.setItem(P2P_CONSENT_KEY, '1') } catch { /* private mode — asks again */ }
+            const next = dialog.then; closeDialog(); next()
+          }}
+        />
+      )}
+      {dialog?.kind === 'setup' && (
+        <SetupModal
+          trust={dialog.trust} busy={actions.busy} onClose={closeDialog}
+          onRun={async () => { const next = dialog.then; if (await actions.setup(dialog.trust)) { closeDialog(); next() } }}
+        />
+      )}
+      {dialog?.kind === 'accept' && (
+        <TextPromptModal
+          title="Accept & sell"
+          intro={<>You lock <b>{fmtNum(mahHuman(dialog.order.mahAmount))} MAH</b> from your P2P balance for this buyer, who pays you <b>{fmtNum(fiatHuman(dialog.order.fiatAmountMinor))} {dialog.order.fiatCurrency}</b> via {railLabel(dialog.order.rail)}. Release the MAH only after you have the payment.</>}
+          label="Your payment details (shown to this buyer only)" placeholder="e.g. MTN MoMo 024 000 0000 — Ama Mensah"
+          required confirmLabel="Accept & sell" busy={actions.busy} onClose={closeDialog}
+          onSubmit={async (v) => { if (await actions.accept(dialog.order, v)) closeDialog() }}
+        />
+      )}
+      {dialog?.kind === 'markPaid' && (
+        <TextPromptModal
+          title="I've sent payment"
+          intro={<>Only mark this paid after you actually sent <b>{fmtNum(fiatHuman(dialog.order.fiatAmountMinor))} {dialog.order.fiatCurrency}</b>. The seller then checks and releases the MAH to you.</>}
+          label="Payment receipt / transaction reference" placeholder="e.g. MoMo ref TXN123456, sent 14:05"
+          required={false} confirmLabel="Mark as paid" busy={actions.busy} onClose={closeDialog}
+          onSubmit={async (v) => { if (await actions.markPaid(dialog.order, v)) closeDialog() }}
+        />
+      )}
+      {dialog?.kind === 'confirm' && (() => {
+        const o = dialog.order
+        const mah = `${fmtNum(mahHuman(o.mahAmount))} MAH`
+        const pay = `${fmtNum(fiatHuman(o.fiatAmountMinor))} ${o.fiatCurrency}`
+        const cfg = {
+          commit: { title: 'Accept & buy', body: <>You commit to buy <b>{mah}</b> for <b>{pay}</b> via {railLabel(o.rail)}. The seller's MAH is locked for you; pay them within the payment window, then mark it paid. Not paying lowers your trust score.</>, label: 'Accept & buy', danger: false, run: () => actions.commit(o) },
+          release: { title: 'Release MAH', body: <>Release <b>{mah}</b> to the buyer. Only do this once you have received <b>{pay}</b> — it can't be undone.{o.meta?.receiptNote ? <><br /><br />Buyer's receipt: <i>{o.meta.receiptNote}</i></> : null}</>, label: 'Release MAH', danger: false, run: () => actions.release(o) },
+          cancel: { title: 'Cancel order', body: <>Cancel order #{o.id.toString()}? Nobody has taken it yet, so nothing is lost.</>, label: 'Cancel order', danger: true, run: () => actions.cancel(o) },
+          expire: { title: 'Close overdue order', body: <>The buyer didn't pay before the deadline. Closing returns your locked <b>{mah}</b> to your P2P balance.</>, label: 'Close order', danger: true, run: () => actions.expire(o) },
+        }[dialog.action]
+        return (
+          <ConfirmModal
+            title={cfg.title} body={cfg.body} confirmLabel={cfg.label} danger={cfg.danger} busy={actions.busy}
+            onClose={closeDialog} onConfirm={async () => { if (await cfg.run()) closeDialog() }}
+          />
+        )
+      })()}
     </div>
   )
 }
@@ -311,7 +506,11 @@ function OrderList({ orders, loading, empty, myAddresses, onOpen }: {
   )
 }
 
-function OrderDetail({ order: o, myAddresses, onClose }: { order: P2POrder; myAddresses: string[]; onClose: () => void }) {
+function OrderDetail({ order: o, myAddresses, canTrade, connected, busy, onAction, onClose }: {
+  order: P2POrder; myAddresses: string[]; canTrade: boolean; connected: boolean; busy: boolean
+  onAction: (a: OrderAction) => void; onClose: () => void
+}) {
+  const acts = canTrade ? availableActions(o, myAddresses) : []
   const mine = new Set(myAddresses.map((a) => a.toLowerCase()))
   const iAmParty = mine.has(o.maker.toLowerCase()) || mine.has(o.taker.toLowerCase())
   const hasTaker = !/^0x0{40}$/i.test(o.taker)
@@ -374,9 +573,26 @@ function OrderDetail({ order: o, myAddresses, onClose }: { order: P2POrder; myAd
           </>
         )}
 
-        <div style={{ marginTop: 16, padding: '10px 12px', borderRadius: 12, background: 'var(--leg)', border: '1px solid var(--line-2)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
-          To trade on this order, open P2P in the Nuru app. Alerts and dispute messages also arrive in Nuru.
-        </div>
+        {acts.length > 0 && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
+            {acts.map((a) => (
+              <button
+                key={a.action}
+                className="jlf-action"
+                disabled={busy}
+                onClick={() => onAction(a.action)}
+                style={a.secondary ? { flex: 1, background: 'transparent', color: 'var(--muted)', border: '1px solid var(--line)' } : { flex: 1 }}
+              >{a.label}</button>
+            ))}
+          </div>
+        )}
+        {!canTrade && (
+          <div style={{ marginTop: 16, padding: '10px 12px', borderRadius: 12, background: 'var(--leg)', border: '1px solid var(--line-2)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+            {connected
+              ? 'Trading here is rolling out — to trade on this order, open P2P in the Nuru app.'
+              : 'Connect your wallet to trade on this order.'}
+          </div>
+        )}
       </div>
     </div>
   )

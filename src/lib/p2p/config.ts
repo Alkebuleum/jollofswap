@@ -10,11 +10,21 @@ export const P2P_RISK_POLICY_MANAGER = '0x611CBc50491902935e0eBA015EEf70980A81E9
 export const REPUTATION_REGISTRY = '0x3828e5673bF9e2F2849839831E3CA60b74C8EB7A'
 export const CREDITWORTHINESS_REGISTRY = '0x553910349349DA55D23B85d369fE12fBC98Be87b'
 
-/** AmID registry (v1.4.0) — `controllerOf(bytes32 ain)` decides which address
- *  (Nuru Account or key) trades for an AIN in the escrow. */
-export const AMID_REGISTRY = '0xEd2926C4FC57c1539ec74e7bcB0d0AA68B961558'
+// NOTE: which address may trade for an AIN is decided by the escrow's OWN
+// `ainRegistry()` (registry V4 0x464a…882b80 at time of writing) — read it
+// from the escrow, don't hardcode. Registry v1.4.0 (0xEd29…1558, Nuru's
+// AppConfig.registryAddress) can name a different controller, and trading
+// as that address reverts with "P2P: not AIN controller".
 
 export const MAH_DECIMALS = 6
+
+// Trading rollout allowlist (comma-separated AINs) — see FLAGS.P2P_TRADING_OPEN.
+const TRADING_AINS = String(import.meta.env.VITE_P2P_TRADING_AINS ?? '')
+  .split(',').map((s) => s.trim().toUpperCase()).filter(Boolean)
+
+export function canTradeP2P(ain: string | null | undefined, open: boolean): boolean {
+  return open || (!!ain && TRADING_AINS.includes(ain.trim().toUpperCase()))
+}
 
 // Firestore (shared with Nuru — project amid-7592b)
 export const P2P_META_COLLECTION = 'p2p_order_meta'

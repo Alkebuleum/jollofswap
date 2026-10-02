@@ -193,7 +193,9 @@ export default function Liquidity() {
   // batches key→account transfers into an account-wrapped batch, untested.
   const hasDistinctSignerForTopup = !!aaWallet && !!address && aaWallet.toLowerCase() !== address.toLowerCase()
   // Which holder's LP position the page shows / removes from.
-  const [lpView, setLpView] = useState<'account' | 'key'>('account')
+  // Key Account first / default; falls back to the account view when there's
+  // no distinct key (see viewingKey).
+  const [lpView, setLpView] = useState<'account' | 'key'>('key')
   const viewingKey = lpView === 'key' && hasDistinctSigner
   const positionOwner = viewingKey ? signerKey : accountAddress
   const { sessionSendTransactions } = useSignerSession()
@@ -837,7 +839,7 @@ export default function Liquidity() {
             </div>
 
             {hasDistinctSigner && (
-              <LpHolderToggle value={lpView} onChange={(v) => { setLpView(v); setErr(null); setInfo(null) }} signerKey={signerKey} />
+              <LpHolderToggle value={lpView} onChange={(v) => { setLpView(v); setErr(null); setInfo(null) }} signerKey={signerKey} ain={ain} />
             )}
 
             {/* Underlying assets */}
@@ -1121,7 +1123,7 @@ export default function Liquidity() {
               {/* Current position */}
               <div style={{ margin: '0 0 12px', padding: '14px 16px', background: 'var(--leg)', border: '1px solid var(--line-2)', borderRadius: 18 }}>
                 {hasDistinctSigner && (
-                  <LpHolderToggle value={lpView} onChange={(v) => { setLpView(v); setErr(null); setInfo(null) }} signerKey={signerKey} />
+                  <LpHolderToggle value={lpView} onChange={(v) => { setLpView(v); setErr(null); setInfo(null) }} signerKey={signerKey} ain={ain} />
                 )}
                 <div style={{ fontSize: 11.5, color: 'var(--muted-2)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, marginBottom: 10 }}>
                   {viewingKey ? 'Key Account position' : hasDistinctSigner ? 'Nuru Account position' : 'Your position'}
@@ -1407,12 +1409,13 @@ function AddLiqProgressModal({
   )
 }
 
-// Nuru Account (AA wallet) vs Key Account (EOA) — which holder's LP position
+// Key Account (EOA) vs Nuru Account (AA wallet) — which holder's LP position
 // the Pool page shows and removes from. Shown only when they're different.
-function LpHolderToggle({ value, onChange, signerKey }: {
+function LpHolderToggle({ value, onChange, signerKey, ain }: {
   value: 'account' | 'key'
   onChange: (v: 'account' | 'key') => void
   signerKey: string
+  ain?: string | null
 }) {
   const seg = (v: 'account' | 'key', label: string, sub?: string) => {
     const active = value === v
@@ -1435,8 +1438,8 @@ function LpHolderToggle({ value, onChange, signerKey }: {
   }
   return (
     <div style={{ display: 'flex', gap: 4, padding: 3, marginBottom: 16, borderRadius: 13, background: 'var(--leg)', border: '1px solid var(--line-2)' }}>
-      {seg('account', 'Nuru Account')}
       {seg('key', 'Key Account', signerKey ? `${signerKey.slice(0, 6)}…${signerKey.slice(-4)}` : undefined)}
+      {seg('account', 'Nuru Account', ain || undefined)}
     </div>
   )
 }

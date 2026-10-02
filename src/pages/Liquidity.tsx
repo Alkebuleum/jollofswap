@@ -33,6 +33,7 @@ import { ArrowDownUp } from 'lucide-react'
 import { readHideBalances, readSlippageBps, writeSlippageBps, PREF } from '../lib/prefs'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useConnectModalStore } from '../store/connectModalStore'
+import { useWcStore } from '../store/wcStore'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
@@ -181,7 +182,20 @@ export default function Liquidity() {
   // If user has an AA wallet, LP tokens go there and positions are read from there.
   // If no AA wallet (plain EOA), use the signer address directly.
   const accountAddress = (aaWallet && ethers.isAddress(aaWallet)) ? aaWallet : (address ?? '')
-  const hasDistinctSigner = !!aaWallet && !!address && aaWallet.toLowerCase() !== address.toLowerCase()
+  // The KEY (EOA) that signs. For Nuru connections `address` is the Nuru
+  // Account (AA wallet), not the key — the key is useWcStore.signer. Reading
+  // `address` as the key meant a key's own LP position was never shown.
+  const wcSigner = useWcStore((s) => s.signer)
+  const signerKey = (wcSigner && ethers.isAddress(wcSigner)) ? wcSigner : (address ?? '')
+  const hasDistinctSigner = !!aaWallet && !!signerKey && aaWallet.toLowerCase() !== signerKey.toLowerCase()
+  // Add-liquidity auto top-up keeps its original detection (address vs
+  // aaWallet) — switching it to signerKey would enable a top-up path that
+  // batches key→account transfers into an account-wrapped batch, untested.
+  const hasDistinctSignerForTopup = !!aaWallet && !!address && aaWallet.toLowerCase() !== address.toLowerCase()
+  // Which holder's LP position the page shows / removes from.
+  const [lpView, setLpView] = useState<'account' | 'key'>('account')
+  const viewingKey = lpView === 'key' && hasDistinctSigner
+  const positionOwner = viewingKey ? signerKey : accountAddress
   const { sessionSendTransactions } = useSignerSession()
   const openConnectModal = useConnectModalStore(s => s.openModal)
 
@@ -383,16 +397,17 @@ export default function Liquidity() {
     setPairAddr('—'); setLpBalUi('—'); setLpShareUi('—'); setLpBalRaw(0n); setLpSupplyRaw(0n)
     setReserveAUi('—'); setReserveBUi('—'); setUnderAUi('—'); setUnderBUi('—')
     setRawReserveA(0n); setRawReserveB(0n); setPoolHasReserves(false); setRatioAtoB('—'); setRatioBtoA('—')
-    if (!accountAddress || tokenA === tokenB) return
+    if (!positionOwner || tokenA === tokenB) return
     const A = getToken(tokenA); const B = getToken(tokenB)
     if (!A || !B) return
     // Reset signer reconcile state
     setSignerLpBalRaw(0n); setSignerUnderAUi('—'); setSignerUnderBUi('—')
     try {
-      // Read account position (AA wallet if available, else signer)
+      // Position of the holder being viewed (Nuru Account or key); while
+      // viewing the account, also the key's — for the reconcile banner.
       const [pos, signerPos] = await Promise.all([
-        getLpPosition({ owner: accountAddress, tokenA: A, tokenB: B }),
-        hasDistinctSigner && address ? getLpPosition({ owner: address, tokenA: A, tokenB: B }) : Promise.resolve(null),
+        getLpPosition({ owner: positionOwner, tokenA: A, tokenB: B }),
+        hasDistinctSigner && !viewingKey ? getLpPosition({ owner: signerKey, tokenA: A, tokenB: B }) : Promise.resolve(null),
       ])
       if (!isLive()) return
       const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
@@ -465,7 +480,7 @@ export default function Liquidity() {
     const id = window.setInterval(() => { if (!alive) return; refreshPositionAndReserves().catch(() => {}) }, 12000)
     return () => { alive = false; window.clearInterval(id) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountAddress, address, tokenA, tokenB])
+  }, [positionOwner, signerKey, accountAddress, address, tokenA, tokenB])
 
 
   // Fees / P&L
@@ -550,7 +565,7 @@ export default function Liquidity() {
 
       // ── Auto-deposit: top up AA wallet from signer if needed ──────────────
       // Only when AA wallet and signer are distinct addresses.
-      if (hasDistinctSigner && accountAddress && address) {
+      if (hasDistinctSignerForTopup && accountAddress && address) {
         for (const [tok, needed, dec] of [[A, usedA, decA], [B, usedB, decB]] as const) {
           if ((tok as any).isNative) {
             // Native ALKE: check AA wallet balance, top up from signer if short
@@ -629,7 +644,11 @@ export default function Liquidity() {
       if (removePct <= 0) throw new Error('Pick a remove percentage.')
       const A = getToken(tokenA); const B = getToken(tokenB)
       if (!A || !B) throw new Error('Token registry is still loading or one of the selected tokens is no longer available. Try re-selecting your tokens.')
-      const pos = await getLpPosition({ owner: accountAddress, tokenA: A, tokenB: B })
+      // LP held by the key must be removed BY the key: send directly from it
+      // (skipAaWrap) — an account-wrapped call would act on the Nuru
+      // Account's LP instead. Tokens go back to the same holder.
+      const owner = positionOwner
+      const pos = await getLpPosition({ owner, tokenA: A, tokenB: B })
       const pair = pos.pair && pos.pair !== ethers.ZeroAddress ? pos.pair : ''
       if (!pair) throw new Error('No pool exists yet for this pair.')
       if (pos.lpBalance <= 0n) throw new Error('You have no LP tokens for this pool.')
@@ -650,11 +669,11 @@ export default function Liquidity() {
       setInfo(`Removing ${removePct}%: ~${fmtNum(ethers.formatUnits(outA, decA))} ${tokenA} + ~${fmtNum(ethers.formatUnits(outB, decB))} ${tokenB}. Confirm in your wallet…`)
       const txs: any[] = []
       const lpC = new ethers.Contract(pair, ERC20_ABI, provider)
-      const lpAllowance: bigint = await lpC.allowance(accountAddress, ROUTER)
+      const lpAllowance: bigint = await lpC.allowance(owner, ROUTER)
       if (lpAllowance < lpToRemove) txs.push(buildLpApproveTx(pair, ROUTER, lpToRemove))
-      txs.push(buildRemoveLiquidityTx({ tokenA: A, tokenB: B, liquidity: lpToRemove, amountAMin: minA, amountBMin: minB, recipient: accountAddress, deadlineSec: 10 * 60 }))
+      txs.push(buildRemoveLiquidityTx({ tokenA: A, tokenB: B, liquidity: lpToRemove, amountAMin: minA, amountBMin: minB, recipient: owner, deadlineSec: 10 * 60 }))
       const safeTxs = txs.map(normalizeTx)
-      const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: REMOVE_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'remove_liquidity')
+      const results = await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: safeTxs, failFast: true, preflight: REMOVE_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: viewingKey }, 'remove_liquidity')
       const firstFail = results?.find((r: any) => r?.ok === false); if (firstFail) throw new Error(firstFail.error || 'Transaction failed')
       const hashes: string[] = (results || []).map((r: any) => r?.txHash).filter(Boolean) as string[]
       const labels = safeTxs.map((t: any) => { const toAddr = (t?.to || '').toLowerCase(); if (toAddr === pair.toLowerCase()) return 'approve LP'; if (toAddr === ROUTER.toLowerCase()) return 'removeLiquidity'; return 'tx' })
@@ -677,7 +696,7 @@ export default function Liquidity() {
   }
 
   async function onReconcileSigner() {
-    if (!address || !pairAddr || pairAddr === '—' || signerLpBalRaw <= 0n || lpSupplyRaw <= 0n) return
+    if (!signerKey || !pairAddr || pairAddr === '—' || signerLpBalRaw <= 0n || lpSupplyRaw <= 0n) return
     setErr(null); setInfo(null); setReconcileBusy(true)
     try {
       const A = getToken(tokenA); const B = getToken(tokenB)
@@ -692,13 +711,15 @@ export default function Liquidity() {
       const outB = (reserveB * signerLpBalRaw) / lpSupplyRaw
       const minA = applySlippage(outA, slippageBps); const minB = applySlippage(outB, slippageBps)
       const lpC = new ethers.Contract(pairAddr, ERC20_ABI, provider)
-      const lpAllowance: bigint = await lpC.allowance(address, ROUTER)
+      const lpAllowance: bigint = await lpC.allowance(signerKey, ROUTER)
       const txs: any[] = []
       if (lpAllowance < signerLpBalRaw) txs.push(buildLpApproveTx(pairAddr, ROUTER, signerLpBalRaw))
       // Recipient = accountAddress so tokens land in the AA wallet
       txs.push(buildRemoveLiquidityTx({ tokenA: A, tokenB: B, liquidity: signerLpBalRaw, amountAMin: minA, amountBMin: minB, recipient: accountAddress, deadlineSec: 10 * 60 }))
       setInfo('Reconciling — confirm in your wallet…')
-      await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: txs.map(normalizeTx), failFast: true, preflight: REMOVE_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL }, 'reconcile_signer')
+      // The LP sits on the key, so the key itself must send these (skipAaWrap)
+      // — wrapped through the Nuru Account they'd act on the account's LP.
+      await sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs: txs.map(normalizeTx), failFast: true, preflight: REMOVE_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap: true }, 'reconcile_signer')
       setInfo('Reconciled! Signer position moved to your account.')
       setSignerLpBalRaw(0n); setSignerUnderAUi('—'); setSignerUnderBUi('—')
       await refreshPositionAndReserves()
@@ -815,6 +836,10 @@ export default function Liquidity() {
               </div>
             </div>
 
+            {hasDistinctSigner && (
+              <LpHolderToggle value={lpView} onChange={(v) => { setLpView(v); setErr(null); setInfo(null) }} signerKey={signerKey} />
+            )}
+
             {/* Underlying assets */}
             {underAUi !== '—' ? (
               <div className="jlf-pos-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
@@ -853,8 +878,9 @@ export default function Liquidity() {
               </div>
             )}
 
-            {/* Fees / P&L */}
-            {feesPnlUi !== '—' && (
+            {/* Fees / P&L — tracked from the Nuru Account's deposit history, so
+                hidden while viewing the key's position (it would mismatch). */}
+            {feesPnlUi !== '—' && !viewingKey && (
               <div style={{ padding: '12px 14px', background: 'rgba(54,211,153,.06)', border: '1px solid rgba(54,211,153,.14)', borderRadius: 14 }}>
                 <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--green)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Returns</div>
                 <div style={{ fontFamily: '"DM Mono"', fontSize: 13, color: 'var(--muted)' }}>{feesPnlUi}</div>
@@ -863,7 +889,7 @@ export default function Liquidity() {
             )}
 
             {/* Reconcile banner — Account Key holds a separate LP position */}
-            {hasDistinctSigner && signerLpBalRaw > 0n && (
+            {hasDistinctSigner && !viewingKey && signerLpBalRaw > 0n && (
               <div style={{ marginTop: 16, padding: '12px 14px', background: 'rgba(245,158,11,.07)', border: '1px solid rgba(245,158,11,.25)', borderRadius: 14 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
                   <span style={{ fontSize: 13 }}>⚠️</span>
@@ -1094,8 +1120,11 @@ export default function Liquidity() {
 
               {/* Current position */}
               <div style={{ margin: '0 0 12px', padding: '14px 16px', background: 'var(--leg)', border: '1px solid var(--line-2)', borderRadius: 18 }}>
+                {hasDistinctSigner && (
+                  <LpHolderToggle value={lpView} onChange={(v) => { setLpView(v); setErr(null); setInfo(null) }} signerKey={signerKey} />
+                )}
                 <div style={{ fontSize: 11.5, color: 'var(--muted-2)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600, marginBottom: 10 }}>
-                  {ain ? `AIN-${ain}'s position` : 'Your position'}
+                  {viewingKey ? 'Key Account position' : hasDistinctSigner ? 'Nuru Account position' : 'Your position'}
                 </div>
                 {underAUi !== '—' ? (
                   <div style={{ fontFamily: '"DM Mono"', fontSize: 15, color: 'var(--white)', lineHeight: 1.6 }}>
@@ -1154,6 +1183,12 @@ export default function Liquidity() {
               {info && (
                 <div style={{ padding: '10px 14px', marginBottom: 10, background: 'rgba(54,211,153,.06)', border: '1px solid rgba(54,211,153,.18)', borderRadius: 14, fontSize: 13, color: 'var(--green)' }}>
                   {info}
+                </div>
+              )}
+
+              {viewingKey && (
+                <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--muted-2)', lineHeight: 1.45 }}>
+                  Removing from your Key Account — your key signs it directly, and the tokens return to the key.
                 </div>
               )}
 
@@ -1368,6 +1403,40 @@ function AddLiqProgressModal({
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Nuru Account (AA wallet) vs Key Account (EOA) — which holder's LP position
+// the Pool page shows and removes from. Shown only when they're different.
+function LpHolderToggle({ value, onChange, signerKey }: {
+  value: 'account' | 'key'
+  onChange: (v: 'account' | 'key') => void
+  signerKey: string
+}) {
+  const seg = (v: 'account' | 'key', label: string, sub?: string) => {
+    const active = value === v
+    return (
+      <button
+        type="button"
+        onClick={() => onChange(v)}
+        style={{
+          flex: 1, padding: '7px 10px', borderRadius: 10, cursor: 'pointer', transition: '.14s',
+          border: `1px solid ${active ? 'rgba(54,211,153,.35)' : 'transparent'}`,
+          background: active ? 'rgba(54,211,153,.10)' : 'transparent',
+          color: active ? 'var(--white)' : 'var(--muted)',
+          fontSize: 12.5, fontWeight: 600, lineHeight: 1.2,
+        }}
+      >
+        {label}
+        {sub && <span style={{ display: 'block', marginTop: 2, fontFamily: '"DM Mono"', fontSize: 10.5, fontWeight: 500, color: 'var(--muted-2)' }}>{sub}</span>}
+      </button>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', gap: 4, padding: 3, marginBottom: 16, borderRadius: 13, background: 'var(--leg)', border: '1px solid var(--line-2)' }}>
+      {seg('account', 'Nuru Account')}
+      {seg('key', 'Key Account', signerKey ? `${signerKey.slice(0, 6)}…${signerKey.slice(-4)}` : undefined)}
     </div>
   )
 }

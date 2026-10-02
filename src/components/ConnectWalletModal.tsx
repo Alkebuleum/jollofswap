@@ -6,6 +6,7 @@ import { useWalletConnection } from '../hooks/useWalletConnection'
 import { useWcStore } from '../store/wcStore'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { nuruConnect } from '../lib/nuruConnect'
+import { applyNuruIdentity } from '../lib/nuruBrowser'
 import { useConnectModalStore } from '../store/connectModalStore'
 import { onWcSessionDrop } from '../lib/wcProvider'
 
@@ -94,17 +95,9 @@ export default function ConnectWalletModal() {
       const accounts: string[] = await injectedEth.request({ method: 'eth_requestAccounts' })
       const address = accounts?.[0]
       if (!address) throw new Error('No account returned')
-      // Try to also fetch AA wallet from injected identity
-      try {
-        const identity = await injectedEth.request({ method: 'nuru_getIdentity' })
-        const aaWallet = identity?.aaWallet ?? address
-        useWcStore.getState().setWcState(true, aaWallet, address)
-        if (identity?.ain) useWalletMetaStore.getState().setAin(String(identity.ain).toUpperCase())
-        if (identity?.primaryHandle) useWalletMetaStore.getState().setPrimaryHandle(String(identity.primaryHandle))
-        useWalletMetaStore.getState().setAaWallet(aaWallet)
-      } catch {
-        useWcStore.getState().setWcState(true, address, address)
-      }
+      // Key + Nuru Account identity — same sync AppLayout uses on key /
+      // account switches, so both paths set the store identically.
+      await applyNuruIdentity(injectedEth, address)
     } catch (e: any) {
       setInjError(e?.message ?? 'Connection cancelled')
     } finally {

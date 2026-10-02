@@ -14,6 +14,7 @@ import { useSignerSessionStore } from '../store/signerSessionStore'
 import { useSignerSession } from '../hooks/useSignerSession'
 import { tryRestoreWcSession } from '../lib/wcProvider'
 import { loadConnection } from '../lib/nuruConnect'
+import { nuruInjected, syncFromNuruBrowser } from '../lib/nuruBrowser'
 
 const LEGAL_PATHS = ['/privacy', '/terms']
 
@@ -63,44 +64,28 @@ export default function AppLayout() {
     tryRestoreWcSession()
   }, [])
 
+  // Nuru in-app browser: restore an existing connection on load (no prompt).
   useEffect(() => {
-    const injEth = typeof window !== 'undefined' ? (window as any).ethereum : null
-    if (!injEth?._isNuruWallet) return
+    if (!nuruInjected()) return
     if (useWcStore.getState().wcConnected) return
-
-    ;(async () => {
-      try {
-        const accounts: string[] = await injEth.request({ method: 'eth_accounts' })
-        if (accounts?.[0]) {
-          const eoa = accounts[0]
-          // Temporary: set EOA as address until identity resolves
-          useWcStore.getState().setWcState(true, eoa, eoa)
-          try {
-            const identity = await injEth.request({ method: 'nuru_getIdentity' })
-            const aaWallet = identity?.aaWallet ? String(identity.aaWallet) : eoa
-            // aaWallet is the display address (holds the funds); EOA is the signer
-            useWcStore.getState().setWcState(true, aaWallet, eoa)
-            setAaWallet(aaWallet)
-            if (identity?.ain) setAin(String(identity.ain).toUpperCase())
-            if (identity?.primaryHandle) setPrimaryHandle(String(identity.primaryHandle))
-          } catch { /* identity is bonus — aaWallet = eoa is safe fallback */ }
-        }
-      } catch { /* user will connect manually */ }
-    })()
+    syncFromNuruBrowser()
   }, [])
 
+  // Nuru in-app browser: follow key / Nuru Account switches made in the
+  // wallet. accountsChanged = the active key changed (or [] on disconnect);
+  // nuruIdentityChanged = the Nuru Account changed. Both re-read key AND
+  // account — updating only ain/handle left a stale signer and aaWallet.
   useEffect(() => {
-    const injEth = typeof window !== 'undefined' ? (window as any).ethereum : null
-    if (!injEth?._isNuruWallet) return
-    function onIdentityChanged(identity: any) {
-      if (identity?.ain) setAin(String(identity.ain).toUpperCase())
-      else if (identity?.ain === null) setAin(null)
-      if (identity?.primaryHandle) setPrimaryHandle(String(identity.primaryHandle))
-      else if (identity?.primaryHandle === null) setPrimaryHandle(null)
+    const injEth = nuruInjected()
+    if (!injEth) return
+    const resync = () => { syncFromNuruBrowser() }
+    injEth.on('accountsChanged', resync)
+    injEth.on('nuruIdentityChanged', resync)
+    return () => {
+      injEth.off('accountsChanged', resync)
+      injEth.off('nuruIdentityChanged', resync)
     }
-    injEth.on('nuruIdentityChanged', onIdentityChanged)
-    return () => injEth.off('nuruIdentityChanged', onIdentityChanged)
-  }, [setAin])
+  }, [])
 
   const isLegalPage = LEGAL_PATHS.includes(pathname)
   const awaitingAin = PRELAUNCH && !!session && ainLoading && !isLegalPage

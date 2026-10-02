@@ -13,6 +13,7 @@ import { wcDisconnect } from '../lib/wcProvider'
 import { clearConnection } from '../lib/nuruConnect'
 import { useWcStore } from '../store/wcStore'
 import { useConnectModalStore } from '../store/connectModalStore'
+import { nuruInjected, revokeNuruBrowser } from '../lib/nuruBrowser'
 import { BUILD_INFO, buildTimeLabel } from '../components/BuildBadge'
 
 const ALK_RPC = (import.meta.env.VITE_ALK_RPC as string) ?? 'https://rpc.alkebuleum.com'
@@ -36,6 +37,13 @@ export default function TopBar() {
   const { openModal } = useConnectModalStore()
   const addr = (session as any)?.address ?? wcAddr ?? undefined
   const { ain, ainLoading, setAin, setAinLoading, primaryHandle } = useWalletMetaStore()
+  // The KEY (EOA) that signs — distinct from addr, which for Nuru is the
+  // Nuru Account (AA wallet). Same account can be used by several keys.
+  const signerKey = useWcStore((s) => s.signer)
+  // For Nuru connections the menu shows/copies the KEY address — the
+  // handle / AIN above it already identify the Nuru Account (AA wallet).
+  const showKey = connectionType === 'walletconnect' && !!signerKey
+  const menuAddr = showKey ? signerKey! : addr
   const location = useLocation()
 
   const [open, setOpen] = useState(false)
@@ -116,6 +124,9 @@ export default function TopBar() {
   async function handleDisconnect() {
     setOpen(false)
     if (connectionType === 'walletconnect') {
+      // Inside the Nuru browser, tell Nuru too — otherwise it still treats
+      // this site as connected and silently reconnects on the next load.
+      if (nuruInjected()) await revokeNuruBrowser()
       clearConnection()  // clear Firebase-saved connection
       useWcStore.getState().setWcState(false, null, null)
       wcDisconnect().catch(() => {})  // also clear WC if one exists
@@ -126,9 +137,10 @@ export default function TopBar() {
   }
 
   async function copyAddress() {
-    if (!addr) return
-    try { await navigator.clipboard.writeText(addr) }
-    catch { /* fallback */ try { const ta = document.createElement('textarea'); ta.value = addr; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta) } catch { return } }
+    const text = menuAddr
+    if (!text) return
+    try { await navigator.clipboard.writeText(text) }
+    catch { /* fallback */ try { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta) } catch { return } }
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1400)
   }
@@ -146,7 +158,7 @@ export default function TopBar() {
     ...navItems,
   ]
 
-  const displayLabel = primaryHandle ? primaryHandle : ain ? `AIN ${ain}` : shortAddr(addr)
+  const displayLabel = primaryHandle ? primaryHandle : ain ? ain : shortAddr(addr)
 
   return (
     <>
@@ -195,7 +207,7 @@ export default function TopBar() {
               <button
                 className="jlf-chip wallet"
                 onClick={() => setOpen((v) => !v)}
-                title={addr}
+                title={menuAddr}
               >
                 <span className="avatar" />
                 <span>{displayLabel}</span>
@@ -206,14 +218,20 @@ export default function TopBar() {
                   <div className="head">
                     <div className="label">Connected {connectionType === 'walletconnect' ? '· Nuru' : ''}</div>
                     <div style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 700, fontSize: 15, color: 'var(--white)', marginTop: 4, lineHeight: 1.2 }}>
-                      {primaryHandle || (ain ? `AIN ${ain}` : shortAddr(addr))}
+                      {primaryHandle || ain || shortAddr(addr)}
                     </div>
                     {primaryHandle && ain && (
-                      <div className="ain" style={{ marginTop: 2 }}>AIN {ain}</div>
+                      <div className="ain" style={{ marginTop: 2 }}>{ain}</div>
                     )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5 }}>
-                      <div className="addr" style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {showAddr ? addr : `${addr?.slice(0, 6)}…${addr?.slice(-4)}`}
+                      {showKey && (
+                        <span title="Connected key" style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, fontSize: 11, color: 'var(--muted)' }}>
+                          <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--green)' }} />
+                          Key
+                        </span>
+                      )}
+                      <div className="addr" title={menuAddr} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {showAddr ? menuAddr : shortAddr(menuAddr)}
                       </div>
                       <button
                         onClick={(e) => { e.stopPropagation(); setShowAddr(v => !v) }}
@@ -228,7 +246,7 @@ export default function TopBar() {
                     {copied
                       ? <Check width={15} height={15} />
                       : <Copy width={15} height={15} />}
-                    {copied ? 'Copied!' : 'Copy address'}
+                    {copied ? 'Copied!' : showKey ? 'Copy key address' : 'Copy address'}
                   </button>
                   <button className="jlf-drop-item danger" onClick={handleDisconnect}>
                     <LogOut width={15} height={15} />
@@ -271,7 +289,8 @@ export default function TopBar() {
               <div className="jlf-mob-drawer-foot">
                 <div className="jlf-mob-drawer-addr">
                   {displayLabel}
-                  {primaryHandle && ain && <span style={{ display: 'block', fontSize: 11, color: 'var(--muted-2)', marginTop: 2 }}>AIN {ain}</span>}
+                  {primaryHandle && ain && <span style={{ display: 'block', fontSize: 11, color: 'var(--muted-2)', marginTop: 2 }}>{ain}</span>}
+                  {showKey && <span style={{ display: 'block', fontSize: 11, color: 'var(--muted-2)', marginTop: 2 }}>Key {shortAddr(menuAddr)}</span>}
                 </div>
                 <button className="jlf-mob-drawer-disconnect" onClick={() => { setMenuOpen(false); handleDisconnect() }}>
                   <LogOut size={14} />

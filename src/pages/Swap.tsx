@@ -36,6 +36,8 @@ import { PREF, readHideBalances, readSlippageBps, writeSlippageBps } from '../li
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useWcStore } from '../store/wcStore'
 import { useConnectModalStore } from '../store/connectModalStore'
+import { useMahPricing } from '../hooks/bridge/useMahPricing'
+import { quoteMah, type MahPricing } from '../lib/bridge/pricing'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
@@ -43,10 +45,10 @@ const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
 const WAKE = (import.meta.env.VITE_WAKE_ALK as string) ?? ''
 
-// USD context — VITE_USD_STABLE is your on-chain stablecoin symbol (default "MAH").
-// VITE_USD_STABLE_PRICE is its USD value. For JollofSwap: 1 USD = 100 MAH → price = 0.01.
-const STABLE_SYM = ((import.meta.env.VITE_USD_STABLE as string) ?? 'MAH').toUpperCase()
-const STABLE_USD_PRICE = Number(import.meta.env.VITE_USD_STABLE_PRICE ?? 0.01)
+// USD estimates value MAH at the bridge's configured USDC→MAH conversion rate
+// (from /v1/pricing/mah via useMahPricing, with an .env fallback). That is an
+// operational bridge rate, not a MAH market price — MAH is not a stablecoin.
+const USD_REF_SYM = 'MAH'
 
 // Bridge / smart-route constants
 const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137)
@@ -55,10 +57,18 @@ const USDC_POLY = (import.meta.env.VITE_USDC_POLY as string) ?? '0x3c499c542cEF5
 const BRIDGEVAULT_POLY = (import.meta.env.VITE_BRIDGEVAULT_POLY as string) ?? '0x2b53bd82a7ad6a7ce8bf9a9d201cde639b8ae5e0'
 const MAH_TOKEN_ALK = (import.meta.env.VITE_MAH_ALK as string) ?? '0x9983Cf46eeC1A7e75639eA1142410086b874dbf6'
 const BRIDGE_API = (import.meta.env.VITE_BRIDGE_API as string) ?? 'https://bridge.jollofswap.com'
-const MAH_PER_USDC = Number(import.meta.env.VITE_MAH_PER_USDC ?? 100)
-const BRIDGE_FEE_BPS = Number(import.meta.env.VITE_BRIDGE_FEE_BPS ?? 10)
-const BRIDGE_FEE_MIN_USD = Number(import.meta.env.VITE_BRIDGE_FEE_MIN_USD ?? 0.10)
-const BRIDGE_FEE_MAX_USD = Number(import.meta.env.VITE_BRIDGE_FEE_MAX_USD ?? 2.0)
+// Below this much USDC the bridge step is skipped (matches the execution path).
+const MIN_BRIDGE_USDC = 0.001
+
+// Split a USD amount into MAH already held + USDC to bridge. Bridge output net
+// of fees comes from the backend quote endpoint (local fee math only if it fails).
+async function planUsdRoute(usdAmt: number, mahAvail: number, pricing: MahPricing) {
+  const mahNeeded = usdAmt * pricing.mahPerUsdc
+  const mahFromExisting = Math.min(mahAvail, mahNeeded)
+  const usdcToBridge = Math.max(0, (mahNeeded - mahFromExisting) / pricing.mahPerUsdc)
+  const quote = usdcToBridge > MIN_BRIDGE_USDC ? await quoteMah(usdcToBridge, pricing) : null
+  return { mahFromExisting, usdcToBridge, quote, netMah: mahFromExisting + (quote?.netMah ?? 0) }
+}
 
 function fmtRate(r: number): string {
   if (!isFinite(r) || r <= 0) return '—'
@@ -411,7 +421,9 @@ export default function Swap() {
   const [usdcBalNum, setUsdcBalNum] = useState<number>(0)
   const [mahForUsdNum, setMahForUsdNum] = useState<number>(0)   // aaWallet MAH on Alkebuleum
   const [signerMahNum, setSignerMahNum] = useState<number>(0)   // signer EOA MAH on Alkebuleum
-  const [totalUsdNum, setTotalUsdNum] = useState<number>(0)
+  const { pricing: mahPricing, isFallback: mahPricingFallback, loading: mahPricingLoading } = useMahPricing()
+  // MAH valued at the bridge conversion rate (not a market price)
+  const totalUsdNum = usdcBalNum + (mahForUsdNum + signerMahNum) * mahPricing.usdcPerMah
   const [loadingUsdBal, setLoadingUsdBal] = useState(false)
   const [usdBalInfoOpen, setUsdBalInfoOpen] = useState(false)
 
@@ -756,7 +768,6 @@ export default function Swap() {
       if (!address) {
         setUsdcBalNum(0)
         setMahForUsdNum(0)
-        setTotalUsdNum(0)
         setPolBal('—')
         return
       }
@@ -813,7 +824,6 @@ export default function Swap() {
         setUsdcBalNum(usdcNum)
         setMahForUsdNum(aaMahNum)                            // aaWallet only — used for swap math
         setSignerMahNum(signerMahComputed)                   // signer only — added to display + QR-path swaps
-        setTotalUsdNum(usdcNum + (aaMahNum + signerMahComputed) / MAH_PER_USDC)
         setPolBal(polFmt.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 6 }))
       } catch (e) {
         console.warn('[USD bal]', e)
@@ -850,16 +860,9 @@ export default function Swap() {
 
         // USDC mode: route quote via MAH (USD → MAH bridge → to token swap)
         if (from === 'USDC') {
-          const usdAmt = Number(amtStr)
-          const mahNeeded = usdAmt * MAH_PER_USDC
           // Use combined aaWallet + signer MAH for quote accuracy
-          const mahFromExisting = Math.min(mahForUsdNum + signerMahNum, mahNeeded)
-          const usdcToBridge = Math.max(0, (mahNeeded - mahFromExisting) / MAH_PER_USDC)
-          const bridgeFee = usdcToBridge > 0
-            ? Math.min(BRIDGE_FEE_MAX_USD, Math.max(BRIDGE_FEE_MIN_USD, usdcToBridge * BRIDGE_FEE_BPS / 10000))
-            : 0
-          const netMah = mahFromExisting + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
-          if (netMah <= 0) { setQuoteOut('—'); setMinOut('—'); return }
+          const { netMah } = await planUsdRoute(Number(amtStr), mahForUsdNum + signerMahNum, mahPricing)
+          if (netMah <= 0) { setQuoteOut('—'); setMinOut('—'); setQuoteNotice('Amount too small after bridge fees.'); return }
 
           // USD → MAH: bridge output IS the result, no AMM step
           if (to === 'MAH') {
@@ -953,7 +956,7 @@ export default function Swap() {
     return () => {
       if (quoteTimer.current) window.clearTimeout(quoteTimer.current)
     }
-  }, [amount, from, to, slippageBps, address, provider])
+  }, [amount, from, to, slippageBps, address, provider, mahPricing])
 
 
 
@@ -1049,14 +1052,8 @@ export default function Swap() {
         const injectedEthSwap = typeof window !== 'undefined' ? (window as any).ethereum : null
         const isNuroBrowserSwap = injectedEthSwap?._isNuruWallet === true
         // Combined balance: aaWallet + signer (signer will be deposited before swap in QR mode)
-        const mahAvail = mahForUsdNum + signerMahNum
-        const mahNeeded = amtUsd * MAH_PER_USDC
-        const mahFromExisting = Math.min(mahAvail, mahNeeded)
-        const usdcToBridge = Math.max(0, (mahNeeded - mahFromExisting) / MAH_PER_USDC)
-        const bridgeFee = usdcToBridge > 0
-          ? Math.min(BRIDGE_FEE_MAX_USD, Math.max(BRIDGE_FEE_MIN_USD, usdcToBridge * BRIDGE_FEE_BPS / 10000))
-          : 0
-        const netMah = mahFromExisting + Math.max(0, usdcToBridge - bridgeFee) * MAH_PER_USDC
+        // Fresh quote at execution time so fees reflect the bridge's current config.
+        const { usdcToBridge, netMah } = await planUsdRoute(amtUsd, mahForUsdNum + signerMahNum, mahPricing)
         if (netMah <= 0) throw new Error('Amount too small after fees.')
 
         setSwapDialogDetails({ fromSym: 'USD', toSym: to, amountIn: amtStr, estimatedOut: quoteOut !== '—' ? quoteOut : '—', txHash: '' })
@@ -1068,7 +1065,7 @@ export default function Swap() {
         let mahAfterBridge = mahForUsdNum
 
         // ── Bridge step (only when USDC is needed) ───────────────────────
-        if (usdcToBridge > 0.001) {
+        if (usdcToBridge > MIN_BRIDGE_USDC) {
           if (usdcToBridge > usdcBalNum + 0.01) {
             throw new Error(`Not enough USDC. Need $${usdcToBridge.toFixed(2)}, have $${usdcBalNum.toFixed(2)}.`)
           }
@@ -1397,29 +1394,30 @@ export default function Swap() {
   const quoteNumVal = quoteOut === '—' ? NaN : Number(quoteOut.replace(/,/g, ''))
   const spotRate = amtNumVal > 0 && !isNaN(quoteNumVal) && quoteNumVal > 0
     ? isUsdcMode
-      // In USDC mode quoteOut is for netMah ≈ amtNumVal*MAH_PER_USDC MAH,
-      // so divide by MAH_PER_USDC to get back to ALKE-per-MAH.
-      ? (quoteNumVal / amtNumVal) / MAH_PER_USDC
+      // In USDC mode quoteOut is for netMah ≈ amtNumVal*mahPerUsdc MAH,
+      // so divide by mahPerUsdc to get back to ALKE-per-MAH.
+      ? (quoteNumVal / amtNumVal) / mahPricing.mahPerUsdc
       : quoteNumVal / amtNumVal
     : null
 
-  // USD value of the amount being spent
+  // USD estimate of the amount being spent (MAH valued at the bridge conversion rate)
+  const usdcPerMah = mahPricing.usdcPerMah
   const usdValue: number | null =
-    from.toUpperCase() === STABLE_SYM && amtNumVal > 0
-      ? amtNumVal * STABLE_USD_PRICE
-      : to.toUpperCase() === STABLE_SYM && !isNaN(quoteNumVal) && quoteNumVal > 0
-        ? quoteNumVal * STABLE_USD_PRICE
+    from.toUpperCase() === USD_REF_SYM && amtNumVal > 0
+      ? amtNumVal * usdcPerMah
+      : to.toUpperCase() === USD_REF_SYM && !isNaN(quoteNumVal) && quoteNumVal > 0
+        ? quoteNumVal * usdcPerMah
         : null
 
-  // USD price of the non-stable token (shown in the rate pill)
-  // from=MAH, spotRate=25 ALKE/MAH → 1 ALKE = $0.01/25 = $0.0004
-  // to=MAH,   spotRate=0.04 MAH/ALKE → 1 ALKE = 0.04 × $0.01 = $0.0004
-  const nonStableSym = from.toUpperCase() === STABLE_SYM ? to : from
+  // USD estimate of the non-MAH token (shown in the rate pill)
+  // from=MAH, spotRate=25 ALKE/MAH → 1 ALKE = usdcPerMah/25
+  // to=MAH,   spotRate=0.04 MAH/ALKE → 1 ALKE = 0.04 × usdcPerMah
+  const nonStableSym = from.toUpperCase() === USD_REF_SYM ? to : from
   const altUsdPerToken: number | null =
-    from.toUpperCase() === STABLE_SYM && spotRate !== null && spotRate > 0
-      ? STABLE_USD_PRICE / spotRate
-      : to.toUpperCase() === STABLE_SYM && spotRate !== null && spotRate > 0
-        ? spotRate * STABLE_USD_PRICE
+    from.toUpperCase() === USD_REF_SYM && spotRate !== null && spotRate > 0
+      ? usdcPerMah / spotRate
+      : to.toUpperCase() === USD_REF_SYM && spotRate !== null && spotRate > 0
+        ? spotRate * usdcPerMah
         : null
 
   // USD hint passed to the chart (shown as secondary "≈ $X per TOKEN" line)
@@ -1427,10 +1425,10 @@ export default function Swap() {
     ? { sym: nonStableSym, price: altUsdPerToken }
     : undefined
 
-  // In USD mode: scale MAH/to prices → USD/to by multiplying by MAH_PER_USDC
+  // In USD mode: scale MAH/to prices → USD/to by multiplying by mahPerUsdc
   const chartData = useMemo(
-    () => isUsdcMode ? priceData.map(d => ({ t: d.t, p: d.p * MAH_PER_USDC })) : priceData,
-    [priceData, isUsdcMode]
+    () => isUsdcMode ? priceData.map(d => ({ t: d.t, p: d.p * mahPricing.mahPerUsdc })) : priceData,
+    [priceData, isUsdcMode, mahPricing]
   )
 
   // Close settings popover on outside click
@@ -1882,12 +1880,14 @@ export default function Swap() {
             </div>
             <div style={{ padding: '16px 20px 20px' }}>
               <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.6 }}>
-                Your estimated USD balance is the sum of USDC on Polygon and MAH on Alkebuleum, converted to USD.
+                Your estimated USD balance is the sum of USDC on Polygon and MAH on Alkebuleum. MAH is valued at the
+                bridge's USDC→MAH conversion rate (1 USDC = {mahPricing.mahPerUsdc.toLocaleString('en-US')} MAH
+                {mahPricingFallback && !mahPricingLoading ? ', default — live rate unavailable' : ''}), not a market price.
               </p>
               <div style={{ border: '1px solid var(--line-2)', borderRadius: 14, overflow: 'hidden' }}>
                 {[
                   { label: 'USDC', sub: 'On Polygon', value: `$${usdcBalNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-                  { label: 'MAH', sub: 'On Alkebuleum', value: `$${(mahForUsdNum / MAH_PER_USDC).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+                  { label: 'MAH', sub: 'On Alkebuleum', value: `$${(mahForUsdNum * mahPricing.usdcPerMah).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
                   { label: 'Total', sub: '', value: `$${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, bold: true },
                 ].map(({ label, sub, value, bold }) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 16px', borderBottom: label !== 'Total' ? '1px solid var(--line-2)' : 'none', background: bold ? 'rgba(255,255,255,.03)' : 'transparent' }}>

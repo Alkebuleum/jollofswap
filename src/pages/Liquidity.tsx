@@ -34,6 +34,7 @@ import { readHideBalances, readSlippageBps, writeSlippageBps, PREF } from '../li
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useConnectModalStore } from '../store/connectModalStore'
 import { useWcStore } from '../store/wcStore'
+import { useMahPricing } from '../hooks/bridge/useMahPricing'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
@@ -41,8 +42,9 @@ const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
 const FACTORY = (import.meta.env.VITE_JOLLOF_FACTORY_ALK as string) ?? ''
 const MIN_POOL_RESERVE_HUMAN = '0.01'
 
-const STABLE_SYM = ((import.meta.env.VITE_USD_STABLE as string) ?? 'MAH').toUpperCase()
-const STABLE_USD_PRICE = Number(import.meta.env.VITE_USD_STABLE_PRICE ?? 0.01)
+// USD estimates value MAH at the bridge's USDC→MAH conversion rate (useMahPricing),
+// not a market price — MAH is not a stablecoin.
+const USD_REF_SYM = 'MAH'
 
 function fmtUsd(v: number): string {
   if (!isFinite(v) || v < 0) return '—'
@@ -176,6 +178,7 @@ async function getRevertReasonFromChain(provider: ethers.JsonRpcProvider, txHash
 }
 
 export default function Liquidity() {
+  const { pricing: mahPricing } = useMahPricing()
   const { isConnected: walletConnected, address } = useWalletConnection()
   const { ain, ainLoading, aaWallet } = useWalletMetaStore()
 
@@ -788,18 +791,19 @@ export default function Liquidity() {
     try { const oneA = ethers.parseUnits('1', decAState); const outB = quote(oneA, rawReserveA, rawReserveB); return Number(ethers.formatUnits(outB, decBState)) } catch { return null }
   })()
 
-  const nonStableSym = tokenA.toUpperCase() === STABLE_SYM ? tokenB : tokenA
+  const usdcPerMah = mahPricing.usdcPerMah
+  const nonStableSym = tokenA.toUpperCase() === USD_REF_SYM ? tokenB : tokenA
   const altUsdPerToken: number | null =
-    tokenA.toUpperCase() === STABLE_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0 ? STABLE_USD_PRICE / ratioAtoBNum
-      : tokenB.toUpperCase() === STABLE_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0 ? ratioAtoBNum * STABLE_USD_PRICE : null
+    tokenA.toUpperCase() === USD_REF_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0 ? usdcPerMah / ratioAtoBNum
+      : tokenB.toUpperCase() === USD_REF_SYM && ratioAtoBNum !== null && ratioAtoBNum > 0 ? ratioAtoBNum * usdcPerMah : null
 
   const usdA: number | null =
-    tokenA.toUpperCase() === STABLE_SYM && amtANum > 0 ? amtANum * STABLE_USD_PRICE
-      : tokenB.toUpperCase() === STABLE_SYM && altUsdPerToken !== null && amtANum > 0 ? amtANum * altUsdPerToken : null
+    tokenA.toUpperCase() === USD_REF_SYM && amtANum > 0 ? amtANum * usdcPerMah
+      : tokenB.toUpperCase() === USD_REF_SYM && altUsdPerToken !== null && amtANum > 0 ? amtANum * altUsdPerToken : null
 
   const usdB: number | null =
-    tokenB.toUpperCase() === STABLE_SYM && amtBNum > 0 ? amtBNum * STABLE_USD_PRICE
-      : tokenA.toUpperCase() === STABLE_SYM && altUsdPerToken !== null && amtBNum > 0 ? amtBNum * altUsdPerToken : null
+    tokenB.toUpperCase() === USD_REF_SYM && amtBNum > 0 ? amtBNum * usdcPerMah
+      : tokenA.toUpperCase() === USD_REF_SYM && altUsdPerToken !== null && amtBNum > 0 ? amtBNum * altUsdPerToken : null
 
   // Close settings on outside click
   useEffect(() => {

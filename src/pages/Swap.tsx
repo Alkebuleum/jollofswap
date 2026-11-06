@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
+import { makePolyProvider } from '../lib/polyRpc'
 import { useSignerSession } from '../hooks/useSignerSession'
 import { useWalletConnection } from '../hooks/useWalletConnection'
 import { Link, useLocation, useSearchParams } from 'react-router-dom'
@@ -52,7 +53,6 @@ const USD_REF_SYM = 'MAH'
 
 // Bridge / smart-route constants
 const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137)
-const POLY_RPC = (import.meta.env.VITE_POLY_RPC as string) ?? 'https://polygon-bor-rpc.publicnode.com'
 const USDC_POLY = (import.meta.env.VITE_USDC_POLY as string) ?? '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'
 const BRIDGEVAULT_POLY = (import.meta.env.VITE_BRIDGEVAULT_POLY as string) ?? '0x2b53bd82a7ad6a7ce8bf9a9d201cde639b8ae5e0'
 const MAH_TOKEN_ALK = (import.meta.env.VITE_MAH_ALK as string) ?? '0x9983Cf46eeC1A7e75639eA1142410086b874dbf6'
@@ -358,7 +358,7 @@ export default function Swap() {
   const { openModal } = useConnectModalStore()
 
   const provider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
-  const polyProvider = useMemo(() => new ethers.JsonRpcProvider(POLY_RPC, POLY_CHAIN_ID), [])
+  const polyProvider = useMemo(() => makePolyProvider(), [])
   const [sp] = useSearchParams()
   const location = useLocation()
   const didInitRef = useRef(false)

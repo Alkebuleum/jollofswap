@@ -27,9 +27,10 @@ import { aaExecuteTransactions } from '../lib/aaOrchestrator'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useWcSigningStore } from '../store/wcSigningStore'
 import { createNuruProvider, nuruSign } from '../lib/nuruSigning'
+import { POLY_CHAIN_ID, makePolyProvider } from '../lib/polyRpc'
 
-const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137)
-const POLY_RPC = (import.meta.env.VITE_POLY_RPC as string) ?? 'https://polygon-bor-rpc.publicnode.com'
+// Shared across calls so the rotation sticks to whichever Polygon RPC is healthy.
+const polyRpcProvider = makePolyProvider()
 const FAUCET_API = (import.meta.env.VITE_FAUCET_API as string) ?? 'https://faucet.alkebuleum.com/api'
 
 // BNB Chain (ALKE bridge burn-to-release direction only — see src/lib/bridge/).
@@ -66,7 +67,7 @@ function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
 async function runPolyTopupIfNeeded(
   nuruProvider: any,
   address: string,
-  rpcProvider: ethers.JsonRpcProvider,
+  rpcProvider: ethers.AbstractProvider,
 ): Promise<void> {
   const balance = await rpcProvider.getBalance(address).catch(() => 0n)
   if (BigInt(balance) >= MIN_POL_WEI) return
@@ -139,9 +140,9 @@ async function nuroBrowserSendTransactions(txPayload: any, skipAaWrap = false): 
     typeof txPayload.chainId === 'number' ? txPayload.chainId : undefined
   const isPolygon   = reqChainId === POLY_CHAIN_ID
   const isBsc       = reqChainId === BSC_CHAIN_ID
-  const rpcUrl      = isPolygon ? POLY_RPC : isBsc ? BSC_RPC : ALK_RPC
-  const rpcChainId  = isPolygon ? POLY_CHAIN_ID : isBsc ? BSC_CHAIN_ID : ALK_CHAIN_ID
-  const rpcProvider = new ethers.JsonRpcProvider(rpcUrl, rpcChainId, { staticNetwork: true })
+  const rpcProvider: ethers.JsonRpcApiProvider = isPolygon
+    ? polyRpcProvider
+    : new ethers.JsonRpcProvider(isBsc ? BSC_RPC : ALK_RPC, isBsc ? BSC_CHAIN_ID : ALK_CHAIN_ID, { staticNetwork: true })
 
   // When skipAaWrap is set, include from: signerAddress so the tx is sent directly
   // from the signer EOA rather than being wrapped by Nuru in aaWallet.execute().
@@ -226,9 +227,10 @@ async function wcSendTransactions(txPayload: any, label = 'Transaction', skipAaW
   const isPolygon    = reqChainId === POLY_CHAIN_ID
   const isBsc        = reqChainId === BSC_CHAIN_ID
   const isAlkebuleum = reqChainId === ALK_CHAIN_ID
-  const rpcUrl       = isPolygon ? POLY_RPC : isBsc ? BSC_RPC : ALK_RPC
   const rpcChainId   = isPolygon ? POLY_CHAIN_ID : isBsc ? BSC_CHAIN_ID : ALK_CHAIN_ID
-  const rpcProvider  = new ethers.JsonRpcProvider(rpcUrl, rpcChainId, { staticNetwork: true })
+  const rpcProvider: ethers.JsonRpcApiProvider = isPolygon
+    ? polyRpcProvider
+    : new ethers.JsonRpcProvider(isBsc ? BSC_RPC : ALK_RPC, rpcChainId, { staticNetwork: true })
 
   // The EOA that actually signs. Falls back to connectedAddr (aaWallet) for injected wallet case.
   const effectiveSigner = signerAddr ?? connectedAddr

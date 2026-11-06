@@ -27,7 +27,7 @@ import { aaExecuteTransactions } from '../lib/aaOrchestrator'
 import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useWcSigningStore } from '../store/wcSigningStore'
 import { createNuruProvider, nuruSign } from '../lib/nuruSigning'
-import { POLY_CHAIN_ID, makePolyProvider } from '../lib/polyRpc'
+import { POLY_CHAIN_ID, makePolyProvider, polygonReceiptStatus, polygonTxKnown } from '../lib/polyRpc'
 
 // Shared across calls so the rotation sticks to whichever Polygon RPC is healthy.
 const polyRpcProvider = makePolyProvider()
@@ -61,6 +61,48 @@ function toHex(v: bigint | number | string): string {
 }
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
+
+// Polygon: every node is asked each round (one lagging / refusing node made a
+// mined bridge tx look unconfirmed), and the wait is longer.
+const POLY_RECEIPT_POLL_MS = 3_000
+const POLY_RECEIPT_MAX_POLLS = 80 // ~4 min
+
+/** Waits for a tx's receipt; the error says what actually happened and carries the hash. */
+async function waitForTxResult(
+  txHash: string,
+  isPolygon: boolean,
+  rpcProvider: ethers.JsonRpcApiProvider,
+): Promise<{ ok: boolean; txHash: string; error?: string }> {
+  if (isPolygon) {
+    for (let p = 0; p < POLY_RECEIPT_MAX_POLLS; p++) {
+      const status = await polygonReceiptStatus(txHash).catch(() => null)
+      if (status === 1) return { ok: true, txHash }
+      if (status === 0) return { ok: false, txHash, error: `Transaction reverted on Polygon (${txHash}).` }
+      await sleep(POLY_RECEIPT_POLL_MS)
+    }
+    const known = await polygonTxKnown(txHash).catch(() => false)
+    console.warn('[Jollof] Polygon tx not confirmed', { txHash, knownToNodes: known })
+    return {
+      ok: false,
+      txHash,
+      error: known
+        ? `Transaction still pending on Polygon after 4 min (${txHash}). It may still go through — check polygonscan.com/tx/${txHash} before retrying.`
+        : `Polygon never received this transaction (${txHash}) — it was dropped before reaching the network. Nothing was spent; please try again.`,
+    }
+  }
+
+  let receipt: ethers.TransactionReceipt | null = null
+  for (let p = 0; p < RECEIPT_MAX_POLLS; p++) {
+    receipt = await rpcProvider.getTransactionReceipt(txHash).catch(() => null)
+    if (receipt) break
+    await sleep(RECEIPT_POLL_MS)
+  }
+  const ok = receipt?.status === 1
+  const error = !receipt
+    ? `Transaction not confirmed (${txHash}) — check your wallet for status.`
+    : receipt.status === 0 ? 'Transaction reverted on-chain.' : undefined
+  return { ok, txHash, error }
+}
 
 // ── Polygon POL gas top-up ────────────────────────────────────────────────────
 
@@ -192,18 +234,9 @@ async function nuroBrowserSendTransactions(txPayload: any, skipAaWrap = false): 
   // Phase 2: poll receipts
   const results: { ok: boolean; txHash: string; error?: string }[] = []
   for (const txHash of txHashes) {
-    let receipt: ethers.TransactionReceipt | null = null
-    for (let p = 0; p < RECEIPT_MAX_POLLS; p++) {
-      receipt = await rpcProvider.getTransactionReceipt(txHash).catch(() => null)
-      if (receipt) break
-      await sleep(RECEIPT_POLL_MS)
-    }
-    const ok = receipt?.status === 1
-    const error = !receipt
-      ? 'Transaction not confirmed — check your wallet for status.'
-      : receipt.status === 0 ? 'Transaction reverted on-chain.' : undefined
-    results.push({ ok, txHash, error })
-    if (!ok && txPayload.failFast) throw new Error(error ?? 'Transaction failed')
+    const r = await waitForTxResult(txHash, isPolygon, rpcProvider)
+    results.push(r)
+    if (!r.ok && txPayload.failFast) throw new Error(r.error ?? 'Transaction failed')
   }
 
   return results
@@ -335,24 +368,10 @@ async function wcSendTransactions(txPayload: any, label = 'Transaction', skipAaW
     // ── Phase 2: poll for receipts (QR is hidden) ────────────────────────────
     const results: { ok: boolean; txHash: string; error?: string }[] = []
     for (let i = 0; i < txHashes.length; i++) {
-      const txHash = txHashes[i]
-      let receipt: ethers.TransactionReceipt | null = null
-      for (let p = 0; p < RECEIPT_MAX_POLLS; p++) {
-        receipt = await rpcProvider.getTransactionReceipt(txHash).catch(() => null)
-        if (receipt) break
-        await sleep(RECEIPT_POLL_MS)
-      }
-
-      const ok = receipt?.status === 1
-      const error = !receipt
-        ? 'Transaction not confirmed — check your wallet for status.'
-        : receipt.status === 0
-          ? 'Transaction reverted on-chain.'
-          : undefined
-      results.push({ ok, txHash, error })
-
-      if (!ok && txPayload.failFast) {
-        throw new Error(error ?? 'Transaction failed')
+      const r = await waitForTxResult(txHashes[i], isPolygon, rpcProvider)
+      results.push(r)
+      if (!r.ok && txPayload.failFast) {
+        throw new Error(r.error ?? 'Transaction failed')
       }
     }
 

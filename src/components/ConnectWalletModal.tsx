@@ -9,6 +9,7 @@ import { nuruConnect } from '../lib/nuruConnect'
 import { applyNuruIdentity } from '../lib/nuruBrowser'
 import { useConnectModalStore } from '../store/connectModalStore'
 import { onWcSessionDrop } from '../lib/wcProvider'
+import { nuruHandoffMode, openInNuru } from '../lib/nuruHandoff'
 
 const MarkIcon = () => (
   <svg width="28" height="28" viewBox="0 0 30 30" fill="none">
@@ -27,9 +28,14 @@ export default function ConnectWalletModal() {
   const [injLoading, setInjLoading]   = useState(false)
   const [injError, setInjError]       = useState<string | null>(null)
   const [sessionDropped, setSessionDropped] = useState(false)
+  const [forceQr, setForceQr]         = useState(false)
 
   const injectedEth  = typeof window !== 'undefined' ? (window as any).ethereum : null
   const isNuroBrowser = injectedEth?._isNuruWallet === true
+  // QR only on desktop. Phone → "Open Nuru" deep link; inside Nuru web (iframe)
+  // → the request is handed to Nuru directly (see lib/nuruHandoff.ts).
+  const handoff = nuruHandoffMode()
+  const showQr = handoff === 'qr' || forceQr
 
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
   const isIOS     = /iPhone|iPad|iPod/i.test(ua)
@@ -48,9 +54,14 @@ export default function ConnectWalletModal() {
   useEffect(() => {
     if (!open) {
       setConnectId(null); setError(null); setLoading(false)
-      setInjError(null); setInjLoading(false)
+      setInjError(null); setInjLoading(false); setForceQr(false)
     }
   }, [open])
+
+  // Inside Nuru web: hand the request over as soon as it exists (no tap needed).
+  useEffect(() => {
+    if (connectId && handoff === 'frame' && !forceQr) openInNuru(`nuru://connect?c=${connectId}`)
+  }, [connectId])
 
   // Re-open on unexpected session drop
   useEffect(() => {
@@ -123,7 +134,7 @@ export default function ConnectWalletModal() {
             <div>
               <div style={{ fontFamily: '"Bricolage Grotesque"', fontWeight: 700, fontSize: 17, color: 'var(--white)' }}>Connect Nuru</div>
               <div style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 1 }}>
-                {isNuroBrowser ? 'Direct browser connection' : 'Scan QR with Nuru'}
+                {isNuroBrowser ? 'Direct browser connection' : showQr ? 'Scan QR with Nuru' : 'Approve in Nuru'}
               </div>
             </div>
           </div>
@@ -173,10 +184,12 @@ export default function ConnectWalletModal() {
               {!connectId && !loading && (
                 <>
                   <p style={{ fontSize: 13.5, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.55 }}>
-                    Open <strong style={{ color: 'var(--white)' }}>Nuru</strong> on your phone and tap the scan icon on the home screen.
+                    {showQr
+                      ? <>Open <strong style={{ color: 'var(--white)' }}>Nuru</strong> on your phone and tap the scan icon on the home screen.</>
+                      : <>Connect your <strong style={{ color: 'var(--white)' }}>Nuru</strong> wallet — you'll approve it in Nuru.</>}
                   </p>
                   <button onClick={handleNuruConnect} className="jlf-action" style={{ width: '100%' }}>
-                    Get Connection QR
+                    {showQr ? 'Get Connection QR' : 'Connect with Nuru'}
                   </button>
                   {showDownloadLink && (
                     <p style={{ marginTop: 12, fontSize: 12, color: 'var(--muted-2)', textAlign: 'center' }}>
@@ -199,12 +212,41 @@ export default function ConnectWalletModal() {
               {loading && !connectId && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '20px 0', color: 'var(--muted)' }}>
                   <div className="jlf-spin" style={{ width: 18, height: 18 }} />
-                  <span style={{ fontSize: 13.5 }}>Generating QR…</span>
+                  <span style={{ fontSize: 13.5 }}>{showQr ? 'Generating QR…' : 'Preparing…'}</span>
                 </div>
               )}
 
-              {/* Step 2 — show QR */}
-              {connectId && (
+              {/* Step 2 (phone / Nuru web) — hand off to Nuru instead of a QR */}
+              {connectId && !showQr && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+                  <button
+                    onClick={() => openInNuru(`nuru://connect?c=${connectId}`)}
+                    className="jlf-action"
+                    style={{ width: '100%' }}
+                  >
+                    {handoff === 'frame' ? 'Send to Nuru again' : 'Open Nuru to approve'}
+                  </button>
+                  <p style={{ fontSize: 12.5, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6, margin: 0 }}>
+                    {handoff === 'frame'
+                      ? <>Approve the request in Nuru → tap <strong style={{ color: 'var(--white)' }}>Connect</strong>.</>
+                      : <>Nuru opens — tap <strong style={{ color: 'var(--white)' }}>Connect</strong>, then come back here.</>}
+                    <br />JollofSwap will see your wallet address and balance.
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--muted-2)', fontSize: 12 }}>
+                    <div className="jlf-spin" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                    Waiting for Nuru…
+                  </div>
+                  <button
+                    onClick={() => setForceQr(true)}
+                    style={{ fontSize: 12, color: 'var(--muted-2)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                  >
+                    Nuru is on another device? Show QR instead
+                  </button>
+                </div>
+              )}
+
+              {/* Step 2 (desktop) — show QR */}
+              {connectId && showQr && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
                   <div style={{ borderRadius: 14, background: '#fff', padding: 14, border: '1px solid var(--line)', lineHeight: 0 }}>
                     <QRCodeSVG value={qrValue} size={200} bgColor="#ffffff" fgColor="#0A0A0B" level="M" />

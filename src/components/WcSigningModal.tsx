@@ -9,9 +9,24 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useWcSigningStore } from '../store/wcSigningStore'
+import { nuruHandoffMode, openInNuru } from '../lib/nuruHandoff'
 
 export default function WcSigningModal() {
   const { active, qrPayload, label, step, total } = useWcSigningStore()
+
+  // QR only on desktop; phone → "Open Nuru" button; Nuru web (iframe) → each
+  // step is handed to Nuru automatically (lib/nuruHandoff.ts).
+  const handoff = nuruHandoffMode()
+  const [forceQr, setForceQr] = useState(false)
+  const showQr = handoff === 'qr' || forceQr
+
+  useEffect(() => {
+    if (!active) setForceQr(false)
+  }, [active])
+
+  useEffect(() => {
+    if (active && qrPayload && handoff === 'frame' && !forceQr) openInNuru(`nuru://sign?f=${qrPayload}`)
+  }, [active, qrPayload])
 
   // When step increments, show a brief "approved" flash before the next QR slides in.
   const prevStepRef = useRef(step)
@@ -79,7 +94,7 @@ export default function WcSigningModal() {
         )}
 
         <div style={{ fontSize: 17, fontWeight: 600, color: 'var(--white)', marginBottom: 20 }}>
-          {showApproved ? `Step ${step - 1} approved!` : 'Scan to approve in Nuru'}
+          {showApproved ? `Step ${step - 1} approved!` : showQr ? 'Scan to approve in Nuru' : 'Approve in Nuru'}
         </div>
 
         {/* QR area — fixed height so approved flash doesn't cause layout shift */}
@@ -97,6 +112,22 @@ export default function WcSigningModal() {
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)' }}>
                 {step < total ? `Loading step ${step} of ${total}…` : 'All steps approved'}
               </div>
+            </div>
+          ) : !showQr ? (
+            <div key={qrPayload} style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, animation: 'nuruQrIn 0.3s ease' }}>
+              <button onClick={() => openInNuru(qrValue)} className="jlf-action" style={{ width: '100%' }}>
+                {handoff === 'frame' ? 'Send to Nuru again' : 'Open Nuru to approve'}
+              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--muted-2)', fontSize: 12 }}>
+                <div className="jlf-spin" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                Waiting for Nuru…
+              </div>
+              <button
+                onClick={() => setForceQr(true)}
+                style={{ fontSize: 12, color: 'var(--muted-2)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+              >
+                Nuru is on another device? Show QR instead
+              </button>
             </div>
           ) : (
             <div
@@ -116,8 +147,12 @@ export default function WcSigningModal() {
           {showApproved
             ? <span style={{ color: 'var(--green)', fontWeight: 600 }}>Preparing next scan…</span>
             : <>
-                Open Nuru → tap the scan icon → approve.
-                {!isLastStep && <><br />After approving, the next QR will appear automatically.</>}
+                {showQr
+                  ? 'Open Nuru → tap the scan icon → approve.'
+                  : handoff === 'frame'
+                    ? 'Approve the request in Nuru.'
+                    : 'Nuru opens — approve, then come back here.'}
+                {!isLastStep && <><br />After approving, the next {showQr ? 'QR' : 'step'} will appear automatically.</>}
               </>
           }
         </p>

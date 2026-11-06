@@ -45,7 +45,7 @@ export default function Support() {
             Support
           </h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Help for amVault, swaps, liquidity, and bridge status.
+            Help for Nuru, swaps, liquidity, and bridge status.
           </p>
         </div>
 
@@ -53,7 +53,7 @@ export default function Support() {
           <Section title="Before you do anything">
             <ul className="list-disc pl-5 space-y-1">
               <li>
-                Make sure you’re connected to <span className="font-semibold text-slate-900 dark:text-slate-100">amVault</span> from the top bar.
+                Make sure you’re connected to <span className="font-semibold text-slate-900 dark:text-slate-100">Nuru</span> from the top bar.
               </li>
               <li>
                 Ensure you have enough <span className="font-semibold text-slate-900 dark:text-slate-100">AKE</span> for gas (or allow the app’s gas top-up if enabled).

@@ -7,7 +7,7 @@ import {
 } from '../lib/prefs'
 
 const APP_NAME    = (import.meta.env.VITE_APP_NAME    as string) ?? 'JollofSwap'
-const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
+const NURU_URL = (import.meta.env.VITE_NURU_URL as string) || 'https://nuru.si'
 const ALK_CHAIN_ID = Number(import.meta.env.VITE_ALK_CHAIN_ID ?? 237422)
 const ALK_RPC     = (import.meta.env.VITE_ALK_RPC     as string) ?? 'https://rpc.alkebuleum.com'
 const ALK_EXPLORER = (import.meta.env.VITE_ALK_EXPLORER as string) ?? ''
@@ -61,7 +61,7 @@ export default function Settings() {
           Settings
         </div>
         <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
-          Preferences are stored on this device. Wallet security is managed in amVault.
+          Preferences are stored on this device. Wallet security is managed in Nuru.
         </div>
       </div>
 
@@ -136,16 +136,16 @@ export default function Settings() {
         {/* Security */}
         <Section title="Security">
           <p style={{ fontSize: 13.5, color: 'var(--muted)', lineHeight: 1.55, marginBottom: 14 }}>
-            JollofSwap never stores your private keys. Security controls (PIN / biometrics / 2FA) are handled in amVault.
+            JollofSwap never stores your private keys. Security controls (PIN / biometrics / 2FA) are handled in Nuru.
           </p>
           <a
-            href={AMVAULT_URL}
+            href={NURU_URL}
             target="_blank"
             rel="noreferrer"
             className="jlf-action"
             style={{ display: 'inline-block', textDecoration: 'none', padding: '0 20px', lineHeight: '42px', fontSize: 13.5 }}
           >
-            Open amVault
+            Open Nuru
           </a>
         </Section>
 

@@ -31,7 +31,7 @@ const MARKETS = [
 
 const ECOSYSTEM = [
   { ico: '🪪', name: 'AfPass',   desc: 'Portable digital identity that travels with you across every African market.',     tag: 'Identity →',  to: '#' },
-  { ico: '🔐', name: 'Amvault',  desc: 'Self-custodial wallet, connected to JollofSwap in a single tap.',                  tag: 'Wallet →',    to: '#' },
+  { ico: '🔐', name: 'Nuru',     desc: 'Self-custodial wallet, connected to JollofSwap in a single tap.',                  tag: 'Wallet →',    to: '#' },
   { ico: '📜', name: 'DRIS',     desc: 'Verify documents and records on-chain — the trust layer beneath every trade.',     tag: 'Records →',   to: '#' },
   { ico: '✦',  name: 'Nuru AI',  desc: 'Route and execute trades in plain language across the whole ecosystem.',           tag: 'Assistant →', to: '#' },
 ]

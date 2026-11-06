@@ -4,7 +4,7 @@ export default function Wallet(){
   const { walletConnected, address } = useAppStore()
   return (
     <div className="page">
-      <h1 className="text-2xl font-extrabold mb-4">amVault Wallet</h1>
+      <h1 className="text-2xl font-extrabold mb-4">Nuru Wallet</h1>
       {walletConnected? (
         <div className="card p-5">
           <div className="text-sm text-jlfCharcoal/70 mb-2">Connected address</div>
@@ -16,7 +16,7 @@ export default function Wallet(){
           </div>
         </div>
       ): (
-        <div className="text-jlfCharcoal/70">Not connected. Use the top-right button to connect your amVault.</div>
+        <div className="text-jlfCharcoal/70">Not connected. Use the top-right button to connect your Nuru wallet.</div>
       )}
     </div>
   )

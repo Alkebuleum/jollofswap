@@ -2024,12 +2024,12 @@ function SwapProgressModal({
     }
     if (isError) return 'See details below.'
     if (isUsdFlow) {
-      if (phase === 'waiting' || phase === 'bridging') return 'amvault will ask you to sign — approve the bridge transaction.'
+      if (phase === 'waiting' || phase === 'bridging') return 'Nuru will ask you to approve — confirm the bridge transaction.'
       if (phase === 'minting') {
         if (details.bridgeStatus === 'seen' || details.bridgeStatus === 'confirmed') return bridgeStatusText()
         return 'Waiting for USDC to arrive as MAH (usually 1–3 min)…'
       }
-      if (phase === 'confirming') return 'amvault will open again for the swap — sign in to approve it.'
+      if (phase === 'confirming') return 'Nuru will ask you again — approve the swap.'
     }
     return 'Waiting for confirmation…'
   }

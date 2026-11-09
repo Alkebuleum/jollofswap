@@ -145,7 +145,7 @@ export default function UpdatePositionCard(props: {
               <br />
               {fmtMah(p.mahOut)}&nbsp;<span style={{ color: 'var(--muted)' }}>MAH</span>
             </div>
-            {plan && (plan.refundOther > 0n || plan.refundMah > 0n) && (
+            {plan && !plan.tooFar && (plan.refundOther > 0n || plan.refundMah > 0n) && (
               <div style={{ fontSize: 12.5, color: 'var(--muted-2)', marginTop: 8 }}>
                 The new pool's price has moved a little: about{' '}
                 {plan.refundOther > 0n ? `${fmtAmount(plan.refundOther, p.otherDecimals)} ${p.otherSymbol}` : `${fmtMah(plan.refundMah)} MAH`}{' '}
@@ -170,6 +170,16 @@ export default function UpdatePositionCard(props: {
                     Cancel
                   </button>
                 </div>
+              </div>
+            ) : plan?.tooFar ? (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 10 }}>
+                  The new pool's price is about {(plan.priceMoveBps / 100).toFixed(1)}% away from your position's, so moving it now
+                  would lose part of it. You can withdraw both tokens to your wallet instead, or check back later.
+                </div>
+                <button className={`jlf-action${anyBusy ? ' idle' : ''}`} disabled={anyBusy} onClick={() => { setErr(null); setMsg(null); setConfirmWithdraw(k) }} style={{ width: '100%' }}>
+                  Withdraw instead
+                </button>
               </div>
             ) : (
               <div style={{ marginTop: 14 }}>

@@ -22,6 +22,7 @@ const MIGRATOR_ABI = [
   'function newRouter() view returns (address)',
   'function mahV2() view returns (address)',
   'function reserve() view returns (uint256)',
+  'function maxPriceMoveBps() view returns (uint16)',
   'function update(address oldPair, uint256 liquidity, uint256 otherMin, uint256 mahMin, uint256 deadline) returns (uint256 newLiquidity, uint256 refundOther, uint256 refundMah)',
   'function withdraw(address oldPair, uint256 liquidity, uint256 deadline) returns (uint256 otherOut, uint256 mahPaid)',
 ]
@@ -71,6 +72,42 @@ export type UpdatePlan = {
   otherMin: bigint
   mahMin: bigint
   newPoolExists: boolean
+  /** How far the new pool's price is from this position's own ratio (bps of the side that doesn't fit). */
+  priceMoveBps: number
+  /** The migrator's guard: update() reverts beyond this (MAHPoolMigrator.maxPriceMoveBps). */
+  maxPriceMoveBps: number
+  /** The new pool's price is past the guard: update would revert; offer Withdraw. */
+  tooFar: boolean
+}
+
+const BPS = 10_000n
+/** Used when an older migrator has no maxPriceMoveBps(): the deploy default. */
+export const DEFAULT_MAX_PRICE_MOVE_BPS = 300
+
+/**
+ * The minimums sent with update() (audit F1). Never below the position's OWN
+ * amounts less the migrator's guard, so a new pool moved before or after
+ * planning can't take one side for dust; and not below the predicted amounts
+ * less the person's slippage.
+ */
+export function planMinimums(
+  pos: { otherOut: bigint; mahOut: bigint },
+  used: { usedOther: bigint; usedMah: bigint },
+  slippageBps: number,
+  maxPriceMoveBps: number,
+) {
+  const guard = BigInt(Math.max(0, Math.min(10_000, Math.floor(maxPriceMoveBps))))
+  const floorOther = (pos.otherOut * (BPS - guard)) / BPS
+  const floorMah = (pos.mahOut * (BPS - guard)) / BPS
+  const slipOther = applySlippage(used.usedOther, slippageBps)
+  const slipMah = applySlippage(used.usedMah, slippageBps)
+  const otherMin = slipOther > floorOther ? slipOther : floorOther
+  const mahMin = slipMah > floorMah ? slipMah : floorMah
+  const moveOf = (out: bigint, usedAmt: bigint) => (out > 0n ? Number(((out - usedAmt) * BPS) / out) : 0)
+  const priceMoveBps = Math.max(moveOf(pos.otherOut, used.usedOther), moveOf(pos.mahOut, used.usedMah))
+  // Same test as the contract: used * BPS < out * (BPS - guard) reverts.
+  const tooFar = used.usedOther * BPS < pos.otherOut * (BPS - guard) || used.usedMah * BPS < pos.mahOut * (BPS - guard)
+  return { otherMin, mahMin, priceMoveBps, tooFar }
 }
 
 function migrator(provider: ethers.Provider) {
@@ -143,7 +180,12 @@ export async function findOldPositions(provider: ethers.Provider, holders: Holde
  */
 export async function planUpdate(provider: ethers.Provider, pos: OldPosition, slippageBps: number): Promise<UpdatePlan> {
   const m = migrator(provider)
-  const [routerAddr, mahV2] = await Promise.all([m.newRouter(), m.mahV2()])
+  const [routerAddr, mahV2, guardRaw] = await Promise.all([
+    m.newRouter(),
+    m.mahV2(),
+    m.maxPriceMoveBps().catch(() => DEFAULT_MAX_PRICE_MOVE_BPS),
+  ])
+  const maxPriceMoveBps = Number(guardRaw)
   const factory = await new ethers.Contract(routerAddr, ROUTER_ABI, provider).factory()
   const pair: string = await new ethers.Contract(factory, FACTORY_ABI, provider).getPair(pos.otherToken, mahV2)
 
@@ -166,14 +208,18 @@ export async function planUpdate(provider: ethers.Provider, pos: OldPosition, sl
       }
     }
   }
+  const mins = planMinimums(pos, { usedOther, usedMah }, slippageBps, maxPriceMoveBps)
   return {
     usedOther,
     usedMah,
     refundOther: pos.otherOut - usedOther,
     refundMah: pos.mahOut - usedMah,
-    otherMin: applySlippage(usedOther, slippageBps),
-    mahMin: applySlippage(usedMah, slippageBps),
+    otherMin: mins.otherMin,
+    mahMin: mins.mahMin,
     newPoolExists,
+    priceMoveBps: mins.priceMoveBps,
+    maxPriceMoveBps,
+    tooFar: mins.tooFar,
   }
 }
 
@@ -200,6 +246,8 @@ const deadline = () => BigInt(Math.floor(Date.now() / 1000) + DEADLINE_SEC)
 
 /** Approve (if needed) + update. The first move into a new pool also creates it, hence the gas. */
 export async function buildUpdateTxs(provider: ethers.Provider, pos: OldPosition, plan: UpdatePlan) {
+  // Would revert on chain (NewPoolPriceMoved); don't ask the person to sign it.
+  if (plan.tooFar) throw new Error("The new pool's price is too far from your position's. Withdraw instead, or try again later.")
   return [
     ...(await approveIfNeeded(provider, pos)),
     legacy({ to: POOL_MIGRATOR, data: migratorIface.encodeFunctionData('update', [pos.pool, pos.liquidity, plan.otherMin, plan.mahMin, deadline()]) }, 8_000_000),

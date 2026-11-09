@@ -35,6 +35,8 @@ import { useWalletMetaStore } from '../store/walletMetaStore'
 import { useConnectModalStore } from '../store/connectModalStore'
 import { useWcStore } from '../store/wcStore'
 import { useMahPricing } from '../hooks/bridge/useMahPricing'
+import UpdatePositionCard from '../components/UpdatePositionCard'
+import type { Holder } from '../lib/mahV2Migration'
 
 const AMVAULT_URL = (import.meta.env.VITE_AMVAULT_URL as string) ?? 'https://amvault.net'
 const APP_NAME = (import.meta.env.VITE_APP_NAME as string) ?? 'JollofSwap'
@@ -205,6 +207,15 @@ export default function Liquidity() {
   const openConnectModal = useConnectModalStore(s => s.openModal)
 
   const provider = useMemo(() => new ethers.JsonRpcProvider(ALK_RPC, ALK_CHAIN_ID), [])
+
+  // Who can hold an old MAH v1 pool position: the Nuru Account (or plain
+  // wallet), and the key itself when it's a different address.
+  const migrationHolders = useMemo<Holder[]>(() => {
+    const out: Holder[] = []
+    if (walletConnected && accountAddress && ethers.isAddress(accountAddress)) out.push({ address: accountAddress, kind: 'account' })
+    if (walletConnected && hasDistinctSigner) out.push({ address: signerKey, kind: 'key' })
+    return out
+  }, [walletConnected, accountAddress, hasDistinctSigner, signerKey])
 
   const { tokens: regTokens } = useTokenRegistry()
   const tokenOptions = useMemo(() => {
@@ -829,6 +840,18 @@ export default function Liquidity() {
 
         {/* LEFT: position card + pool info */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {/* Old MAH v1 pool positions → MAH v2 pools (hidden unless there is one) */}
+          <UpdatePositionCard
+            provider={provider}
+            holders={migrationHolders}
+            slippageBps={slippageBps}
+            showHolder={hasDistinctSigner}
+            send={(txs, skipAaWrap, step) =>
+              sessionSendTransactions({ chainId: ALK_CHAIN_ID, txs, failFast: true, preflight: REMOVE_PREFLIGHT } as any, { app: APP_NAME, amvaultUrl: AMVAULT_URL, skipAaWrap }, step)
+            }
+            onDone={() => { void refreshBalances(); void refreshPositionAndReserves() }}
+          />
 
           {/* Your LP Position */}
           <div className="jlf-panel" style={{ padding: '24px' }}>

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { ethers } from 'ethers'
+import { checkMahDeposit } from '../lib/bridge/mahPrecheck'
 import { makePolyProvider } from '../lib/polyRpc'
 import { useSignerSession } from '../hooks/useSignerSession'
 import { useWalletConnection } from '../hooks/useWalletConnection'
@@ -1086,6 +1087,10 @@ export default function Swap() {
             to: USDC_POLY, data: ERC20_WRITE_IFACE.encodeFunctionData('decimals', []),
           }).then(d => ERC20_WRITE_IFACE.decodeFunctionResult('decimals', d)[0]))
           const usdcAmt = ethers.parseUnits(usdcToBridge.toFixed(usdcDec), usdcDec)
+
+          // MAH v2: the bridge refuses some recipients / amounts, and the vault
+          // would keep the USDC. Ask first; nothing has been signed yet.
+          await checkMahDeposit(BRIDGE_API, alkRecipient, usdcAmt)
 
           const bridgeResults = await sessionSendTransactions({
             chainId: POLY_CHAIN_ID,

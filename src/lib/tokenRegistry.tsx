@@ -96,6 +96,25 @@ export function TokenRegistryProvider({
                     if (t) out.push(t)
                 })
 
+                // MAH is the site's own (VITE_TOKEN_MAH_ALK: MAH v2 since 2026-11-09). A registry row
+                // named MAH at another address (MAH v1) is never offered: its pools are gone, so every
+                // MAH swap said "no liquidity". The row's name / logo are kept for the live MAH.
+                const liveMah = TOKENS.MAH?.address && ethers.isAddress(TOKENS.MAH.address) ? ethers.getAddress(TOKENS.MAH.address) : null
+                if (liveMah) {
+                    const mahRows = out.filter((t) => t.symbol === 'MAH')
+                    const keep = mahRows.find((t) => t.addressLower === liveMah.toLowerCase())
+                    const look = keep || mahRows[0]
+                    for (let i = out.length - 1; i >= 0; i--) if (out[i].symbol === 'MAH' && out[i].addressLower !== liveMah.toLowerCase()) out.splice(i, 1)
+                    if (!keep) {
+                        out.push({
+                            ...(look || {}),
+                            chainId, symbol: 'MAH', name: look?.name || 'MAH', decimals: 6,
+                            address: liveMah, addressLower: liveMah.toLowerCase(), isNative: false, id: liveMah,
+                            status: look?.status || 'Core',
+                        } as TokenMeta)
+                    }
+                }
+
                 // ✅ ensure AKE exists even if not registered yet
                 const hasAKE = out.some((t) => t.id === 'native:ALKE')
                 const withAKE = hasAKE

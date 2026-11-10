@@ -9,6 +9,9 @@ import { ethers } from 'ethers'
 const RPC = process.env.MAHV2_FORK_RPC
 const MIGRATOR = process.env.MAHV2_MIGRATOR
 const run = RPC && MIGRATOR ? describe : describe.skip
+// MAHV2_FORK_MAINNET=1: a plain fork of the live chain (no rehearsal): no pool open yet, nobody frozen.
+const MAINNET = process.env.MAHV2_FORK_MAINNET === '1'
+const itRehearsal = MAINNET ? it.skip : it
 
 const POOL_ALKE = '0x1D4405c79dDc0F3E8ca70Ad5c2788B4bdb5c6500'
 const POOL_TRB = '0xcF2E0da212e9DEF5e5E951d0b7c6a837dC01c836'
@@ -48,7 +51,7 @@ run('MAH v2 Update position (on a rehearsal fork)', () => {
     expect(await m.findOldPositions(provider, [{ address: NOBODY, kind: 'account' }])).toEqual([])
   })
 
-  it('finds AA00000113 in each pool it is in, ALKE shown as ALKE, and flags it frozen', async () => {
+  itRehearsal('finds AA00000113 in each pool it is in, ALKE shown as ALKE, and flags it frozen', async () => {
     const found = await m.findOldPositions(provider, [{ address: AA113, kind: 'account' }])
     const pools = found.map((p) => p.pool.toLowerCase())
     expect(pools).toContain(POOL_ALKE.toLowerCase())
@@ -66,19 +69,22 @@ run('MAH v2 Update position (on a rehearsal fork)', () => {
   it('Update position: approve + update move the whole position into the new pool', async () => {
     const [pos] = await m.findOldPositions(provider, [{ address: XM, kind: 'account' }])
     const plan = await m.planUpdate(provider, pos, 50)
-    expect(plan.newPoolExists).toBe(true) // the rehearsal opened it
+    // The rehearsal opened it; on the live chain the first Update creates it at the old pool's price.
+    expect(plan.newPoolExists).toBe(!MAINNET)
     const txs = await m.buildUpdateTxs(provider, pos, plan)
     expect(txs.length).toBe(2) // approve, then update
     const mig = new ethers.Contract(MIGRATOR!, ['function newRouter() view returns (address)', 'function mahV2() view returns (address)'], provider)
     const router = new ethers.Contract(await mig.newRouter(), ['function factory() view returns (address)'], provider)
     const factory = new ethers.Contract(await router.factory(), ['function getPair(address,address) view returns (address)'], provider)
-    const newPair = new ethers.Contract(await factory.getPair(pos.otherToken, await mig.mahV2()), ['function balanceOf(address) view returns (uint256)'], provider)
-    const before = await newPair.balanceOf(XM)
+    const pairOf = async () => new ethers.Contract(await factory.getPair(pos.otherToken, await mig.mahV2()), ['function balanceOf(address) view returns (uint256)'], provider)
+    const newPair = await pairOf()
+    const pairBefore = await factory.getPair(pos.otherToken, await mig.mahV2())
+    const before = pairBefore === ethers.ZeroAddress ? 0n : await newPair.balanceOf(XM)
 
     await sendAs(XM, txs)
 
     expect(await m.findOldPositions(provider, [{ address: XM, kind: 'account' }])).toEqual([])
-    expect(await newPair.balanceOf(XM)).toBeGreaterThan(before)
+    expect(await (await pairOf()).balanceOf(XM)).toBeGreaterThan(before)
   })
 
   it('Withdraw instead: the other token and MAH v2 arrive in the wallet', async () => {
@@ -106,7 +112,7 @@ run('MAH v2 Update position (on a rehearsal fork)', () => {
     expect(await m.findOldPositions(provider, [{ address: OU, kind: 'account' }])).toEqual([])
   })
 
-  it("a frozen holder can't move: the update is refused and the position stays", async () => {
+  itRehearsal("a frozen holder can't move: the update is refused and the position stays", async () => {
     const [pos] = (await m.findOldPositions(provider, [{ address: AA113, kind: 'account' }])).filter((p) => p.pool.toLowerCase() === POOL_ALKE.toLowerCase())
     await expect(sendAs(AA113, await m.buildUpdateTxs(provider, pos, await m.planUpdate(provider, pos, 50)))).rejects.toThrow()
     const still = await m.findOldPositions(provider, [{ address: AA113, kind: 'account' }])

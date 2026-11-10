@@ -28,7 +28,7 @@ import {
 } from './config'
 
 export const MAH_TOKEN =
-  (import.meta.env.VITE_TOKEN_MAH_ALK as string) || '0x9983Cf46eeC1A7e75639eA1142410086b874dbf6'
+  (import.meta.env.VITE_TOKEN_MAH_ALK as string) || '0x996A6D73788A2A0adce6AD2E3Ea3F55df9da847C' // MAH v2
 
 /** CommitmentRegistry domain id for P2P (Nuru: commitmentDomainP2P = 0). */
 export const COMMITMENT_DOMAIN_P2P = 0

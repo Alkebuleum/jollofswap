@@ -56,7 +56,7 @@ const USD_REF_SYM = 'MAH'
 const POLY_CHAIN_ID = Number(import.meta.env.VITE_POLY_CHAIN_ID ?? 137)
 const USDC_POLY = (import.meta.env.VITE_USDC_POLY as string) ?? '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359'
 const BRIDGEVAULT_POLY = (import.meta.env.VITE_BRIDGEVAULT_POLY as string) ?? '0x2b53bd82a7ad6a7ce8bf9a9d201cde639b8ae5e0'
-const MAH_TOKEN_ALK = (import.meta.env.VITE_MAH_ALK as string) ?? '0x9983Cf46eeC1A7e75639eA1142410086b874dbf6'
+const MAH_TOKEN_ALK = (import.meta.env.VITE_MAH_ALK as string) || '0x996A6D73788A2A0adce6AD2E3Ea3F55df9da847C' // MAH v2
 const BRIDGE_API = (import.meta.env.VITE_BRIDGE_API as string) ?? 'https://bridge.jollofswap.com'
 // Below this much USDC the bridge step is skipped (matches the execution path).
 const MIN_BRIDGE_USDC = 0.001

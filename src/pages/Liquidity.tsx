@@ -517,7 +517,7 @@ export default function Liquidity() {
     const unsubUser = onSnapshot(qUser, (snap) => {
       const byTx = new Map<string, any[]>()
       snap.forEach((d) => { const x: any = d.data(); const tx = String(x.txHash || ''); if (!tx) return; const arr = byTx.get(tx) ?? []; arr.push(x); byTx.set(tx, arr) })
-      let depValueA = 0n; let wdrValueA = 0n; let firstAddTime: number | null = null
+      let depValueA = 0n; let wdrValueA = 0n; let firstAddTime: number | null = null; let sawAdd = false
       for (const rows of byTx.values()) {
         const sync = rows.find((r) => r?.event === 'Sync')
         const mint = rows.find((r) => r?.event === 'Mint' && r?.action === 'add_liquidity')
@@ -526,11 +526,15 @@ export default function Liquidity() {
         if (sync?.args?.reserve0 != null && sync?.args?.reserve1 != null) { const mapped = map01toAB(sync.token0, sync.token1, bn(sync.args.reserve0), bn(sync.args.reserve1)); rA = mapped.a; rB = mapped.b }
         const bToA = (bRaw: bigint) => { if (rA === 0n || rB === 0n) return 0n; return quote(bRaw, rB, rA) }
         if (mint?.args?.amount0 != null && mint?.args?.amount1 != null) {
+          sawAdd = true
           if (!firstAddTime && typeof mint.blockTime === 'number') firstAddTime = mint.blockTime
           const mapped = map01toAB(mint.token0, mint.token1, bn(mint.args.amount0), bn(mint.args.amount1)); depValueA += mapped.a + bToA(mapped.b)
         }
         if (burn?.args?.amount0 != null && burn?.args?.amount1 != null) { const mapped = map01toAB(burn.token0, burn.token1, bn(burn.args.amount0), bn(burn.args.amount1)); wdrValueA += mapped.a + bToA(mapped.b) }
       }
+      // No add-liquidity on record for this position (e.g. moved in by "Update position" from an old
+      // MAH v1 pool): what it cost isn't known here, so no P&L rather than the whole value as profit.
+      if (!sawAdd) { firstAddTimeRef.current = null; setFeesPnlUi('P&L: —'); setFeesPnlNote('No add-liquidity on record for this position on this site (e.g. moved from an old pool), so its P&L is unknown.'); return }
       let curValueA = 0n
       if (rawReserveA > 0n && rawReserveB > 0n && lpSupplyRaw > 0n && lpBalRaw > 0n) { const curA = (rawReserveA * lpBalRaw) / lpSupplyRaw; const curB = (rawReserveB * lpBalRaw) / lpSupplyRaw; curValueA = curA + quote(curB, rawReserveB, rawReserveA) }
       const pnlA = (curValueA + wdrValueA) - depValueA

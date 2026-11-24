@@ -425,6 +425,9 @@ export default function Swap() {
   const { pricing: mahPricing, isFallback: mahPricingFallback, loading: mahPricingLoading } = useMahPricing()
   // MAH valued at the bridge conversion rate (not a market price)
   const totalUsdNum = usdcBalNum + (mahForUsdNum + signerMahNum) * mahPricing.usdcPerMah
+  // USD → MAH is a pure bridge: only USDC can pay for it. Counting MAH already
+  // held would let the route bridge $0 and report "success" without any tx.
+  const spendableUsdNum = to === 'MAH' ? usdcBalNum : totalUsdNum
   const [loadingUsdBal, setLoadingUsdBal] = useState(false)
   const [usdBalInfoOpen, setUsdBalInfoOpen] = useState(false)
 
@@ -862,7 +865,7 @@ export default function Swap() {
         // USDC mode: route quote via MAH (USD → MAH bridge → to token swap)
         if (from === 'USDC') {
           // Use combined aaWallet + signer MAH for quote accuracy
-          const { netMah } = await planUsdRoute(Number(amtStr), mahForUsdNum + signerMahNum, mahPricing)
+          const { netMah } = await planUsdRoute(Number(amtStr), to === 'MAH' ? 0 : mahForUsdNum + signerMahNum, mahPricing)
           if (netMah <= 0) { setQuoteOut('—'); setMinOut('—'); setQuoteNotice('Amount too small after bridge fees.'); return }
 
           // USD → MAH: bridge output IS the result, no AMM step
@@ -1036,8 +1039,8 @@ export default function Swap() {
       if (from === 'USDC') {
         const amtUsd = Number(amtStr)
 
-        if (amtUsd > totalUsdNum + 0.01) {
-          throw new Error(`Insufficient balance. You have $${totalUsdNum.toFixed(2)}.`)
+        if (amtUsd > spendableUsdNum + 0.01) {
+          throw new Error(`Insufficient ${to === 'MAH' ? 'USDC' : 'balance'}. You have $${spendableUsdNum.toFixed(2)}.`)
         }
 
         // USD→MAH is a pure bridge — no AMM liquidity needed
@@ -1054,8 +1057,9 @@ export default function Swap() {
         const isNuroBrowserSwap = injectedEthSwap?._isNuruWallet === true
         // Combined balance: aaWallet + signer (signer will be deposited before swap in QR mode)
         // Fresh quote at execution time so fees reflect the bridge's current config.
-        const { usdcToBridge, netMah } = await planUsdRoute(amtUsd, mahForUsdNum + signerMahNum, mahPricing)
+        const { usdcToBridge, netMah } = await planUsdRoute(amtUsd, isBridgeOnly ? 0 : mahForUsdNum + signerMahNum, mahPricing)
         if (netMah <= 0) throw new Error('Amount too small after fees.')
+        if (isBridgeOnly && usdcToBridge <= MIN_BRIDGE_USDC) throw new Error('Amount too small to bridge.')
 
         setSwapDialogDetails({ fromSym: 'USD', toSym: to, amountIn: amtStr, estimatedOut: quoteOut !== '—' ? quoteOut : '—', txHash: '' })
         setSwapDialogPhase('waiting')
@@ -1710,7 +1714,7 @@ export default function Swap() {
             }
             const amtNum = Number(clampAmountStr(amount.trim()))
             const insufficientBal = isUsdcMode
-              ? !loadingUsdBal && amtNum > 0 && amtNum > totalUsdNum + 0.01
+              ? !loadingUsdBal && amtNum > 0 && amtNum > spendableUsdNum + 0.01
               : !loadingBalances && amtNum > 0 && amtNum > fromBalNum
 
             const btnClass = insufficientBal
@@ -1748,11 +1752,11 @@ export default function Swap() {
           )}
 
           {/* Low USD balance — deposit CTA */}
-          {walletConnected && isUsdcMode && !loadingUsdBal && amtNumVal > 0 && amtNumVal > totalUsdNum + 0.01 && (
+          {walletConnected && isUsdcMode && !loadingUsdBal && amtNumVal > 0 && amtNumVal > spendableUsdNum + 0.01 && (
             <div style={{ marginTop: 8, padding: '12px 14px', background: 'rgba(255,90,60,.07)', border: '1px solid rgba(255,90,60,.15)', borderRadius: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
               <CircleDollarSign style={{ width: 18, height: 18, color: 'var(--red)', flexShrink: 0 }} />
               <span style={{ flex: 1, fontSize: 13, color: 'var(--muted)' }}>
-                Need ${amtNumVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, have ${totalUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                Need ${amtNumVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, have ${spendableUsdNum.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               {depositErr && <span style={{ fontSize: 12, color: 'var(--red)' }}>{depositErr}</span>}
               <button
